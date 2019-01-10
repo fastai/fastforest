@@ -1,3 +1,8 @@
+fastforest.html
+fastforest.cpp
+data
+tmp
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
