@@ -35,7 +35,7 @@ def test_it(df, y, ff):
     xs = x[np.array([0,90])]
     #print('xs', xs)
     print('ys', y[0], y[90])
-    print('x0', tree.predict(xs[0]))
+    print('x0', tree.predict(xs[0].astype(np.float32)))
     """
     cdef float [:] rowv2 = xs[1]
     #print('x90', x[90], tree.Predict(&rowv2[0]))

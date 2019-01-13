@@ -56,10 +56,7 @@ cdef class PyFastTree:
     def __cinit__(self): self.ptr = NULL
     @property
     def root(self): return makenode(self.ptr.root)
-    cpdef predict(self, np.ndarray[np.float, ndim=1] row):
-        cdef float [:] rowv = row
-        res = self.ptr.Predict(&rowv[0])
-        return res
+    cpdef predict(self, float[:] row): return self.ptr.Predict(&row[0])
 
 cdef class PyFastForest:
     cdef FastForest *ptr
