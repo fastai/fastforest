@@ -7,18 +7,22 @@
 #include <map>
 #include <random>
 #include <cmath>
+#include <numeric>
+#include <stack>
+#include <assert.h>
+#include <tgmath.h>
+#include <algorithm>
 
-extern int train_ff(float *x_, float *y, int r, int c);
+using namespace std;
 
 class Node {
 public:
-    int start, n, bestPred;
-    struct Node* left, *right;
+    struct Node *left, *right;
     bool isLeft;
-    float cutoff;
-    float value, gini;
+    int start, n, bestPred;
+    float cutoff, value, gini;
 
-    //Node(int start, int n, Node* parent, bool isLeft);
+    Node(int start, int n, Node *parent, bool isLeft);
     bool IsTerminal();
 };
 
@@ -26,30 +30,47 @@ class FastTree;
 
 class FastForest {
 public:
-    const int NTREE = 300, MIN_NODE = 8;
-    const double PROP_TRAIN = 0.8, PROP_OOB = 0.5;
+    int NTREE = 10, MIN_NODE = 5;
+    const float PROP_TRAIN = 0.8, PROP_OOB = 0.5;
 
-    float* X;
-    float* y;
+    float *X,*y;
+    int n,c;
 
-    FastTree* trees;
-    int N,C;
+    FastTree** trees;
 
-    FastForest(float* X_, float* y_, int n, int c);
-    //~FastForest();
-    void build();
-    //double* predict(array<array<float>^>^ rows);
+    FastForest(float* X_, float* y_, int n_, int c_);
+    void Build();
+    float* Predict(float* rows, int n, int c);
 };
 
 class FastTree {
 public:
-    const int MAXN = 160, CUTOFF_DIVISOR = 100;
-
+    const int MAXN = 160, CUTOFF_DIVISOR = 10;
     FastTree(FastForest* parent);
-    FastForest* parent_;
-    int c_, n_;
-    float* acts_;  // rows subset used to train tree
-    float** preds_;  // rows subset used to train tree
-    Node* root_;
+
+    FastForest* parent;
+    default_random_engine* rng;
+    int c, n;
+    float* y;  // rows subset used to train tree
+    float** X;  // rows subset used to train tree
+    int* idxs;
+    Node* root;
+    float *lT, *lT2, *cutvals;
+    int *lC, *cutidxs;
+
+    void ClearStorage_();
+    void Reset(int nc);
+    void CreateIdxsAndOob_();
+    void Shuffle();
+    void BuildNodes_();
+    void CheckCutoffs(int start, int n, int nc);
+    void BestCutoff_(Node* node);
+    bool AllSame_(Node* node);
+    static float WgtGini_(float cActs, float cActs2, float cCount, float totActs, float totActs2, float totCount);
+    static float Gini_(float numAct, float numAct2, float n);
+    int Shuffle_(Node* node);
+    float Predict(float* arr);
 };
+
+FastForest* train_ff(float *x_, float *y, int r, int c);
 

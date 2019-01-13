@@ -1,32 +1,83 @@
 # distutils: language = c++
+# distutils: sources = cfastforest.cpp
 
 import pandas as pd, numpy as np
 cimport numpy as np
+from cython cimport view
+from libcpp cimport bool
+np.import_array()
 
-cdef extern from "cfastforest.cpp":
-    int train_ff(float *x_, float *y, int r, int c)
+cdef extern from "cfastforest.hpp":
+    FastForest* train_ff(float *x_, float *y, int r, int c)
+    cdef cppclass Node:
+        Node *left
+        Node *right
+        bool isLeft
+        int start, n, bestPred
+        float cutoff, value, gini
+    cdef cppclass FastForest:
+        FastTree** trees
+        int n
+        float* Predict(float* rows, int n, int c)
+    cdef cppclass FastTree:
+        int n
+        Node* root
+        float Predict(float* arr)
 
-#cdef void train_ff(np.ndarray[float, ndim=2, mode="c"] a): train_ff(&a[0,0], a.shape[0], a.shape[1])
+cdef makenode(Node *ptr):
+    res = PyNode()
+    res.ptr = ptr
+    return res
 
-def split_vals(a,n): return a[:n], a[n:]
+cdef class PyNode:
+    cdef Node *ptr
+    def __cinit__(self): self.ptr = NULL
+    @property
+    def left(self): return makenode(self.ptr.left)
+    @property
+    def right(self): return makenode(self.ptr.right)
+    @property
+    def isLeft(self): return self.ptr.isLeft
+    @property
+    def start(self): return self.ptr.start
+    @property
+    def n(self): return self.ptr.n
+    @property
+    def bestPred(self): return self.ptr.bestPred
+    @property
+    def cutoff(self): return self.ptr.cutoff
+    @property
+    def value(self): return self.ptr.value
+    @property
+    def gini(self): return self.ptr.gini
 
-cpdef foo():
-    df_raw = pd.read_pickle('tmp/bulldozers-raw')
-    df_trn = pd.read_pickle('tmp/df_trn')
-    y_trn = np.load(open('tmp/y_trn', 'rb'))
+cdef class PyFastTree:
+    cdef FastTree *ptr
+    def __cinit__(self): self.ptr = NULL
+    @property
+    def root(self): return makenode(self.ptr.root)
+    cpdef predict(self, np.ndarray[np.float, ndim=1] row):
+        cdef float [:] rowv = row
+        res = self.ptr.Predict(&rowv[0])
+        return res
 
-    n_valid = 12000
-    n_trn = len(df_trn)-n_valid
-    X_train, X_valid = split_vals(df_trn, n_trn)
-    y_train, y_valid = split_vals(y_trn, n_trn)
-    raw_train, raw_valid = split_vals(df_raw, n_trn)
+cdef class PyFastForest:
+    cdef FastForest *ptr
+    def __cinit__(self, x, y):
+        n,c = x.shape
+        x = np.ascontiguousarray(x).astype(np.float32)
+        cdef float [:,:] xv = x
+        y = np.ascontiguousarray(y).astype(np.float32)
+        cdef float [:] yv = y
+        self.ptr = train_ff(&xv[0,0], &yv[0], n, c)
 
-    x_sub = X_train[['YearMade', 'MachineHoursCurrentMeter']]
-    cdef np.ndarray[float, ndim=2, mode="c"] x = np.ascontiguousarray(x_sub.astype(np.float32).values)
-    cdef np.ndarray[float, ndim=1] y = np.ascontiguousarray(y_train).astype(np.float32)
-    cdef int r = train_ff(&x[0,0], &y[0], x.shape[0], x.shape[1])
+    def get_tree(self,i):
+        res = PyFastTree()
+        res.ptr = self.ptr.trees[i]
+        return res
 
-    print(x[:5,:5])
-    print(y_train[:5])
-    print(r)
+cpdef train(x, y):
+    print(x.shape)
+    res = PyFastForest(x, y)
+    return res
 

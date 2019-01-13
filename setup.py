@@ -9,12 +9,13 @@ extensions = [
     Extension(
         'fastforest',
         glob('*.pyx'),
-        extra_compile_args=["-std=c++11"])
+        extra_link_args=['-fopenmp'],
+        extra_compile_args=["-std=c++11", '-fopenmp', '-Wno-cpp'])
 ]
 
 setup(
     name='fastforest',
-    ext_modules=cythonize(extensions),
+    ext_modules=cythonize(extensions), #, gdb_debug=True),
     zip_safe=False,
     include_dirs=[np.get_include()]
 )
