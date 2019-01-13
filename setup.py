@@ -9,7 +9,7 @@ extensions = [
     Extension(
         'fastforest',
         glob('*.pyx'),
-        extra_link_args=['-fopenmp'],
+        extra_link_args=['-fopenmp', '-Wl,-rpath,/usr/local/Cellar/gcc/8.2.0/lib/gcc/8'],
         extra_compile_args=["-std=c++11", '-fopenmp', '-Wno-cpp'])
 ]
 
