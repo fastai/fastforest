@@ -59,14 +59,14 @@ public:
     int *lC, *cutidxs;
 
     void clearStorage_();
-    void reset(int nc);
+    void reset(int ncandidates);
     void createIdxsAndOob_();
     void shuffle();
     void buildNodes_();
-    void checkCutoffs(int start, int n, int nc);
+    void checkCutoffs(int start, int n, int ncandidates);
     void bestCutoff_(Node *node);
     bool allSame_(Node *node);
-    static float wgtGini_(float cActs, float cActs2, float cCount, float totActs, float totActs2, float totCount);
+    static float wgtGini_(float cTarget, float cSqrTarget, float cCount, float sumTarget, float sumSqrTarget, float totCount);
     int shuffle_(Node *node);
     float predict(float *arr);
 };
@@ -74,4 +74,4 @@ public:
 FastForest* trainFF(float *x_, float *y, int r, int c);
 
 template <typename T> double stdev(T b, T e);
-float gini_(float numAct, float numAct2, float n);
+float gini_(float sumTarget, float sumSqrTarget, float n);
