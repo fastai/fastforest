@@ -28,7 +28,7 @@ Node::Node(int start, int n, Node* parent, bool isLeft) {
     else parent->right = this;
 }
 
-bool Node::IsTerminal() { return bestPred == -1; }
+bool Node::isTerminal() { return bestPred == -1; }
 
 FastForest::FastForest(float* X_, float* y_, int n_, int c_) {
     c = c_; n = n_; X = X_; y = y_;
@@ -155,7 +155,7 @@ void FastTree::buildNodes_() {
         s.pop();
 
 		bestCutoff_(node);
-        if (node->IsTerminal()) {
+        if (node->isTerminal()) {
             //printf("---T: i %d v %f\n", i, node->value);
             continue;
         }

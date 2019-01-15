@@ -23,7 +23,7 @@ public:
     float cutoff, value, gini;
 
     Node(int start, int n, Node *parent, bool isLeft);
-    bool IsTerminal();
+    bool isTerminal();
 };
 
 class FastTree;
