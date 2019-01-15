@@ -8,7 +8,7 @@ from libcpp cimport bool
 np.import_array()
 
 cdef extern from "cfastforest.hpp":
-    FastForest* train_ff(float *x_, float *y, int r, int c)
+    FastForest* trainFF(float *x_, float *y, int r, int c)
     cdef cppclass Node:
         Node *left
         Node *right
@@ -66,7 +66,7 @@ cdef class PyFastForest:
         cdef float [:,:] xv = x
         y = np.ascontiguousarray(y).astype(np.float32)
         cdef float [:] yv = y
-        self.ptr = train_ff(&xv[0,0], &yv[0], n, c)
+        self.ptr = trainFF(&xv[0,0], &yv[0], n, c)
 
     def get_tree(self,i):
         res = PyFastTree()

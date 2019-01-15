@@ -72,5 +72,4 @@ public:
     float predict(float *arr);
 };
 
-FastForest* train_ff(float *x_, float *y, int r, int c);
-
+FastForest* trainFF(float *x_, float *y, int r, int c);

@@ -2,7 +2,7 @@
 
 using namespace std;
 
-FastForest* train_ff(float *x_, float *y, int r, int c) {
+FastForest* trainFF(float *x_, float *y, int r, int c) {
     FastForest* ff = new FastForest(x_, y, r, c);
 	ff->build();
     return ff;
