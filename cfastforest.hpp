@@ -58,17 +58,17 @@ public:
     float *lT, *lT2, *cutvals;
     int *lC, *cutidxs;
 
-    void ClearStorage_();
-    void Reset(int nc);
-    void CreateIdxsAndOob_();
-    void Shuffle();
-    void BuildNodes_();
-    void CheckCutoffs(int start, int n, int nc);
-    void BestCutoff_(Node* node);
-    bool AllSame_(Node* node);
-    static float WgtGini_(float cActs, float cActs2, float cCount, float totActs, float totActs2, float totCount);
-    static float Gini_(float numAct, float numAct2, float n);
-    int Shuffle_(Node* node);
+    void clearStorage_();
+    void reset(int nc);
+    void createIdxsAndOob_();
+    void shuffle();
+    void buildNodes_();
+    void checkCutoffs(int start, int n, int nc);
+    void bestCutoff_(Node *node);
+    bool allSame_(Node *node);
+    static float wgtGini_(float cActs, float cActs2, float cCount, float totActs, float totActs2, float totCount);
+    static float gini_(float numAct, float numAct2, float n);
+    int shuffle_(Node *node);
     float predict(float *arr);
 };
 
