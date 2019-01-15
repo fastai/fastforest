@@ -39,8 +39,8 @@ public:
     FastTree** trees;
 
     FastForest(float* X_, float* y_, int n_, int c_);
-    void Build();
-    float* Predict(float* rows, int n, int c);
+    void build();
+    float* predict(float *rows, int n, int c);
 };
 
 class FastTree {
@@ -69,7 +69,7 @@ public:
     static float WgtGini_(float cActs, float cActs2, float cCount, float totActs, float totActs2, float totCount);
     static float Gini_(float numAct, float numAct2, float n);
     int Shuffle_(Node* node);
-    float Predict(float* arr);
+    float predict(float *arr);
 };
 
 FastForest* train_ff(float *x_, float *y, int r, int c);

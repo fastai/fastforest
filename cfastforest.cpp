@@ -4,7 +4,7 @@ using namespace std;
 
 FastForest* train_ff(float *x_, float *y, int r, int c) {
     FastForest* ff = new FastForest(x_, y, r, c);
-    ff->Build();
+	ff->build();
     return ff;
 }
 
@@ -33,7 +33,7 @@ bool Node::IsTerminal() { return bestPred == -1; }
 FastForest::FastForest(float* X_, float* y_, int n_, int c_) {
     c = c_; n = n_; X = X_; y = y_;
 }
-void FastForest::Build() {
+void FastForest::build() {
     // TODO: Multiple trees
     // TODO: Multiclass classification
     trees = new FastTree*[NTREE];
@@ -43,7 +43,7 @@ void FastForest::Build() {
     }
 }
 
-float* FastForest::Predict(float* rows, int n, int c) {
+float* FastForest::predict(float *rows, int n, int c) {
     auto res = new float[n];
     for (int i=0; i<n; i++) res[i]=0;
 
@@ -51,7 +51,7 @@ float* FastForest::Predict(float* rows, int n, int c) {
     for (int i = 0; i < NTREE; i++) {
         auto tree = trees[i];
         for (int j = 0; j < n; j++) {
-            auto predict = tree->Predict(&rows[j*c]);
+            auto predict = tree->predict(&rows[j * c]);
             if (predict<1) printf("i %d j %d\n", i, j);
             //printf("- %f ",predict);
             //#pragma omp atomic
@@ -314,7 +314,7 @@ int FastTree::Shuffle_(Node* node) {
     return i-start;
 }
 
-float FastTree::Predict(float* arr) {
+float FastTree::predict(float *arr) {
     Node* node = root;
     int i=0;
     while (node->bestPred >= 0 && i++<10000) {

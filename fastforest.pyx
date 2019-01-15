@@ -18,11 +18,11 @@ cdef extern from "cfastforest.hpp":
     cdef cppclass FastForest:
         FastTree** trees
         int n
-        float* Predict(float* rows, int n, int c)
+        float* predict(float* rows, int n, int c)
     cdef cppclass FastTree:
         int n
         Node* root
-        float Predict(float* arr)
+        float predict(float* arr)
 
 cdef makenode(Node *ptr):
     res = PyNode()
@@ -56,7 +56,7 @@ cdef class PyFastTree:
     def __cinit__(self): self.ptr = NULL
     @property
     def root(self): return makenode(self.ptr.root)
-    cpdef predict(self, float[:] row): return self.ptr.Predict(&row[0])
+    cpdef predict(self, float[:] row): return self.ptr.predict(&row[0])
 
 cdef class PyFastForest:
     cdef FastForest *ptr
