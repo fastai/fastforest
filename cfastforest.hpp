@@ -67,9 +67,11 @@ public:
     void bestCutoff_(Node *node);
     bool allSame_(Node *node);
     static float wgtGini_(float cActs, float cActs2, float cCount, float totActs, float totActs2, float totCount);
-    static float gini_(float numAct, float numAct2, float n);
     int shuffle_(Node *node);
     float predict(float *arr);
 };
 
 FastForest* trainFF(float *x_, float *y, int r, int c);
+
+template <typename T> double stdev(T b, T e);
+float gini_(float numAct, float numAct2, float n);

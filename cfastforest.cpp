@@ -8,14 +8,6 @@ FastForest* trainFF(float *x_, float *y, int r, int c) {
     return ff;
 }
 
-template<typename T>
-double stdev(T b, T e) {
-    auto d = distance(b, e);
-    double sum = 0.0, sqr = 0.0;
-    for (T it=b; it!=e; ++it) { sum += *it; sqr += (*it) * (*it); }
-    return sqrt((sqr - (sum*sum) / d) / (d-1));
-}
-
 Node::Node(int start, int n, Node* parent, bool isLeft) {
     bestPred = -1;
     value=gini=cutoff=0.0;
@@ -33,6 +25,7 @@ bool Node::isTerminal() { return bestPred == -1; }
 FastForest::FastForest(float* X_, float* y_, int n_, int c_) {
     c = c_; n = n_; X = X_; y = y_;
 }
+
 void FastForest::build() {
     // TODO: Multiple trees
     // TODO: Multiclass classification
@@ -285,10 +278,6 @@ float FastTree::wgtGini_(float cActs, float cActs2, float cCount, float totActs,
     return res;
 }
 
-float FastTree::gini_(float numAct, float numAct2, float n) {
-    return -sqrt((numAct2 - (numAct*numAct)/n) / (n-1));
-}
-
 int FastTree::shuffle_(Node *node) {
     int start = node->start;
     int n = node->n, p = node->bestPred;
@@ -324,3 +313,16 @@ float FastTree::predict(float *arr) {
     return node->value;
 }
  
+// U t i l i t y  F u n c t i o n s
+
+template<typename T>
+double stdev(T b, T e) {
+    auto d = distance(b, e);
+    double sum = 0.0, sqr = 0.0;
+    for (T it=b; it!=e; ++it) { sum += *it; sqr += (*it) * (*it); }
+    return sqrt((sqr - (sum*sum) / d) / (d-1));
+}
+
+float gini_(float numAct, float numAct2, float n) {
+	return -sqrt((numAct2 - (numAct*numAct)/n) / (n-1));
+}
