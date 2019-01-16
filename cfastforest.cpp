@@ -306,11 +306,13 @@ int FastTree::shuffle_(Node *node) {
 
 float FastTree::predict(float const *X) {
     Node* node = root;
-    int i=0;
-    while (node->bestPred >= 0 && i++<10000) {
+    const int FAILSAFE = 1000; // TODO: remove when done debugging
+	int i=0;                   // TODO: remove when done debugging
+    while ( node->bestPred >= 0 && i<FAILSAFE ) {
         node = (X[node->bestPred] < node->cutoff) ? node->left : node->right;
+        i++;
     }
-    if (i>1000) printf("************---\n");
+    if (i>FAILSAFE) printf("************---\n");
     return node->value;
 }
  
