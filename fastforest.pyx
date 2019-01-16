@@ -1,4 +1,5 @@
 # distutils: language = c++
+# cython: language_level=3
 # distutils: sources = cfastforest.cpp
 
 import pandas as pd, numpy as np
@@ -8,19 +9,19 @@ from libcpp cimport bool
 np.import_array()
 
 cdef extern from "cfastforest.hpp":
-    FastForest* trainFF(float *x_, float *y, int r, int c)
+    FastForest* trainFF(float *x_, float *y, int nrows, int ncols)
     cdef cppclass Node:
         Node *left
         Node *right
         bool isLeft
-        int start, n, bestPred
+        int start, nrows, bestPred
         float cutoff, value, gini
     cdef cppclass FastForest:
         FastTree** trees
-        int n
-        float* predict(float* rows, int n, int c)
+        int nrows, ncols
+        float* predict(float* rows, int nrows, int ncols)
     cdef cppclass FastTree:
-        int n
+        int nrows, ncols
         Node* root
         float predict(float* arr)
 
@@ -41,7 +42,7 @@ cdef class PyNode:
     @property
     def start(self): return self.ptr.start
     @property
-    def n(self): return self.ptr.n
+    def n(self): return self.ptr.nrows
     @property
     def bestPred(self): return self.ptr.bestPred
     @property
@@ -61,12 +62,12 @@ cdef class PyFastTree:
 cdef class PyFastForest:
     cdef FastForest *ptr
     def __cinit__(self, x, y):
-        n,c = x.shape
+        nrows, ncols = x.shape
         x = np.ascontiguousarray(x).astype(np.float32)
         cdef float [:,:] xv = x
         y = np.ascontiguousarray(y).astype(np.float32)
         cdef float [:] yv = y
-        self.ptr = trainFF(&xv[0,0], &yv[0], n, c)
+        self.ptr = trainFF(&xv[0,0], &yv[0], nrows, ncols)
 
     def get_tree(self,i):
         res = PyFastTree()

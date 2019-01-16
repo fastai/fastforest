@@ -19,10 +19,10 @@ class Node {
 public:
     struct Node *left, *right;
     bool isLeft;
-    int start, n, bestPred;
+    int start, nrows, bestPred;
     float cutoff, value, gini;
 
-    Node(int start, int n, Node *parent, bool isLeft);
+    Node(int start, int nrows, Node *parent, bool isLeft);
     bool isTerminal();
 };
 
@@ -34,13 +34,13 @@ public:
     const float PROP_TRAIN = 0.8, PROP_OOB = 0.5;
 
     float *X,*y;
-    int n,c;
+    int nrows, ncols;
 
     FastTree** trees;
 
-    FastForest(float* X_, float* y_, int n_, int c_);
+    FastForest(float *X, float* y, int nrows, int ncols);
     void build();
-    float* predict(float *rows, int n, int c);
+    float* predict(float *X, int nrows, int ncols);
 };
 
 class FastTree {
@@ -50,13 +50,13 @@ public:
 
     FastForest* parent;
     default_random_engine* rng;
-    int c, n;
-    float* y;  // rows subset used to train tree
+	int nrows, ncols;
+    float* y;   // rows subset used to train tree
     float** X;  // rows subset used to train tree
     int* idxs;
     Node* root;
-    float *lT, *lT2, *cutvals;
-    int *lC, *cutidxs;
+    float *leftTarget, *leftSqrTarget, *cutvals;
+    int *leftCount, *cutidxs;
 
     void clearStorage_();
     void reset(int ncandidates);
@@ -66,12 +66,12 @@ public:
     void checkCutoffs(int start, int n, int ncandidates);
     void bestCutoff_(Node *node);
     bool allSame_(Node *node);
-    static float wgtGini_(float cTarget, float cSqrTarget, float cCount, float sumTarget, float sumSqrTarget, float totCount);
+    static float wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount);
     int shuffle_(Node *node);
-    float predict(float *arr);
+    float predict(float const *X);
 };
 
-FastForest* trainFF(float *x_, float *y, int r, int c);
+FastForest* trainFF(float *X, float *y, int nrows, int ncols);
 
 template <typename T> double stdev(T b, T e);
 float gini_(float sumTarget, float sumSqrTarget, float n);
