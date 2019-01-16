@@ -58,19 +58,10 @@ float* FastForest::predict(float *X, int nrows, int ncols) {
     return res; 
 }
 
-
-void FastTree::clearStorage_() {
-    _mm_free(leftSqrTarget); _mm_free(leftTarget); _mm_free(leftCount); _mm_free(cutvals); _mm_free(cutidxs);
-}
-
-void FastTree::reset(int ncandidates) {
-    for (int i = 0; i < ncandidates; i++) { leftSqrTarget[i]=leftTarget[i]=leftCount[i] = 0; }
-}
-
 FastTree::FastTree(FastForest* parent) {
     this->parent = parent;
     this->ncols = parent->ncols;
- 
+
     random_device rd;
     rng = new default_random_engine(rd());
 
@@ -88,6 +79,14 @@ FastTree::FastTree(FastForest* parent) {
 
 	buildNodes_();
 	clearStorage_();
+}
+
+void FastTree::clearStorage_() {
+	_mm_free(leftSqrTarget); _mm_free(leftTarget); _mm_free(leftCount); _mm_free(cutvals); _mm_free(cutidxs);
+}
+
+void FastTree::reset(int ncandidates) {
+	for (int i = 0; i < ncandidates; i++) { leftSqrTarget[i]=leftTarget[i]=leftCount[i] = 0; }
 }
 
 void FastTree::createIdxsAndOob_() {
