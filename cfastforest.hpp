@@ -34,13 +34,13 @@ public:
     const float PROP_TRAIN = 0.8, PROP_OOB = 0.5;
 
     float *X,*y;
-    int n,c;
+    int nrows, ncols;
 
     FastTree** trees;
 
-    FastForest(float* X_, float* y_, int n_, int c_);
+    FastForest(float *X, float* y, int nrows, int ncols);
     void build();
-    float* predict(float *rows, int n, int c);
+    float* predict(float *X, int nrows, int ncols);
 };
 
 class FastTree {
@@ -50,7 +50,7 @@ public:
 
     FastForest* parent;
     default_random_engine* rng;
-    int c, n;
+	int nrows, ncols;
     float* y;   // rows subset used to train tree
     float** X;  // rows subset used to train tree
     int* idxs;
@@ -68,10 +68,10 @@ public:
     bool allSame_(Node *node);
     static float wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount);
     int shuffle_(Node *node);
-    float predict(float *arr);
+    float predict(float const *X);
 };
 
-FastForest* trainFF(float *x_, float *y, int r, int c);
+FastForest* trainFF(float *X, float *y, int nrows, int ncols);
 
 template <typename T> double stdev(T b, T e);
 float gini_(float sumTarget, float sumSqrTarget, float n);

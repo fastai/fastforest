@@ -1,9 +1,10 @@
+#include <mm_malloc.h>
 #include "cfastforest.hpp"
 
 using namespace std;
 
-FastForest* trainFF(float *x_, float *y, int r, int c) {
-    auto ff = new FastForest(x_, y, r, c);
+FastForest* trainFF(float *X, float *y, int nrows, int ncols) {
+    auto ff = new FastForest(X, y, nrows, ncols);
 	ff->build();
     return ff;
 }
@@ -22,8 +23,8 @@ Node::Node(int start, int n, Node* parent, bool isLeft) {
 
 bool Node::isTerminal() { return bestPred == -1; }
 
-FastForest::FastForest(float* X_, float* y_, int n_, int c_) {
-    c = c_; n = n_; X = X_; y = y_;
+FastForest::FastForest(float* X, float* y, int nrows, int ncols) {
+	this->nrows = nrows; this->ncols = ncols; this->X = X; this->y = y;
 }
 
 void FastForest::build() {
@@ -36,24 +37,24 @@ void FastForest::build() {
     }
 }
 
-float* FastForest::predict(float *rows, int n, int c) {
-    auto res = new float[n];
-    for (int i=0; i<n; i++) res[i]=0;
+float* FastForest::predict(float *X, int nrows, int ncols) {
+    auto res = new float[nrows];
+    for (int i=0; i<nrows; i++) res[i]=0;
 
     //#pragma omp parallel for  
     for (int i = 0; i < NTREE; i++) {
         auto tree = trees[i];
-        for (int j = 0; j < n; j++) {
-            auto predict = tree->predict(&rows[j * c]);
+        for (int j = 0; j < nrows; j++) {
+            auto predict = tree->predict(&X[j * ncols]);
             if (predict<1) printf("i %d j %d\n", i, j);
             //printf("- %f ",predict);
             //#pragma omp atomic
             res[j] += predict;
         }
-        //printf("\n");
+        //printf("\nrows");
     }
 
-    for (int j = 0; j < n; j++) {res[j] /= NTREE;}
+    for (int j = 0; j < nrows; j++) {res[j] /= NTREE;}
     return res; 
 }
 
@@ -68,15 +69,15 @@ void FastTree::reset(int ncandidates) {
 
 FastTree::FastTree(FastForest* parent) {
     this->parent = parent;
-    c = parent->c;
+    this->ncols = parent->ncols;
  
     random_device rd;
     rng = new default_random_engine(rd());
 
 	createIdxsAndOob_();  // NB: Only happens once per top-level tree
 
-    int usedN = n > MAXN ? MAXN : n;
-    int ncandidates = usedN * sqrt(c) / CUTOFF_DIVISOR;
+    int usedN = nrows > MAXN ? MAXN : nrows; // TODO: is this just min(ncols, MAXN)?
+    int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
     if (ncandidates < 4) ncandidates = 4;
     //printf("nc %d\n",nc);
     leftTarget = (float*)_mm_malloc(ncandidates * sizeof(float), 64);
@@ -91,23 +92,23 @@ FastTree::FastTree(FastForest* parent) {
 
 void FastTree::createIdxsAndOob_() {
     // TODO: OOB
-    n = 0;
-    auto r = new float[parent->n];
+    nrows = 0;
+    auto r = new float[parent->nrows];
     uniform_real_distribution<float> gen(0.0f, 1.0f);
 
-    for (auto i = 0; i < parent->n; i++) {
+    for (auto i = 0; i < parent->nrows; i++) {
         r[i] = gen(*rng);
-        if (r[i] < parent->PROP_TRAIN) n++;
+        if (r[i] < parent->PROP_TRAIN) nrows++;
     }
 
-    X = new float*[n];
-    y = new float[n];
-    idxs = new int[n];
+    X = new float*[nrows];
+    y = new float[nrows];
+    idxs = new int[nrows];
     auto cur = 0;
-    for (auto i = 0; i < parent->n; i++) {
+    for (auto i = 0; i < parent->nrows; i++) {
         if (r[i] < parent->PROP_TRAIN)
         {
-            X[cur] = &(parent->X[i*c]);
+            X[cur] = &(parent->X[i*ncols]);
             y[cur] = parent->y[i];
             idxs[cur] = i;
             cur++;
@@ -121,7 +122,7 @@ void FastTree::createIdxsAndOob_() {
 void FastTree::shuffle() {
     uniform_real_distribution<float> gen(0.0f, 1.0f);
 
-    for (int i = n; i > 1; i--) {
+    for (int i = nrows; i > 1; i--) {
         // Pick random element to swap.
         auto j = (int)(gen(*rng) * i); // 0 <= j <= i-1
         // Swap
@@ -138,7 +139,7 @@ void FastTree::shuffle() {
 void FastTree::buildNodes_() {
     stack<Node*> s;
     // TODO: clean up Node memory on destruction
-    root = new Node(0, n, nullptr, true);
+    root = new Node(0, nrows, nullptr, true);
     s.push(root);
 
     int i=0;
@@ -178,12 +179,12 @@ void FastTree::bestCutoff_(Node *node) {
 
     // First: set up the cutoffs[]
     int usedN = n > MAXN ? MAXN : n;
-    int ncandidates = usedN * sqrt(c) / CUTOFF_DIVISOR;
+    int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
     if (ncandidates < 4) ncandidates = 4;
 	reset(ncandidates);
 
     uniform_int_distribution<int> gen2(start, start+n-1);
-    uniform_int_distribution<int> gen3(0, c-1);
+    uniform_int_distribution<int> gen3(0, ncols-1);
     // TODO: Don't add cutoffs that aren't unique on both val and predidx
     for (int i = 0; i < ncandidates; i++) {
         auto predidx = gen3(*rng);
@@ -258,7 +259,7 @@ bool FastTree::allSame_(Node *node) {
     int n = node->n;
     if (n > MAXN) n = MAXN;
     int start = node->start;
-    int first = y[start];
+    int first = y[start]; // TODO: this has to be float
 
     for (int i = start + 1; i < start + n; i++)
         if (y[i] != first) return false;
@@ -303,11 +304,11 @@ int FastTree::shuffle_(Node *node) {
     return i-start;
 }
 
-float FastTree::predict(float * const arr) {
+float FastTree::predict(float const *X) {
     Node* node = root;
     int i=0;
     while (node->bestPred >= 0 && i++<10000) {
-        node = (arr[node->bestPred] < node->cutoff) ? node->left : node->right;
+        node = (X[node->bestPred] < node->cutoff) ? node->left : node->right;
     }
     if (i>1000) printf("************---\n");
     return node->value;
