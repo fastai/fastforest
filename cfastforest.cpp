@@ -71,18 +71,14 @@ FastTree::FastTree(FastForest* parent) {
     int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
     if (ncandidates < 4) ncandidates = 4;
     //printf("nc %d\n", ncandidates);
-    candInfo = (CandidateInfo *)_mm_malloc(ncandidates * sizeof(CandidateInfo), 64);
 
 	buildNodes_();
-	clearStorage_();
 }
 
-void FastTree::clearStorage_() {
-    _mm_free(candInfo);
-}
-
-void FastTree::reset(int ncandidates) {
-	for (int i = 0; i < ncandidates; i++) { candInfo[i].leftSqrTarget=candInfo[i].leftTarget=candInfo[i].leftCount = 0; }
+inline void FastTree::reset(CandidateInfo *candInfo, int ncandidates) {
+	for (int i = 0; i < ncandidates; i++) {
+	    candInfo[i].leftSqrTarget = candInfo[i].leftTarget = candInfo[i].leftCount = 0;
+	}
 }
 
 void FastTree::createIdxsAndOob_() {
@@ -176,7 +172,9 @@ void FastTree::bestCutoff_(Node *node) {
     int usedN = n > MAXN ? MAXN : n;
     int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
     if (ncandidates < 4) ncandidates = 4;
-	reset(ncandidates);
+
+    CandidateInfo candInfo[ncandidates]; // Only works in GCC I think but that's ok as we rely on OpenMP in GCC also
+    reset(candInfo, ncandidates);
 
     uniform_int_distribution<int> gen2(start, start+n-1);
     uniform_int_distribution<int> gen3(0, ncols-1);
@@ -193,7 +191,7 @@ void FastTree::bestCutoff_(Node *node) {
         uniform_int_distribution<int> gen4(0, n-usedN-1);
         usedStart += gen4(*rng);
     }
-	checkCutoffs(usedStart, usedN, ncandidates);
+	checkCutoffs(usedStart, usedN, candInfo, ncandidates);
 
     for (int r = usedStart; r < usedStart + usedN; r++) {
         sumTarget += y[r]; sumSqrTarget += y[r]*y[r];
@@ -244,7 +242,7 @@ void do_cutoffchk(int ncandidates, float const * pred, float target, CandidateIn
     }
 }
 
-void FastTree::checkCutoffs(int start, int n, int ncandidates) {
+void FastTree::checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates) {
     //printf("b start %d n %d\n", start, n);
     for (int r = start; r < start + n; r++) {
         do_cutoffchk(ncandidates, X[r], y[r], candInfo);

@@ -60,17 +60,12 @@ public:
     float** X;  // rows subset used to train tree
     int* idxs;
     Node* root;
-	//_mm_free(leftSqrTarget); _mm_free(leftTarget); _mm_free(leftCount); _mm_free(cutvals); _mm_free(cutidxs);
-//    float *leftTarget, *leftSqrTarget, *cutvals;
-//    int *leftCount, *cutidxs;
-	CandidateInfo *candInfo;
 
-    void clearStorage_();
-    void reset(int ncandidates);
+    static void reset(CandidateInfo *candInfo, int ncandidates);
     void createIdxsAndOob_();
     void shuffle();
     void buildNodes_();
-    void checkCutoffs(int start, int n, int ncandidates);
+    void checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates);
     void bestCutoff_(Node *node);
     bool allSame_(Node *node);
     static float wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount);
