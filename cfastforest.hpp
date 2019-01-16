@@ -23,7 +23,7 @@ public:
     float cutoff, value, gini;
 
     Node(int start, int n, Node *parent, bool isLeft);
-    bool IsTerminal();
+    bool isTerminal();
 };
 
 class FastTree;
@@ -39,8 +39,8 @@ public:
     FastTree** trees;
 
     FastForest(float* X_, float* y_, int n_, int c_);
-    void Build();
-    float* Predict(float* rows, int n, int c);
+    void build();
+    float* predict(float *rows, int n, int c);
 };
 
 class FastTree {
@@ -58,19 +58,20 @@ public:
     float *lT, *lT2, *cutvals;
     int *lC, *cutidxs;
 
-    void ClearStorage_();
-    void Reset(int nc);
-    void CreateIdxsAndOob_();
-    void Shuffle();
-    void BuildNodes_();
-    void CheckCutoffs(int start, int n, int nc);
-    void BestCutoff_(Node* node);
-    bool AllSame_(Node* node);
-    static float WgtGini_(float cActs, float cActs2, float cCount, float totActs, float totActs2, float totCount);
-    static float Gini_(float numAct, float numAct2, float n);
-    int Shuffle_(Node* node);
-    float Predict(float* arr);
+    void clearStorage_();
+    void reset(int ncandidates);
+    void createIdxsAndOob_();
+    void shuffle();
+    void buildNodes_();
+    void checkCutoffs(int start, int n, int ncandidates);
+    void bestCutoff_(Node *node);
+    bool allSame_(Node *node);
+    static float wgtGini_(float cTarget, float cSqrTarget, float cCount, float sumTarget, float sumSqrTarget, float totCount);
+    int shuffle_(Node *node);
+    float predict(float *arr);
 };
 
-FastForest* train_ff(float *x_, float *y, int r, int c);
+FastForest* trainFF(float *x_, float *y, int r, int c);
 
+template <typename T> double stdev(T b, T e);
+float gini_(float sumTarget, float sumSqrTarget, float n);

@@ -8,7 +8,7 @@ from libcpp cimport bool
 np.import_array()
 
 cdef extern from "cfastforest.hpp":
-    FastForest* train_ff(float *x_, float *y, int r, int c)
+    FastForest* trainFF(float *x_, float *y, int r, int c)
     cdef cppclass Node:
         Node *left
         Node *right
@@ -18,11 +18,11 @@ cdef extern from "cfastforest.hpp":
     cdef cppclass FastForest:
         FastTree** trees
         int n
-        float* Predict(float* rows, int n, int c)
+        float* predict(float* rows, int n, int c)
     cdef cppclass FastTree:
         int n
         Node* root
-        float Predict(float* arr)
+        float predict(float* arr)
 
 cdef makenode(Node *ptr):
     res = PyNode()
@@ -56,7 +56,7 @@ cdef class PyFastTree:
     def __cinit__(self): self.ptr = NULL
     @property
     def root(self): return makenode(self.ptr.root)
-    cpdef predict(self, float[:] row): return self.ptr.Predict(&row[0])
+    cpdef predict(self, float[:] row): return self.ptr.predict(&row[0])
 
 cdef class PyFastForest:
     cdef FastForest *ptr
@@ -66,7 +66,7 @@ cdef class PyFastForest:
         cdef float [:,:] xv = x
         y = np.ascontiguousarray(y).astype(np.float32)
         cdef float [:] yv = y
-        self.ptr = train_ff(&xv[0,0], &yv[0], n, c)
+        self.ptr = trainFF(&xv[0,0], &yv[0], n, c)
 
     def get_tree(self,i):
         res = PyFastTree()
