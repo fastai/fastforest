@@ -1,4 +1,5 @@
 # distutils: language = c++
+# cython: language_level=3
 # distutils: sources = cfastforest.cpp
 
 import pandas as pd, numpy as np
