@@ -43,6 +43,11 @@ public:
     float* predict(float *X, int nrows, int ncols);
 };
 
+struct CandidateInfo {
+	float leftTarget, leftSqrTarget, cutvals;
+	int leftCount, cutidxs;
+};
+
 class FastTree {
 public:
     const int MAXN = 160, CUTOFF_DIVISOR = 10;
@@ -55,8 +60,10 @@ public:
     float** X;  // rows subset used to train tree
     int* idxs;
     Node* root;
-    float *leftTarget, *leftSqrTarget, *cutvals;
-    int *leftCount, *cutidxs;
+	//_mm_free(leftSqrTarget); _mm_free(leftTarget); _mm_free(leftCount); _mm_free(cutvals); _mm_free(cutidxs);
+//    float *leftTarget, *leftSqrTarget, *cutvals;
+//    int *leftCount, *cutidxs;
+	CandidateInfo *candInfo;
 
     void clearStorage_();
     void reset(int ncandidates);
