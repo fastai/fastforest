@@ -9,11 +9,11 @@ FastForest* trainFF(float *X, float *y, int nrows, int ncols) {
     return ff;
 }
 
-Node::Node(int start, int n, Node* parent, bool isLeft) {
+Node::Node(int start, int nrows, Node* parent, bool isLeft) {
     bestPred = -1;
     value=gini=cutoff=0.0;
     this->start = start;
-    this->n = n;
+    this->nrows = nrows;
     this->isLeft = isLeft;
     if (parent == nullptr) return;
 
@@ -155,7 +155,7 @@ void FastTree::buildNodes_() {
         }
 
         int leftn = shuffle_(node);
-        int rightn = node->n - leftn;
+        int rightn = node->nrows - leftn;
         if (leftn == 0 || rightn == 0)
             printf("i %d l %d r %d\n", i, leftn, rightn); 
 
@@ -165,7 +165,7 @@ void FastTree::buildNodes_() {
 }
 
 void FastTree::bestCutoff_(Node *node) {
-    int n = node->n;
+    int n = node->nrows;
     auto start = node->start;
 	float sumTarget=0, sumSqrTarget=0;
 
@@ -256,7 +256,7 @@ void FastTree::checkCutoffs(int start, int n, int ncandidates) {
 }
 
 bool FastTree::allSame_(Node *node) {
-    int n = node->n;
+    int n = node->nrows;
     if (n > MAXN) n = MAXN;
     int start = node->start;
     int first = y[start]; // TODO: this has to be float
@@ -270,18 +270,18 @@ bool FastTree::allSame_(Node *node) {
 float FastTree::wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount) {
     float l = gini_(leftTarget, leftSqrTarget, leftCount);
     float r = gini_(sumTarget - leftTarget, sumSqrTarget - leftSqrTarget, totCount - leftCount);
-    float lProp = leftCount/totCount;
+    float lprop = leftCount/totCount;
     float result = 0.0;
 
     // avoids NaNs by checking size of segment
-    if (lProp > 0) result += l*lProp;
-    if (lProp < 1) result += r*(1 - lProp);
+    if (lprop > 0) result += l*lprop;
+    if (lprop < 1) result += r*(1 - lprop);
     return result;
 }
 
 int FastTree::shuffle_(Node *node) {
     int start = node->start;
-    int n = node->n, p = node->bestPred;
+    int n = node->nrows, p = node->bestPred;
     float cutoff = node->cutoff;
 
     int end = start + n;

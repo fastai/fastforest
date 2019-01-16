@@ -14,7 +14,7 @@ cdef extern from "cfastforest.hpp":
         Node *left
         Node *right
         bool isLeft
-        int start, n, bestPred
+        int start, nrows, bestPred
         float cutoff, value, gini
     cdef cppclass FastForest:
         FastTree** trees
@@ -42,7 +42,7 @@ cdef class PyNode:
     @property
     def start(self): return self.ptr.start
     @property
-    def n(self): return self.ptr.n
+    def n(self): return self.ptr.nrows
     @property
     def bestPred(self): return self.ptr.bestPred
     @property
