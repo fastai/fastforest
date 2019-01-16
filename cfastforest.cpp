@@ -75,12 +75,6 @@ FastTree::FastTree(FastForest* parent) {
 	buildNodes_();
 }
 
-inline void FastTree::reset(CandidateInfo *candInfo, int ncandidates) {
-	for (int i = 0; i < ncandidates; i++) {
-	    candInfo[i].leftSqrTarget = candInfo[i].leftTarget = candInfo[i].leftCount = 0;
-	}
-}
-
 void FastTree::createIdxsAndOob_() {
     // TODO: OOB
     nrows = 0;
@@ -174,7 +168,6 @@ void FastTree::bestCutoff_(Node *node) {
     if (ncandidates < 4) ncandidates = 4;
 
     CandidateInfo candInfo[ncandidates]; // Only works in GCC I think but that's ok as we rely on OpenMP in GCC also
-    reset(candInfo, ncandidates);
 
     uniform_int_distribution<int> gen2(start, start+n-1);
     uniform_int_distribution<int> gen3(0, ncols-1);

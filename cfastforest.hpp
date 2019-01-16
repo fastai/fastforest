@@ -46,6 +46,10 @@ public:
 struct CandidateInfo {
 	float leftTarget, leftSqrTarget, cutvals;
 	int leftCount, cutidxs;
+
+	// might be tiny bit slower to init with ctor vs iterating over array but
+	// we don't need reset() function this way.
+	CandidateInfo() { leftSqrTarget = leftTarget = leftCount = 0; }
 };
 
 class FastTree {
@@ -61,7 +65,6 @@ public:
     int* idxs;
     Node* root;
 
-    static void reset(CandidateInfo *candInfo, int ncandidates);
     void createIdxsAndOob_();
     void shuffle();
     void buildNodes_();
