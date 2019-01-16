@@ -51,7 +51,7 @@ public:
     FastForest* parent;
     default_random_engine* rng;
     int c, n;
-    float* y;  // rows subset used to train tree
+    float* y;   // rows subset used to train tree
     float** X;  // rows subset used to train tree
     int* idxs;
     Node* root;

@@ -3,7 +3,7 @@
 using namespace std;
 
 FastForest* trainFF(float *x_, float *y, int r, int c) {
-    FastForest* ff = new FastForest(x_, y, r, c);
+    auto ff = new FastForest(x_, y, r, c);
 	ff->build();
     return ff;
 }
@@ -237,7 +237,7 @@ void FastTree::bestCutoff_(Node *node) {
             //leftTarget[bestidx], leftCount[bestidx], usedN, crit, node->gini, bestidx, node->bestPred, node->cutoff, node->value);
 }
 
-void do_cutoffchk(int ncandidates, float* pred, float act, int* cutidxs, float* cutvals, float* leftTarget, float* leftSqrTarget, int* leftCount) {
+void do_cutoffchk(int ncandidates, float const * pred, float act, int const *cutidxs, float const *cutvals, float* leftTarget, float* leftSqrTarget, int* leftCount) {
     //#pragma ivdep
     for (int i = 0; i < ncandidates; i++) {
         if (pred[cutidxs[i]] >= cutvals[i]) continue;
@@ -303,7 +303,7 @@ int FastTree::shuffle_(Node *node) {
     return i-start;
 }
 
-float FastTree::predict(float *arr) {
+float FastTree::predict(float * const arr) {
     Node* node = root;
     int i=0;
     while (node->bestPred >= 0 && i++<10000) {
