@@ -43,6 +43,15 @@ public:
     float* predict(float *X, int nrows, int ncols);
 };
 
+struct CandidateInfo {
+	float leftTarget, leftSqrTarget, cutvals;
+	int leftCount, cutidxs;
+
+	// might be tiny bit slower to init with ctor vs iterating over array but
+	// we don't need reset() function this way.
+	CandidateInfo() { leftSqrTarget = leftTarget = leftCount = 0; }
+};
+
 class FastTree {
 public:
     const int MAXN = 160, CUTOFF_DIVISOR = 10;
@@ -55,15 +64,11 @@ public:
     float** X;  // rows subset used to train tree
     int* idxs;
     Node* root;
-    float *leftTarget, *leftSqrTarget, *cutvals;
-    int *leftCount, *cutidxs;
 
-    void clearStorage_();
-    void reset(int ncandidates);
     void createIdxsAndOob_();
     void shuffle();
     void buildNodes_();
-    void checkCutoffs(int start, int n, int ncandidates);
+    void checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates);
     void bestCutoff_(Node *node);
     bool allSame_(Node *node);
     static float wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount);

@@ -58,19 +58,10 @@ float* FastForest::predict(float *X, int nrows, int ncols) {
     return res; 
 }
 
-
-void FastTree::clearStorage_() {
-    _mm_free(leftSqrTarget); _mm_free(leftTarget); _mm_free(leftCount); _mm_free(cutvals); _mm_free(cutidxs);
-}
-
-void FastTree::reset(int ncandidates) {
-    for (int i = 0; i < ncandidates; i++) { leftSqrTarget[i]=leftTarget[i]=leftCount[i] = 0; }
-}
-
 FastTree::FastTree(FastForest* parent) {
     this->parent = parent;
     this->ncols = parent->ncols;
- 
+
     random_device rd;
     rng = new default_random_engine(rd());
 
@@ -79,15 +70,9 @@ FastTree::FastTree(FastForest* parent) {
     int usedN = nrows > MAXN ? MAXN : nrows; // TODO: is this just min(ncols, MAXN)?
     int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
     if (ncandidates < 4) ncandidates = 4;
-    //printf("nc %d\n",nc);
-    leftTarget = (float*)_mm_malloc(ncandidates * sizeof(float), 64);
-    leftSqrTarget = (float*)_mm_malloc(ncandidates * sizeof(float), 64);
-    cutvals = (float*)_mm_malloc(ncandidates * sizeof(float), 64);
-    leftCount = (int*)_mm_malloc(ncandidates * sizeof(int), 64);
-    cutidxs = (int*)_mm_malloc(ncandidates * sizeof(int), 64);
+    //printf("nc %d\n", ncandidates);
 
 	buildNodes_();
-	clearStorage_();
 }
 
 void FastTree::createIdxsAndOob_() {
@@ -181,15 +166,16 @@ void FastTree::bestCutoff_(Node *node) {
     int usedN = n > MAXN ? MAXN : n;
     int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
     if (ncandidates < 4) ncandidates = 4;
-	reset(ncandidates);
+
+    CandidateInfo candInfo[ncandidates]; // Only works in GCC I think but that's ok as we rely on OpenMP in GCC also
 
     uniform_int_distribution<int> gen2(start, start+n-1);
     uniform_int_distribution<int> gen3(0, ncols-1);
     // TODO: Don't add cutoffs that aren't unique on both val and predidx
     for (int i = 0; i < ncandidates; i++) {
         auto predidx = gen3(*rng);
-        cutidxs[i] = predidx;
-        cutvals[i] = X[gen2(*rng)][predidx];
+        candInfo[i].cutidxs = predidx;
+        candInfo[i].cutvals = X[gen2(*rng)][predidx];
     }
 
     //printf("a start %d n %d usedN %d\n", start, n, usedN);
@@ -198,36 +184,36 @@ void FastTree::bestCutoff_(Node *node) {
         uniform_int_distribution<int> gen4(0, n-usedN-1);
         usedStart += gen4(*rng);
     }
-	checkCutoffs(usedStart, usedN, ncandidates);
+	checkCutoffs(usedStart, usedN, candInfo, ncandidates);
 
     for (int r = usedStart; r < usedStart + usedN; r++) {
         sumTarget += y[r]; sumSqrTarget += y[r]*y[r];
     }
     //printf("n %d start %d pn %d ncandidates %d sumTarget %d usedN %d MAXN %d c %d\n", n, start, parent->n, ncandidates, sumTarget, usedN, MAXN, c);
-    //for (int i=0; i<ncandidates; i++) printf("lt %f cutvals %f lc %d cutidxs %d\n", leftTarget[i], cutvals[i], leftCount[i], cutidxs[i]);
+    //for (int i=0; i<ncandidates; i++) printf("lt %f cutvals %f lc %d cutidxs %d\n", candInfo[i].leftTarget, candInfo[i].cutvals, candInfo[i].leftCount, candInfo[i].cutidxs);
 
     // Finally: See which cutoff has best information gain
     float crit = node->gini = wgtGini_(0, 0, 0, sumTarget, sumSqrTarget, usedN);
 
     int bestidx = -1;
     for (int i = 0; i < ncandidates; i++) {
-        int l=leftCount[i]; int r=usedN-leftCount[i];
+        int l=candInfo[i].leftCount; int r=usedN-candInfo[i].leftCount;
         int min_size = max(int(usedN*0.05), parent->MIN_NODE/3);
         if (l<min_size || r<min_size) {
             //printf("XXX l %d r %d ci %d cu %f \n", l, r, cutidxs[i], cutvals[i]);
             continue;
         }
-        auto g = wgtGini_(leftTarget[i], leftSqrTarget[i], l, sumTarget, sumSqrTarget, usedN);
-        //printf("   i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, leftTarget[i]);
+        auto g = wgtGini_(candInfo[i].leftTarget, candInfo[i].leftSqrTarget, l, sumTarget, sumSqrTarget, usedN);
+        //printf("   i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, candInfo[i].leftTarget);
         if (g <= crit) continue;
-        //printf("***i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, leftTarget[i]);
+        //printf("***i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, candInfo[i].leftTarget);
         crit = g; 
         bestidx = i;
     }
 
     if (bestidx >= 0) { // Did we make an improvement?
-        node->bestPred = cutidxs[bestidx];
-        node->cutoff = cutvals[bestidx];
+        node->bestPred = candInfo[bestidx].cutidxs;
+        node->cutoff = candInfo[bestidx].cutvals;
     }
 
     // Only approximate if sampled:
@@ -235,23 +221,24 @@ void FastTree::bestCutoff_(Node *node) {
     if (node->value<1)
         printf("*** n %d bp %d v %f sumTarget %f\n", n, node->bestPred, node->value, sumTarget);
     //printf("lt %f lc %d n %d crit %f gini %f bestidx %d bestPred %d cutoff %f value %f\n",
-            //leftTarget[bestidx], leftCount[bestidx], usedN, crit, node->gini, bestidx, node->bestPred, node->cutoff, node->value);
+            //candInfo[bestidx].leftTarget, candInfo[bestidx].leftCount, usedN, crit, node->gini, bestidx, node->bestPred, node->cutoff, node->value);
 }
 
-void do_cutoffchk(int ncandidates, float const * pred, float act, int const *cutidxs, float const *cutvals, float* leftTarget, float* leftSqrTarget, int* leftCount) {
+// TODO: is pred actually x (feature value)?
+void do_cutoffchk(int ncandidates, float const * pred, float target, CandidateInfo *candInfo) {
     //#pragma ivdep
     for (int i = 0; i < ncandidates; i++) {
-        if (pred[cutidxs[i]] >= cutvals[i]) continue;
-        leftTarget[i] += act;
-        leftSqrTarget[i] += act*act;
-        leftCount[i]++;
+        if (pred[candInfo[i].cutidxs] >= candInfo[i].cutvals) continue;
+        candInfo[i].leftTarget += target;
+        candInfo[i].leftSqrTarget += target*target;
+        candInfo[i].leftCount++;
     }
 }
 
-void FastTree::checkCutoffs(int start, int n, int ncandidates) {
+void FastTree::checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates) {
     //printf("b start %d n %d\n", start, n);
     for (int r = start; r < start + n; r++) {
-        do_cutoffchk(ncandidates, X[r], y[r], cutidxs, cutvals, leftTarget, leftSqrTarget, leftCount);
+        do_cutoffchk(ncandidates, X[r], y[r], candInfo);
     }
 }
 
