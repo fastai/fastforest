@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0)
-project(fastforest)
+project(fastforest LANGUAGES CXX)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
 find_package(pybind11 REQUIRED)
