@@ -1,9 +1,9 @@
+*.swp
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 cython_debug
 fastforest.html
-fastforest.cpp
 data
 tmp
 

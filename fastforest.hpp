@@ -17,8 +17,8 @@
 #include <Eigen/Dense>
 
 using namespace std;
-using Mat = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-using Vec = Eigen::VectorXf;
+using Mat = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using Vec = Eigen::ArrayXf;
 
 class Node {
 public:
