@@ -51,8 +51,8 @@ public:
 };
 
 struct CandidateInfo {
-    float leftTarget, leftSqrTarget, cutvals;
-    int leftCount, cutidxs;
+    float leftTarget, leftSqrTarget, cutval;
+    int leftCount, cutcol;
 
     // might be tiny bit slower to init with ctor vs iterating over array but
     // we don't need reset() function this way.
