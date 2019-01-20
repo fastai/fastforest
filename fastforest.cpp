@@ -42,7 +42,7 @@ Vec FastForest::predict(Mat X) {
     Vec res(nrows);
     for (int i=0; i<nrows; i++) res[i]=0;
 
-    //#pragma omp parallel for  
+    //#pragma omp parallel for
     for (int i = 0; i < NTREE; i++) {
         auto tree = trees[i];
         for (int j = 0; j < nrows; j++) {
@@ -55,7 +55,7 @@ Vec FastForest::predict(Mat X) {
     }
 
     res /= NTREE;
-    return res; 
+    return res;
 }
 
 FastTree::FastTree(FastForest* parent) {
@@ -79,10 +79,10 @@ void FastTree::createIdxsAndOob_() {
     // TODO: OOB
     nrows = 0;
     auto r = new float[parent->nrows];
-    uniform_real_distribution<float> gen(0.0f, 1.0f);
+    uniform_real_distribution<float> rowgen(0.0f, 1.0f);
 
     for (auto i = 0; i < parent->nrows; i++) {
-        r[i] = gen(*rng);
+        r[i] = rowgen(*rng);
         if (r[i] < parent->PROP_TRAIN) nrows++;
     }
 
@@ -107,11 +107,11 @@ void FastTree::createIdxsAndOob_() {
 }
 
 void FastTree::shuffle() {
-    uniform_real_distribution<float> gen(0.0f, 1.0f);
+    uniform_real_distribution<float> rowgen(0.0f, 1.0f);
 
     for (int i = nrows; i > 1; i--) {
         // Pick random element to swap.
-        auto j = (int)(gen(*rng) * i); // 0 <= j <= i-1
+        auto j = (int)(rowgen(*rng) * i); // 0 <= j <= i-1
         // Swap
         float* tmp = X[j];
         X[j] = X[i - 1];
@@ -135,7 +135,7 @@ void FastTree::buildNodes_() {
         auto node = s.top();
         s.pop();
 
-                bestCutoff_(node);
+        bestCutoff_(node);
         if (node->isTerminal()) {
             //printf("---T: i %d v %f\n", i, node->value);
             continue;
@@ -144,7 +144,7 @@ void FastTree::buildNodes_() {
         int leftn = shuffle_(node);
         int rightn = node->nrows - leftn;
         if (leftn == 0 || rightn == 0)
-            printf("i %d l %d r %d\n", i, leftn, rightn); 
+            printf("i %d l %d r %d\n", i, leftn, rightn);
 
         s.push(new Node(node->start+leftn, rightn, node, false));
         s.push(new Node(node->start, leftn, node, true));
@@ -154,7 +154,7 @@ void FastTree::buildNodes_() {
 void FastTree::bestCutoff_(Node *node) {
     int n = node->nrows;
     auto start = node->start;
-        float sumTarget=0, sumSqrTarget=0;
+    float sumTarget=0, sumSqrTarget=0;
 
     if (n < parent->MIN_NODE || allSame_(node)) {
         for (int i = start; i < start+n; i++) sumTarget += y[i];
@@ -171,28 +171,28 @@ void FastTree::bestCutoff_(Node *node) {
 
     CandidateInfo candInfo[ncandidates]; // Only works in GCC I think but that's ok as we rely on OpenMP in GCC also
 
-    uniform_int_distribution<int> gen2(start, start+n-1);
-    uniform_int_distribution<int> gen3(0, ncols-1);
+    uniform_int_distribution<int> colgen(0, ncols-1);
+    uniform_int_distribution<int> splitgen(start, start+n-1);
     // TODO: Don't add cutoffs that aren't unique on both val and predidx
     for (int i = 0; i < ncandidates; i++) {
-        auto predidx = gen3(*rng);
-        candInfo[i].cutidxs = predidx;
-        candInfo[i].cutvals = X[gen2(*rng)][predidx];
+        auto colidx = colgen(*rng);
+        candInfo[i].cutcol = colidx;
+        candInfo[i].cutval = X[splitgen(*rng)][colidx];
     }
 
     //printf("a start %d n %d usedN %d\n", start, n, usedN);
     int usedStart = start;
     if (n>usedN) {
-        uniform_int_distribution<int> gen4(0, n-usedN-1);
-        usedStart += gen4(*rng);
+        uniform_int_distribution<int> startgen(0, n-usedN-1);
+        usedStart += startgen(*rng);
     }
-        checkCutoffs(usedStart, usedN, candInfo, ncandidates);
+    checkCutoffs(usedStart, usedN, candInfo, ncandidates);
 
     for (int r = usedStart; r < usedStart + usedN; r++) {
         sumTarget += y[r]; sumSqrTarget += y[r]*y[r];
     }
     //printf("n %d start %d pn %d ncandidates %d sumTarget %d usedN %d MAXN %d c %d\n", n, start, parent->n, ncandidates, sumTarget, usedN, MAXN, c);
-    //for (int i=0; i<ncandidates; i++) printf("lt %f cutvals %f lc %d cutidxs %d\n", candInfo[i].leftTarget, candInfo[i].cutvals, candInfo[i].leftCount, candInfo[i].cutidxs);
+    //for (int i=0; i<ncandidates; i++) printf("lt %f cutval %f lc %d cutcol %d\n", candInfo[i].leftTarget, candInfo[i].cutval, candInfo[i].leftCount, candInfo[i].cutcol);
 
     // Finally: See which cutoff has best information gain
     float crit = node->gini = wgtGini_(0, 0, 0, sumTarget, sumSqrTarget, usedN);
@@ -202,20 +202,20 @@ void FastTree::bestCutoff_(Node *node) {
         int l=candInfo[i].leftCount; int r=usedN-candInfo[i].leftCount;
         int min_size = max(int(usedN*0.05), parent->MIN_NODE/3);
         if (l<min_size || r<min_size) {
-            //printf("XXX l %d r %d ci %d cu %f \n", l, r, cutidxs[i], cutvals[i]);
+            //printf("XXX l %d r %d ci %d cu %f \n", l, r, cutcol[i], cutval[i]);
             continue;
         }
         auto g = wgtGini_(candInfo[i].leftTarget, candInfo[i].leftSqrTarget, l, sumTarget, sumSqrTarget, usedN);
         //printf("   i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, candInfo[i].leftTarget);
         if (g <= crit) continue;
         //printf("***i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, candInfo[i].leftTarget);
-        crit = g; 
+        crit = g;
         bestidx = i;
     }
 
     if (bestidx >= 0) { // Did we make an improvement?
-        node->bestPred = candInfo[bestidx].cutidxs;
-        node->cutoff = candInfo[bestidx].cutvals;
+        node->bestPred = candInfo[bestidx].cutcol;
+        node->cutoff = candInfo[bestidx].cutval;
     }
 
     // Only approximate if sampled:
@@ -230,7 +230,7 @@ void FastTree::bestCutoff_(Node *node) {
 void do_cutoffchk(int ncandidates, float const * pred, float target, CandidateInfo *candInfo) {
     //#pragma ivdep
     for (int i = 0; i < ncandidates; i++) {
-        if (pred[candInfo[i].cutidxs] >= candInfo[i].cutvals) continue;
+        if (pred[candInfo[i].cutcol] >= candInfo[i].cutval) continue;
         candInfo[i].leftTarget += target;
         candInfo[i].leftSqrTarget += target*target;
         candInfo[i].leftCount++;
@@ -277,7 +277,7 @@ int FastTree::shuffle_(Node *node) {
     int i;
     for (i = start; i < end; i++) {
         float* pred = X[i];
-        if (pred[p] < cutoff) continue; 
+        if (pred[p] < cutoff) continue;
 
         int e = end-1;
         float* tmp = X[e];
@@ -308,7 +308,7 @@ float FastTree::predict(Vec X) {
 FastTree* FastForest::getTree(int i) {
     return trees[i];
 }
- 
+
 // U t i l i t y  F u n c t i o n s
 
 template<typename T>
@@ -324,6 +324,6 @@ double stdev(T b, T e) {
  * formulation of stddev: s = sqrt((sum(x^2) - n(x_bar)^2)/(n-1)).
  */
 float loss_(float sumTarget, float sumSqrTarget, float n) {
-        return -sqrt((sumSqrTarget - (sumTarget*sumTarget)/n) / (n-1));
+    return -sqrt((sumSqrTarget - (sumTarget*sumTarget)/n) / (n-1));
 }
 
