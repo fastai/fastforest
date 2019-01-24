@@ -20,6 +20,7 @@ using namespace std;
 using Mat = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 using Vec = Eigen::ArrayXf;
 
+/** This class represents both a decision node and a leaf in a decision tree. */
 class Node {
 public:
     struct Node *left, *right;
