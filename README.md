@@ -9,7 +9,7 @@ Requires `cmake`. To install and run a test:
 ```bash
 conda install pybind11 # use conda not pip
 cmake .
-make fastfastory
+make fastforest
 python test.py
 ```
 
