@@ -8,16 +8,12 @@ FastForest* trainFF(Mat X, Vec y) {
     return ff;
 }
 
-Node::Node(int start, int nrows, Node* parent, bool isLeft) {
+Node::Node(int start, int nrows, Node* parent) {
     bestPred = -1;
     value=gini=cutoff=0.0;
     this->start = start;
     this->nrows = nrows;
-    this->isLeft = isLeft;
     if (parent == nullptr) return;
-
-    if (isLeft) parent->left = this;
-    else parent->right = this;
 }
 
 bool Node::isTerminal() { return bestPred == -1; }
@@ -126,7 +122,7 @@ void FastTree::shuffle() {
 void FastTree::buildNodes_() {
     stack<Node*> s;
     // TODO: clean up Node memory on destruction
-    root = new Node(0, nrows, nullptr, true);
+    root = new Node(0, nrows, nullptr);
     s.push(root);
 
     int i=0;
@@ -146,8 +142,10 @@ void FastTree::buildNodes_() {
         if (leftn == 0 || rightn == 0)
             printf("i %d l %d r %d\n", i, leftn, rightn);
 
-        s.push(new Node(node->start+leftn, rightn, node, false));
-        s.push(new Node(node->start, leftn, node, true));
+		node->left = new Node(node->start, leftn, node);
+		node->right = new Node(node->start+leftn, rightn, node);
+        s.push(node->right);
+        s.push(node->left);
     }
 }
 

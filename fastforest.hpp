@@ -23,11 +23,10 @@ using Vec = Eigen::ArrayXf;
 class Node {
 public:
     struct Node *left, *right;
-    bool isLeft;
     int start, nrows, bestPred;
     float cutoff, value, gini;
 
-    Node(int start, int nrows, Node *parent, bool isLeft);
+    Node(int start, int nrows, Node *parent);
     bool isTerminal();
 };
 
