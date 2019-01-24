@@ -142,8 +142,8 @@ void FastTree::buildNodes_() {
         if (leftn == 0 || rightn == 0)
             printf("i %d l %d r %d\n", i, leftn, rightn);
 
-		node->left = new Node(node->start, leftn, node);
-		node->right = new Node(node->start+leftn, rightn, node);
+        node->left = new Node(node->start, leftn, node);
+        node->right = new Node(node->start+leftn, rightn, node);
         s.push(node->right);
         s.push(node->left);
     }
