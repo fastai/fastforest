@@ -246,10 +246,14 @@ bool FastTree::allSame_(Node *node) {
     int n = node->nrows;
     if (n > MAXN) n = MAXN;
     int start = node->start;
-    int first = y[start]; // TODO: this has to be float
+    float first = y[start];
+    const float rtol=1.0e-5, atol=1.0e-8;
 
-    for (int i = start + 1; i < start + n; i++)
-        if (y[i] != first) return false;
+    for (int i = start + 1; i < start + n; i++) {
+        // compare y[i] and first value for equality as best we can
+        // check if difference is <= small tolerance (this is standard trick)
+        if ( !islessequal(abs(y[i]-first), atol + rtol * abs(first)) ) return false;
+    }
 
     return true;
 }
