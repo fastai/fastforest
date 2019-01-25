@@ -8,7 +8,6 @@ PYBIND11_MODULE(fastforest, m) {
     py::class_<Node>(m, "Node")
         .def_readonly("left", &Node::left)
         .def_readonly("right", &Node::right)
-        .def_readonly("isLeft", &Node::isLeft)
         .def_readonly("start", &Node::start)
         .def_readonly("nrows", &Node::nrows)
         .def_readonly("cutcol", &Node::cutcol)

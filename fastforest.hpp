@@ -32,7 +32,7 @@ public:
     float value;  // prediction value (set even for internal decision nodes)
     float gini;   // uncertainty/impurity of this node
 
-    Node(int start, int nrows, Node *parent, bool isLeft);
+    Node(int start, int nrows, Node *parent);
     bool isTerminal();
 };
 
