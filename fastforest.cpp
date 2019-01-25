@@ -61,7 +61,7 @@ FastTree::FastTree(FastForest* parent) {
     random_device rd;
     rng = new default_random_engine(rd());
 
-    createIdxsAndOob_();  // NB: Only happens once per top-level tree
+    createIdxsAndOob_(parent->X.data(), parent->y.data());  // NB: Only happens once per top-level tree
 
     int usedN = nrows > MAXN ? MAXN : nrows; // TODO: is this just min(ncols, MAXN)?
     int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
@@ -71,33 +71,21 @@ FastTree::FastTree(FastForest* parent) {
         buildNodes_();
 }
 
-void FastTree::createIdxsAndOob_() {
+void FastTree::createIdxsAndOob_(float* Xall, float* yall) {
     // TODO: OOB
-    nrows = 0;
-    auto r = new float[parent->nrows];
-    uniform_real_distribution<float> rowgen(0.0f, 1.0f);
-
-    for (auto i = 0; i < parent->nrows; i++) {
-        r[i] = rowgen(*rng);
-        if (r[i] < parent->PROP_TRAIN) nrows++;
-    }
-
+    this->nrows = (int)(parent->sampleFraction * parent->nrows);
     X = new float*[nrows];
     y = new float[nrows];
     idxs = new int[nrows];
-    float* Xd = parent->X.data();
-    float* yd = parent->y.data();
-    auto cur = 0;
-    for (auto i = 0; i < parent->nrows; i++) {
-        if (r[i] < parent->PROP_TRAIN)
-        {
-            X[cur] = &(Xd[i*ncols]);
-            y[cur] = yd[i];
-            idxs[cur] = i;
-            cur++;
-        }
+
+    uniform_int_distribution<int> rowgen(0, parent->nrows-1);
+
+    for (auto i = 0; i < nrows; i++) {
+        int ri = rowgen(*rng);
+        idxs[i] = ri;
+        X[i] = &(Xall[ri*ncols]);
+        y[i] = yall[ri];
     }
-    // test this worked
 
     shuffle();
 }
@@ -106,16 +94,16 @@ void FastTree::shuffle() {
     uniform_real_distribution<float> rowgen(0.0f, 1.0f);
 
     for (int i = nrows; i > 1; i--) {
-        // Pick random element to swap.
-        auto j = (int)(rowgen(*rng) * i); // 0 <= j <= i-1
+        // Pick random element to swap at index j where 0 <= j <= i-1
+        auto j = (int)(rowgen(*rng) * i);
         // Swap
-        float* tmp = X[j];
+        float* savex = X[j];
         X[j] = X[i - 1];
-        X[i - 1] = tmp;
+        X[i - 1] = savex;
 
-        float tmp2 = y[j];
+        float savey = y[j];
         y[j] = y[i - 1];
-        y[i - 1] = tmp2;
+        y[i - 1] = savey;
     }
 }
 

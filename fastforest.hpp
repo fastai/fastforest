@@ -40,10 +40,11 @@ class FastTree;
 class FastForest {
 public:
     int NTREE = 5, MIN_NODE = 25;
-    const float PROP_TRAIN = 0.8, PROP_OOB = 0.5;
+    const float sampleFraction = 0.8; // fraction of rows to extract from training set to train each tree
+    const float PROP_OOB = 0.5;
 
-    Mat X;
-    Vec y;
+    Mat X; // all training feature vectors, one row per observation
+    Vec y; // all training target values, one per observation
     int nrows, ncols;
 
     FastTree** trees;
@@ -55,11 +56,12 @@ public:
 };
 
 struct CandidateInfo {
-    float leftTarget, leftSqrTarget, cutval;
-    int leftCount, cutcol;
+    float leftTarget;    // sum of all target values for observations where X[cutcol] < cutval
+    float leftSqrTarget; // sum of square of target values to left of cutval
+    int leftCount;       // how many observations fall to the left of cutval
+    int cutcol;          // which feature/column this candidate tests
+    float cutval;        // which split value this candidate tests
 
-    // might be tiny bit slower to init with ctor vs iterating over array but
-    // we don't need reset() function this way.
     CandidateInfo() { leftSqrTarget = leftTarget = leftCount = 0; }
 };
 
@@ -69,14 +71,14 @@ public:
     FastTree(FastForest* parent);
 
     FastForest* parent;
-    default_random_engine* rng;
+    default_random_engine* rng; // single random num generator used by code building this tree
     int nrows, ncols;
-    float* y;   // rows subset used to train tree
-    float** X;  // rows subset used to train tree
-    int* idxs;
+    float* y;   // subset of forest's X rows used to train this tree
+    float** X;  // subset of forest's y rows used to train this tree
+    int* idxs;  //
     Node* root;
 
-    void createIdxsAndOob_();
+    void createIdxsAndOob_(float *Xall, float *yall);
     void shuffle();
     void buildNodes_();
     void checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates);
