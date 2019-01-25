@@ -9,8 +9,8 @@ FastForest* trainFF(Mat X, Vec y) {
 }
 
 Node::Node(int start, int nrows, Node* parent, bool isLeft) {
-    bestPred = -1;
-    value=gini=cutoff=0.0;
+    cutcol = -1;
+    value=gini=cutval=0.0;
     this->start = start;
     this->nrows = nrows;
     this->isLeft = isLeft;
@@ -20,7 +20,7 @@ Node::Node(int start, int nrows, Node* parent, bool isLeft) {
     else parent->right = this;
 }
 
-bool Node::isTerminal() { return bestPred == -1; }
+bool Node::isTerminal() { return cutcol == -1; }
 
 FastForest::FastForest(Mat X, Vec y) {
     this->nrows = X.rows(); this->ncols = X.cols(); this->X = X; this->y = y;
@@ -160,7 +160,7 @@ void FastTree::bestCutoff_(Node *node) {
         for (int i = start; i < start+n; i++) sumTarget += y[i];
         node->value = sumTarget/n;
         if (node->value<1)
-            printf("*** n %d bp %d v %f sumTarget %f\n", n, node->bestPred, node->value, sumTarget);
+            printf("*** n %d bp %d v %f sumTarget %f\n", n, node->cutcol, node->value, sumTarget);
         return;
     }
 
@@ -194,7 +194,7 @@ void FastTree::bestCutoff_(Node *node) {
     //printf("n %d start %d pn %d ncandidates %d sumTarget %d usedN %d MAXN %d c %d\n", n, start, parent->n, ncandidates, sumTarget, usedN, MAXN, c);
     //for (int i=0; i<ncandidates; i++) printf("lt %f cutval %f lc %d cutcol %d\n", candInfo[i].leftTarget, candInfo[i].cutval, candInfo[i].leftCount, candInfo[i].cutcol);
 
-    // Finally: See which cutoff has best information gain
+    // Finally: See which split has best information gain
     float crit = node->gini = wgtGini_(0, 0, 0, sumTarget, sumSqrTarget, usedN);
 
     int bestidx = -1;
@@ -214,16 +214,16 @@ void FastTree::bestCutoff_(Node *node) {
     }
 
     if (bestidx >= 0) { // Did we make an improvement?
-        node->bestPred = candInfo[bestidx].cutcol;
-        node->cutoff = candInfo[bestidx].cutval;
+        node->cutcol = candInfo[bestidx].cutcol;
+        node->cutval = candInfo[bestidx].cutval;
     }
 
     // Only approximate if sampled:
     node->value = sumTarget / usedN;
     if (node->value<1)
-        printf("*** n %d bp %d v %f sumTarget %f\n", n, node->bestPred, node->value, sumTarget);
-    //printf("lt %f lc %d n %d crit %f gini %f bestidx %d bestPred %d cutoff %f value %f\n",
-            //candInfo[bestidx].leftTarget, candInfo[bestidx].leftCount, usedN, crit, node->gini, bestidx, node->bestPred, node->cutoff, node->value);
+        printf("*** n %d bp %d v %f sumTarget %f\n", n, node->cutcol, node->value, sumTarget);
+    //printf("lt %f lc %d n %d crit %f gini %f bestidx %d cutcol %d split %f value %f\n",
+            //candInfo[bestidx].leftTarget, candInfo[bestidx].leftCount, usedN, crit, node->gini, bestidx, node->cutcol, node->cutval, node->value);
 }
 
 // TODO: is pred actually x (feature value)?
@@ -269,13 +269,13 @@ float FastTree::wgtGini_(float leftTarget, float leftSqrTarget, float leftCount,
 }
 
 /*
- * Partition observations associated with node so rows whose y value is < cutoff is on
- * the left and those >= cutoff are on the right.  Return how many elements are to the left.
+ * Partition observations associated with node so rows whose y value is < split is on
+ * the left and those >= split are on the right.  Return how many elements are to the left.
  */
 int FastTree::partition_(Node *node) {
     int start = node->start;
-    int n = node->nrows, col = node->bestPred;
-    float cutoff = node->cutoff;
+    int n = node->nrows, col = node->cutcol;
+    float cutoff = node->cutval;
 
     int end = start + n;
     int i;
@@ -304,8 +304,8 @@ float FastTree::predict(Vec X) {
     Node* node = root;
     const int FAILSAFE = 1000; // TODO: remove when done debugging
         int i=0;                   // TODO: remove when done debugging
-    while ( node->bestPred >= 0 && i<FAILSAFE ) {
-        node = (X(node->bestPred) < node->cutoff) ? node->left : node->right;
+    while ( node->cutcol >= 0 && i<FAILSAFE ) {
+        node = (X(node->cutcol) < node->cutval) ? node->left : node->right;
         i++;
     }
     if (i>FAILSAFE) printf("************---\n");

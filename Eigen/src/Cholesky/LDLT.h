@@ -356,9 +356,9 @@ template<> struct ldlt_inplace<Lower>
       }
 
       // In some previous versions of Eigen (e.g., 3.2.1), the scaling was omitted if the pivot
-      // was smaller than the cutoff value. However, since LDLT is not rank-revealing
+      // was smaller than the split value. However, since LDLT is not rank-revealing
       // we should only make sure that we do not introduce INF or NaN values.
-      // Remark that LAPACK also uses 0 as the cutoff value.
+      // Remark that LAPACK also uses 0 as the split value.
       RealScalar realAkk = numext::real(mat.coeffRef(k,k));
       bool pivot_is_valid = (abs(realAkk) > RealScalar(0));
 

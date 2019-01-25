@@ -16,8 +16,8 @@ exit()
 def split_vals(a,n): return a[:n], a[n:]
 
 def show(df, name, node):
-    bp = df.columns[node.bestPred]
-    print(f'{name} nrows {node.nrows} v {node.value} g {node.gini} bp {bp} c {node.cutoff}')
+    bp = df.columns[node.cutcol]
+    print(f'{name} nrows {node.nrows} v {node.value} g {node.gini} bp {bp} c {node.cutval}')
 
 def test_it(df, y, ff):
     x = df.values

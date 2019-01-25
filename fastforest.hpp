@@ -26,11 +26,11 @@ public:
     struct Node *left, *right;
     bool isLeft;
     int start;    // observation index into tree's data rows where this node's samples start
-    int nrows;    // observation index into tree's data rows where this node's samples stop (inclusive)
-    int bestPred; // which column/variable/feature to test if decision node; -1 indicates leaf
-    float cutoff;
-    float value;
-    float gini;
+    int nrows;    // number of rows of tree's data rows associated with this node
+    int cutcol;   // which column/variable/feature to test if decision node; -1 indicates leaf
+    float cutval; // split value for cutcol
+    float value;  // prediction value (set even for internal decision nodes)
+    float gini;   // uncertainty/impurity of this node
 
     Node(int start, int nrows, Node *parent, bool isLeft);
     bool isTerminal();
