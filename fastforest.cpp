@@ -246,6 +246,7 @@ bool FastTree::allSame(Node *node) {
     return true;
 }
 
+/* Compute weighted loss of targets on left and loss of targets on right of split. */
 float FastTree::wgtGini(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget,
                         float totCount) {
     float l = loss_(leftTarget, leftSqrTarget, leftCount);
