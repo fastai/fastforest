@@ -268,25 +268,32 @@ float FastTree::wgtGini_(float leftTarget, float leftSqrTarget, float leftCount,
     return result;
 }
 
+/*
+ * Partition observations associated with node so rows whose y value is < cutoff is on
+ * the left and those >= cutoff are on the right.  Return how many elements are to the left.
+ */
 int FastTree::partition_(Node *node) {
     int start = node->start;
-    int n = node->nrows, p = node->bestPred;
+    int n = node->nrows, col = node->bestPred;
     float cutoff = node->cutoff;
 
     int end = start + n;
     int i;
     for (i = start; i < end; i++) {
         float *row = X[i];
-        if (row[p] < cutoff) continue;
+        // if already on left, keep looking
+        if (row[col] < cutoff) continue;
 
-        int last = end-1;
-        float *tmp = X[last];
-        X[last] = row;
-        X[i] = tmp;
+        // swap row i of X with last row
+        int lastrow = end-1;
+        float *savex = X[lastrow];
+        X[lastrow] = row;
+        X[i] = savex;
 
-        float tmp2 = y[last];
-        y[last] = y[i];
-        y[i] = tmp2;
+        // swap value i of y with last element
+        float savey = y[lastrow];
+        y[lastrow] = y[i];
+        y[i] = savey;
         i--;
         end--;
     }
