@@ -68,7 +68,6 @@ struct CandidateInfo {
 class FastTree {
 public:
     const int MAXN = 160, CUTOFF_DIVISOR = 10;
-    FastTree(FastForest* parent);
 
     FastForest* parent;
     default_random_engine* rng; // single random num generator used by code building this tree
@@ -78,15 +77,19 @@ public:
     int* idxs;  //
     Node* root;
 
-    void createIdxsAndOob_(float *Xall, float *yall);
-    void shuffle();
-    void buildNodes_();
-    void checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates);
-    void bestCutoff_(Node *node);
-    bool allSame_(Node *node);
-    static float wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount);
-    int partition_(Node *node);
+    FastTree(FastForest* parent);
     float predict(Vec X);
+    void shuffle();
+
+protected:
+    void createIdxsAndOob(float *Xall, float *yall);
+    void buildNodes();
+    void bestCutoff(Node *node);
+    void checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates);
+    bool allSame(Node *node);
+    static float wgtGini(float leftTarget, float leftSqrTarget, float leftCount,
+                         float sumTarget, float sumSqrTarget, float totCount);
+    int partition(Node *node);
 };
 
 FastForest* trainFF(Mat X, Vec y);

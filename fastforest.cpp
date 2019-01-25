@@ -61,17 +61,17 @@ FastTree::FastTree(FastForest* parent) {
     random_device rd;
     rng = new default_random_engine(rd());
 
-    createIdxsAndOob_(parent->X.data(), parent->y.data());  // NB: Only happens once per top-level tree
+    createIdxsAndOob(parent->X.data(), parent->y.data());  // NB: Only happens once per top-level tree
 
     int usedN = nrows > MAXN ? MAXN : nrows; // TODO: is this just min(ncols, MAXN)?
     int ncandidates = usedN * sqrt(ncols) / CUTOFF_DIVISOR;
     if (ncandidates < 4) ncandidates = 4;
     //printf("nc %d\n", ncandidates);
 
-        buildNodes_();
+    buildNodes();
 }
 
-void FastTree::createIdxsAndOob_(float* Xall, float* yall) {
+void FastTree::createIdxsAndOob(float *Xall, float *yall) {
     // TODO: OOB
     this->nrows = (int)(parent->sampleFraction * parent->nrows);
     X = new float*[nrows];
@@ -107,7 +107,7 @@ void FastTree::shuffle() {
     }
 }
 
-void FastTree::buildNodes_() {
+void FastTree::buildNodes() {
     stack<Node*> s;
     // TODO: clean up Node memory on destruction
     root = new Node(0, nrows, nullptr);
@@ -119,13 +119,13 @@ void FastTree::buildNodes_() {
         auto node = s.top();
         s.pop();
 
-        bestCutoff_(node);
+        bestCutoff(node);
         if (node->isTerminal()) {
             //printf("---T: i %d v %f\n", i, node->value);
             continue;
         }
 
-        int leftn = partition_(node);
+        int leftn = partition(node);
         int rightn = node->nrows - leftn;
         if (leftn == 0 || rightn == 0)
             printf("i %d l %d r %d\n", i, leftn, rightn);
@@ -137,12 +137,12 @@ void FastTree::buildNodes_() {
     }
 }
 
-void FastTree::bestCutoff_(Node *node) {
+void FastTree::bestCutoff(Node *node) {
     int n = node->nrows;
     auto start = node->start;
     float sumTarget=0, sumSqrTarget=0;
 
-    if (n < parent->MIN_NODE || allSame_(node)) {
+    if (n < parent->MIN_NODE || allSame(node)) {
         for (int i = start; i < start+n; i++) sumTarget += y[i];
         node->value = sumTarget/n;
         if (node->value<1)
@@ -181,7 +181,7 @@ void FastTree::bestCutoff_(Node *node) {
     //for (int i=0; i<ncandidates; i++) printf("lt %f cutval %f lc %d cutcol %d\n", candInfo[i].leftTarget, candInfo[i].cutval, candInfo[i].leftCount, candInfo[i].cutcol);
 
     // Finally: See which split has best information gain
-    float crit = node->gini = wgtGini_(0, 0, 0, sumTarget, sumSqrTarget, usedN);
+    float crit = node->gini = wgtGini(0, 0, 0, sumTarget, sumSqrTarget, usedN);
 
     int bestidx = -1;
     for (int i = 0; i < ncandidates; i++) {
@@ -191,7 +191,7 @@ void FastTree::bestCutoff_(Node *node) {
             //printf("XXX l %d r %d ci %d cu %f \n", l, r, cutcol[i], cutval[i]);
             continue;
         }
-        auto g = wgtGini_(candInfo[i].leftTarget, candInfo[i].leftSqrTarget, l, sumTarget, sumSqrTarget, usedN);
+        auto g = wgtGini(candInfo[i].leftTarget, candInfo[i].leftSqrTarget, l, sumTarget, sumSqrTarget, usedN);
         //printf("   i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, candInfo[i].leftTarget);
         if (g <= crit) continue;
         //printf("***i %d g %f crit %f bestidx %d l %d r %d lt %f\n", i, g, crit, bestidx, l, r, candInfo[i].leftTarget);
@@ -230,7 +230,7 @@ void FastTree::checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncand
     }
 }
 
-bool FastTree::allSame_(Node *node) {
+bool FastTree::allSame(Node *node) {
     int n = node->nrows;
     if (n > MAXN) n = MAXN;
     int start = node->start;
@@ -242,7 +242,8 @@ bool FastTree::allSame_(Node *node) {
     return true;
 }
 
-float FastTree::wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount) {
+float FastTree::wgtGini(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget,
+                        float totCount) {
     float l = loss_(leftTarget, leftSqrTarget, leftCount);
     float r = loss_(sumTarget - leftTarget, sumSqrTarget - leftSqrTarget, totCount - leftCount);
     float lprop = leftCount/totCount;
@@ -258,7 +259,7 @@ float FastTree::wgtGini_(float leftTarget, float leftSqrTarget, float leftCount,
  * Partition observations associated with node so rows whose y value is < split is on
  * the left and those >= split are on the right.  Return how many elements are to the left.
  */
-int FastTree::partition_(Node *node) {
+int FastTree::partition(Node *node) {
     int start = node->start;
     int n = node->nrows, col = node->cutcol;
     float cutoff = node->cutval;
