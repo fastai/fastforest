@@ -108,16 +108,16 @@ void FastTree::shuffle() {
 }
 
 void FastTree::buildNodes() {
-    stack<Node*> s;
+    stack<Node*> work;
     // TODO: clean up Node memory on destruction
     root = new Node(0, nrows, nullptr);
-    s.push(root);
+    work.push(root);
 
     int i=0;
-    while (!s.empty()) {
+    while (!work.empty()) {
         i++;
-        auto node = s.top();
-        s.pop();
+        auto node = work.top();
+        work.pop();
 
         bestCutoff(node);
         if (node->isTerminal()) {
@@ -132,8 +132,8 @@ void FastTree::buildNodes() {
 
         node->left = new Node(node->start, leftn, node);
         node->right = new Node(node->start+leftn, rightn, node);
-        s.push(node->right);
-        s.push(node->left);
+        work.push(node->right);
+        work.push(node->left);
     }
 }
 

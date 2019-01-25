@@ -47,11 +47,11 @@ public:
     Vec y; // all training target values, one per observation
     int nrows, ncols;
 
-    FastTree** trees;
+    FastTree **trees;
 
     FastForest(Mat X, Vec y);
     void build();
-    FastTree* getTree(int i);
+    FastTree *getTree(int i);
     Vec predict(Mat X);
 };
 
@@ -72,10 +72,10 @@ public:
     FastForest* parent;
     default_random_engine* rng; // single random num generator used by code building this tree
     int nrows, ncols;
-    float* y;   // subset of forest's X rows used to train this tree
-    float** X;  // subset of forest's y rows used to train this tree
-    int* idxs;  //
-    Node* root;
+    float *y;  // subset size nrows of forest's X rows used to train this tree
+    float **X; // subset size nrows of forest's y rows used to train this tree (array of ptrs to float)
+    int *idxs; // nrows indexes into forest's X/y training observations
+    Node *root;
 
     FastTree(FastForest* parent);
     float predict(Vec X);
@@ -92,7 +92,7 @@ protected:
     int partition(Node *node);
 };
 
-FastForest* trainFF(Mat X, Vec y);
+FastForest *trainFF(Mat X, Vec y);
 
 template <typename T> double stdev(T b, T e);
 float loss_(float sumTarget, float sumSqrTarget, float n);
