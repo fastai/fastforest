@@ -276,12 +276,12 @@ int FastTree::partition_(Node *node) {
     int end = start + n;
     int i;
     for (i = start; i < end; i++) {
-        float* pred = X[i];
-        if (pred[p] < cutoff) continue;
+        float *row = X[i];
+        if (row[p] < cutoff) continue;
 
         int last = end-1;
-        float* tmp = X[last];
-        X[last] = pred;
+        float *tmp = X[last];
+        X[last] = row;
         X[i] = tmp;
 
         float tmp2 = y[last];
