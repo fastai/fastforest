@@ -20,13 +20,17 @@ using namespace std;
 using Mat = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 using Vec = Eigen::ArrayXf;
 
-/** This class represents both a decision node and a leaf in a decision tree. */
+/** This class represents both a decision node and a leaf (when bestPred==-1) in a decision tree. */
 class Node {
 public:
     struct Node *left, *right;
     bool isLeft;
-    int start, nrows, bestPred;
-    float cutoff, value, gini;
+    int start;    // observation index into tree's data rows where this node's samples start
+    int nrows;    // observation index into tree's data rows where this node's samples stop (inclusive)
+    int bestPred; // which column/variable/feature to test if decision node; -1 indicates leaf
+    float cutoff;
+    float value;
+    float gini;
 
     Node(int start, int nrows, Node *parent, bool isLeft);
     bool isTerminal();
@@ -80,7 +84,7 @@ public:
     void bestCutoff_(Node *node);
     bool allSame_(Node *node);
     static float wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount);
-    int shuffle_(Node *node);
+    int partition_(Node *node);
     float predict(Vec X);
 };
 

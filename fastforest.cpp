@@ -103,7 +103,7 @@ void FastTree::createIdxsAndOob_() {
     }
     // test this worked
 
-        shuffle();
+    shuffle();
 }
 
 void FastTree::shuffle() {
@@ -141,7 +141,7 @@ void FastTree::buildNodes_() {
             continue;
         }
 
-        int leftn = shuffle_(node);
+        int leftn = partition_(node);
         int rightn = node->nrows - leftn;
         if (leftn == 0 || rightn == 0)
             printf("i %d l %d r %d\n", i, leftn, rightn);
@@ -268,7 +268,7 @@ float FastTree::wgtGini_(float leftTarget, float leftSqrTarget, float leftCount,
     return result;
 }
 
-int FastTree::shuffle_(Node *node) {
+int FastTree::partition_(Node *node) {
     int start = node->start;
     int n = node->nrows, p = node->bestPred;
     float cutoff = node->cutoff;
@@ -279,13 +279,13 @@ int FastTree::shuffle_(Node *node) {
         float* pred = X[i];
         if (pred[p] < cutoff) continue;
 
-        int e = end-1;
-        float* tmp = X[e];
-        X[e] = pred;
+        int last = end-1;
+        float* tmp = X[last];
+        X[last] = pred;
         X[i] = tmp;
 
-        float tmp2 = y[e];
-        y[e] = y[i];
+        float tmp2 = y[last];
+        y[last] = y[i];
         y[i] = tmp2;
         i--;
         end--;
