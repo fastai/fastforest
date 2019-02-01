@@ -10,8 +10,8 @@ PYBIND11_MODULE(fastforest, m) {
         .def_readonly("right", &Node::right)
         .def_readonly("start", &Node::start)
         .def_readonly("nrows", &Node::nrows)
-        .def_readonly("bestPred", &Node::bestPred)
-        .def_readonly("cutoff", &Node::cutoff)
+        .def_readonly("cutcol", &Node::cutcol)
+        .def_readonly("cutval", &Node::cutval)
         .def_readonly("value", &Node::value)
         .def_readonly("gini", &Node::gini);
 

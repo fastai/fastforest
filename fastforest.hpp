@@ -20,11 +20,16 @@ using namespace std;
 using Mat = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 using Vec = Eigen::ArrayXf;
 
+/** This class represents both a decision node and a leaf (when bestPred==-1) in a decision tree. */
 class Node {
 public:
     struct Node *left, *right;
-    int start, nrows, bestPred;
-    float cutoff, value, gini;
+    int start;    // observation index into tree's data rows where this node's samples start
+    int nrows;    // number of rows beyond start index of tree's data rows associated with this node
+    int cutcol;   // which column/variable/feature to test if decision node; -1 indicates leaf
+    float cutval; // split value for cutcol
+    float value;  // prediction value (set even for internal decision nodes)
+    float gini;   // uncertainty/impurity of this node
 
     Node(int start, int nrows, Node *parent);
     bool isTerminal();
@@ -35,54 +40,59 @@ class FastTree;
 class FastForest {
 public:
     int NTREE = 5, MIN_NODE = 25;
-    const float PROP_TRAIN = 0.8, PROP_OOB = 0.5;
+    const float sampleFraction = 0.8; // fraction of rows to extract from training set to train each tree
+    const float PROP_OOB = 0.5;
 
-    Mat X;
-    Vec y;
+    Mat X; // all training feature vectors, one row per observation
+    Vec y; // all training target values, one per observation
     int nrows, ncols;
 
-    FastTree** trees;
+    FastTree **trees;
 
     FastForest(Mat X, Vec y);
     void build();
-    FastTree* getTree(int i);
+    FastTree *getTree(int i);
     Vec predict(Mat X);
 };
 
 struct CandidateInfo {
-    float leftTarget, leftSqrTarget, cutval;
-    int leftCount, cutcol;
+    float leftTarget;    // sum of all target values for observations where X[cutcol] < cutval
+    float leftSqrTarget; // sum of square of target values to left of cutval
+    int leftCount;       // how many observations fall to the left of cutval
+    int cutcol;          // which feature/column this candidate tests
+    float cutval;        // which split value this candidate tests
 
-    // might be tiny bit slower to init with ctor vs iterating over array but
-    // we don't need reset() function this way.
     CandidateInfo() { leftSqrTarget = leftTarget = leftCount = 0; }
 };
 
 class FastTree {
 public:
     const int MAXN = 160, CUTOFF_DIVISOR = 10;
-    FastTree(FastForest* parent);
 
     FastForest* parent;
-    default_random_engine* rng;
+    default_random_engine* rng; // single random num generator used by code building this tree
     int nrows, ncols;
-    float* y;   // rows subset used to train tree
-    float** X;  // rows subset used to train tree
-    int* idxs;
-    Node* root;
+    float *y;  // subset size nrows of forest's X rows used to train this tree
+    float **X; // subset size nrows of forest's y rows used to train this tree (array of ptrs to float)
+    int *idxs; // nrows indexes into forest's X/y training observations
+    Node *root;
 
-    void createIdxsAndOob_();
-    void shuffle();
-    void buildNodes_();
-    void checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates);
-    void bestCutoff_(Node *node);
-    bool allSame_(Node *node);
-    static float wgtGini_(float leftTarget, float leftSqrTarget, float leftCount, float sumTarget, float sumSqrTarget, float totCount);
-    int shuffle_(Node *node);
+    FastTree(FastForest* parent);
     float predict(Vec X);
+    void shuffle();
+
+protected:
+    void createIdxsAndOob(float *Xall, float *yall);
+    void buildNodes();
+    void bestCutoff(Node *node);
+    void checkCutoffs(int start, int n, CandidateInfo *candInfo, int ncandidates);
+    bool allSame(Node *node);
+    static float wgtGini(float leftTarget, float leftSqrTarget, float leftCount,
+                         float sumTarget, float sumSqrTarget, float totCount);
+    int partition(Node *node);
 };
 
-FastForest* trainFF(Mat X, Vec y);
+FastForest *trainFF(Mat X, Vec y);
 
 template <typename T> double stdev(T b, T e);
 float loss_(float sumTarget, float sumSqrTarget, float n);
