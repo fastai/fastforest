@@ -1,0 +1,39 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "fastforest"
+dynamic = ["version"]
+description = "Fast approximate random forests in Rust with Python bindings"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+readme = "README.md"
+authors = [{name = "Jeremy Howard", email = "github@jhoward.fastmail.fm"}]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dependencies = ["numpy>=2.5.2"]
+
+[project.optional-dependencies]
+dev = ["fastship>=0.0.11", "maturin>=1.0,<2.0", "pytest", "scikit-learn>=1.9.0"]
+
+[project.urls]
+Homepage = "https://github.com/fastai/fastforest"
+Repository = "https://github.com/fastai/fastforest"
+Issues = "https://github.com/fastai/fastforest/issues"
+
+[tool.maturin]
+features = ["extension-module"]
+python-source = "python"
+module-name = "fastforest._core"
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
+
+[tool.fastship]
+branch = "main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
