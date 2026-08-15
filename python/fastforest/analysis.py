@@ -2,8 +2,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .preprocessing import _missing_mask
+
 def _data(X, feature_names=None):
-    values = np.asarray(X, dtype=np.float32)
+    values = np.asarray(X)
     if values.ndim != 2: raise ValueError("X must be a two-dimensional array")
     if not len(values): raise ValueError("X must contain at least one row")
     if feature_names is None: feature_names = getattr(X, "columns", None)
@@ -11,7 +13,6 @@ def _data(X, feature_names=None):
     names = tuple(str(name) for name in feature_names)
     if len(names) != values.shape[1]: raise ValueError("feature_names must have one name per column")
     if len(set(names)) != len(names): raise ValueError("feature_names must be unique")
-    if not np.isfinite(values).all(): raise ValueError("features must all be finite")
     return np.ascontiguousarray(values),names
 
 def _index(feature, names):
@@ -95,13 +96,14 @@ class Explanation:
     def row(self, row=0):
         "Return `(feature, value, contribution)` entries ordered by absolute contribution."
         order = np.argsort(-np.abs(self.contributions[row]))
-        return [(self.names[i], float(self.values[row,i]), float(self.contributions[row,i])) for i in order]
+        return [(self.names[i], self.values[row,i].item() if isinstance(self.values[row,i], np.generic) else self.values[row,i],
+            float(self.contributions[row,i])) for i in order]
 
     def plot(self, row=0, top=12, ax=None):
         "Plot the strongest positive and negative contributions for one row."
         entries = self.row(row)[:top][::-1]
         if ax is None: _,ax = _plt().subplots(figsize=(7, max(2, len(entries)*0.35)))
-        labels = [f"{name} = {value:g}" for name,value,_ in entries]
+        labels = [f"{name} = {value:g}" if isinstance(value, (int, float, np.number)) else f"{name} = {value}" for name,value,_ in entries]
         values = np.asarray([contribution for _,_,contribution in entries])
         ax.barh(np.arange(len(entries)), values, color=np.where(values >= 0, "#3a923a", "#c44e52"))
         ax.set(yticks=np.arange(len(entries)), yticklabels=labels, xlabel="contribution",
@@ -244,6 +246,8 @@ def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, 
     if len(y_valid) != len(X_valid): raise ValueError("X_valid and y_valid must contain the same number of rows")
     labels,groups = _groups(features, names)
     params = model.get_params() | {"seed":seed, "oob":False}
+    markers = [column.marker for column in model._encoder.columns] if hasattr(model, "_encoder") else None
+    if markers is not None: params["missing_values"] = markers
     baseline_model = type(model)(**params).fit(X_train, y_train)
     score = _metric(metric)
     baseline = score(y_valid, baseline_model.predict(X_valid))
@@ -251,7 +255,8 @@ def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, 
     for group in groups:
         keep = np.asarray([i for i in range(len(names)) if i not in group])
         if not len(keep): raise ValueError("cannot drop every feature")
-        dropped = type(model)(**params).fit(X_train[:,keep], y_train)
+        dropped_params = params | ({"missing_values":[markers[i] for i in keep]} if markers is not None else {})
+        dropped = type(model)(**dropped_params).fit(X_train[:,keep], y_train)
         values.append(baseline-score(y_valid, dropped.predict(X_valid[:,keep])))
     values = np.asarray(values)
     return Importance(tuple(labels), values, np.zeros_like(values), float(baseline), "drop-column")
@@ -259,6 +264,7 @@ def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, 
 def partial_dependence(model, X, features, grid_points=20, n_samples=500, seed=42, feature_names=None):
     "Compute one-feature PDP/ICE data or a two-feature partial-dependence surface."
     X,names = _data(X, feature_names)
+    if hasattr(model, "_encoder"): X = model._encoder.display(X)
     sample = _sample(X, n_samples=n_samples, seed=seed)
     if isinstance(features, dict):
         if len(features) != 1: raise ValueError("categorical partial dependence requires one named feature group")
@@ -278,8 +284,22 @@ def partial_dependence(model, X, features, grid_points=20, n_samples=500, seed=4
     if len(idx) not in (1, 2): raise ValueError("partial dependence requires one or two features")
     grids = []
     for i in idx:
-        column,unique = X[:,i],np.unique(X[:,i])
-        grid = unique if len(unique) <= grid_points else np.unique(np.quantile(column, np.linspace(0, 1, grid_points)))
+        column = X[:,i]
+        all_int = False
+        if hasattr(model, "_encoder"):
+            schema = model._encoder.columns[i]
+            column = column[~_missing_mask(column, schema.marker)]
+            all_int = schema.all_int
+        try:
+            column = np.asarray(column, dtype=np.float32)
+            if not np.isfinite(column).all(): raise ValueError
+        except (TypeError, ValueError): column = np.asarray(column, dtype=str)
+        unique = np.unique(column)
+        if len(unique) <= grid_points: grid = unique
+        elif all_int: grid = unique[np.linspace(0, len(unique)-1, grid_points).astype(int)]
+        elif np.issubdtype(column.dtype, np.number): grid = np.unique(np.quantile(column, np.linspace(0, 1, grid_points)))
+        else: grid = unique[np.linspace(0, len(unique)-1, grid_points).astype(int)]
+        if all_int: grid = grid.astype(np.int64)
         grids.append(grid)
     grids = tuple(grids)
     if len(idx) == 1:
@@ -343,8 +363,10 @@ def feature_dependence(X, n_samples=5000, n_trees=25, seed=42, feature_names=Non
     matrix = np.zeros((len(names), len(names)))
     for target in range(len(names)):
         keep = np.asarray([i for i in range(len(names)) if i != target])
-        model = FastForest(n_trees=n_trees, seed=seed+target).fit(X[train][:,keep], X[train,target])
-        importance = permutation_importance(model, X[valid][:,keep], X[valid,target], n_repeats=1,
+        try: target_values = np.asarray(X[:,target], dtype=np.float32)
+        except (TypeError, ValueError): target_values = _ranks(X[:,target]).astype(np.float32)
+        model = FastForest(n_trees=n_trees, seed=seed+target).fit(X[train][:,keep], target_values[train])
+        importance = permutation_importance(model, X[valid][:,keep], target_values[valid], n_repeats=1,
             n_samples=None, seed=seed, feature_names=np.asarray(names)[keep])
         scores[target] = importance.baseline
         matrix[target,keep] = np.maximum(0, importance.values)
