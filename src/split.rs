@@ -253,7 +253,7 @@ fn histogram_split(
     finish_split(y, node, &window, best, criterion, impurity)
 }
 
-fn sample_features(
+pub(crate) fn sample_features(
     n_features: usize,
     config: &Config,
     feature_groups: Option<&[Vec<usize>]>,
@@ -308,7 +308,7 @@ fn select_best(
     (best, criterion, impurity)
 }
 
-fn sampled_min_size(sampled_rows: usize, min_node_size: usize) -> usize {
+pub(crate) fn sampled_min_size(sampled_rows: usize, min_node_size: usize) -> usize {
     ((sampled_rows as f32 * 0.05) as usize)
         .max(min_node_size / 3)
         .max(1)

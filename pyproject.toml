@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "fastforest"
 dynamic = ["version"]
-description = "Fast approximate random forests in Rust with Python bindings"
+description = "Fast approximate-forest models in Rust with Python bindings"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 readme = "README.md"

@@ -46,12 +46,12 @@ impl Default for Config {
 }
 
 impl Config {
-    fn resolved_bootstrap_fraction(&self) -> f32 {
+    pub(crate) fn resolved_bootstrap_fraction(&self) -> f32 {
         self.bootstrap_fraction
             .unwrap_or(if self.oob { 0.8 } else { 1.0 })
     }
 
-    fn validate(&self) -> Result<(), ForestError> {
+    pub(crate) fn validate(&self) -> Result<(), ForestError> {
         if self.n_trees == 0 {
             return Err(ForestError::new("n_trees must be greater than zero"));
         }
@@ -90,7 +90,7 @@ impl Config {
     }
 }
 
-const LEAF_COL: u32 = u32::MAX;
+pub(crate) const LEAF_COL: u32 = u32::MAX;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Node {
@@ -207,22 +207,7 @@ impl TrainingTree {
         seed: u64,
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
-        let mut sample_size =
-            ((x.nrows() as f32 * config.resolved_bootstrap_fraction()) as usize).max(1);
-        if let Some(max) = config.bootstrap_max {
-            sample_size = sample_size.min(max);
-        }
-        let mut rows: Vec<u32> = if config.replacement {
-            (0..sample_size)
-                .map(|_| u32::try_from(rng.random_range(0..x.nrows())).unwrap())
-                .collect()
-        } else {
-            rand::seq::index::sample(&mut rng, x.nrows(), sample_size)
-                .into_vec()
-                .into_iter()
-                .map(|row| u32::try_from(row).unwrap())
-                .collect()
-        };
+        let mut rows = sample_rows(x.nrows(), config, &mut rng);
         let in_bag = config.oob.then(|| {
             let mut mask = vec![false; x.nrows()];
             rows.iter().for_each(|&row| mask[row as usize] = true);
@@ -652,7 +637,7 @@ impl fmt::Display for ForestError {
 
 impl std::error::Error for ForestError {}
 
-fn group_features(
+pub(crate) fn group_features(
     n_features: usize,
     feature_group_ids: &[usize],
 ) -> Result<Vec<Vec<usize>>, ForestError> {
@@ -675,9 +660,22 @@ fn group_features(
     Ok(groups)
 }
 
-fn validate_training_data(
+pub(crate) fn validate_training_data(
     x: ArrayView2<'_, u32>,
     y: ArrayView1<'_, f32>,
+    cutoff_values: &[f32],
+    cutoff_offsets: &[usize],
+) -> Result<(), ForestError> {
+    validate_encoded_data(x, y.len(), cutoff_values, cutoff_offsets)?;
+    if y.iter().any(|v| !v.is_finite()) {
+        return Err(ForestError::new("targets must all be finite"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_encoded_data(
+    x: ArrayView2<'_, u32>,
+    y_len: usize,
     cutoff_values: &[f32],
     cutoff_offsets: &[usize],
 ) -> Result<(), ForestError> {
@@ -689,15 +687,12 @@ fn validate_training_data(
     if x.nrows() > u32::MAX as usize {
         return Err(ForestError::new("training data cannot exceed 2^32-1 rows"));
     }
-    if x.nrows() != y.len() {
+    if x.nrows() != y_len {
         return Err(ForestError::new(format!(
             "X has {} rows but y has {} values",
             x.nrows(),
-            y.len()
+            y_len
         )));
-    }
-    if y.iter().any(|v| !v.is_finite()) {
-        return Err(ForestError::new("targets must all be finite"));
     }
     if cutoff_offsets.len() != x.ncols() + 1
         || cutoff_offsets.first() != Some(&0)
@@ -723,7 +718,10 @@ fn validate_training_data(
     Ok(())
 }
 
-fn validate_prediction_data(x: ArrayView2<'_, f32>, n_features: usize) -> Result<(), ForestError> {
+pub(crate) fn validate_prediction_data(
+    x: ArrayView2<'_, f32>,
+    n_features: usize,
+) -> Result<(), ForestError> {
     if x.ncols() != n_features {
         return Err(ForestError::new(format!(
             "expected {n_features} features, got {}",
@@ -734,6 +732,24 @@ fn validate_prediction_data(x: ArrayView2<'_, f32>, n_features: usize) -> Result
         return Err(ForestError::new("features must all be finite"));
     }
     Ok(())
+}
+
+pub(crate) fn sample_rows(n_rows: usize, config: &Config, rng: &mut StdRng) -> Vec<u32> {
+    let mut sample_size = ((n_rows as f32 * config.resolved_bootstrap_fraction()) as usize).max(1);
+    if let Some(max) = config.bootstrap_max {
+        sample_size = sample_size.min(max);
+    }
+    if config.replacement {
+        (0..sample_size)
+            .map(|_| u32::try_from(rng.random_range(0..n_rows)).unwrap())
+            .collect()
+    } else {
+        rand::seq::index::sample(rng, n_rows, sample_size)
+            .into_vec()
+            .into_iter()
+            .map(|row| u32::try_from(row).unwrap())
+            .collect()
+    }
 }
 
 #[cfg(test)]

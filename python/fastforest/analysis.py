@@ -52,7 +52,8 @@ def _metric(metric):
     if callable(metric): return metric
     if metric == "r2": return _r2
     if metric == "neg_rmse": return lambda y,p: -np.sqrt(np.square(y-p).mean())
-    raise ValueError("metric must be 'r2', 'neg_rmse', or a callable")
+    if metric == "accuracy": return lambda y,p: np.mean(y == p)
+    raise ValueError("metric must be 'r2', 'neg_rmse', 'accuracy', or a callable")
 
 def _plt():
     try: import matplotlib.pyplot as plt
@@ -219,7 +220,7 @@ class FeatureDependence:
 def permutation_importance(model, X, y, features=None, n_repeats=5, n_samples=5000, metric="r2", seed=42, feature_names=None):
     "Measure validation-set importance by permuting individual or grouped features."
     X,names = _data(X, feature_names)
-    y = np.asarray(y, dtype=np.float32)
+    y = np.asarray(y)
     if len(y) != len(X): raise ValueError("X and y must contain the same number of rows")
     if n_repeats < 1: raise ValueError("n_repeats must be at least 1")
     X,y = _sample(X, y, n_samples, seed)
@@ -238,11 +239,11 @@ def permutation_importance(model, X, y, features=None, n_repeats=5, n_samples=50
 def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, features=None, metric="r2", seed=42, feature_names=None):
     "Measure importance by retraining after dropping each feature or feature group."
     X_train,names = _data(X_train, feature_names)
-    y_train = np.asarray(y_train, dtype=np.float32)
+    y_train = np.asarray(y_train)
     if len(y_train) != len(X_train): raise ValueError("X_train and y_train must contain the same number of rows")
     if X_valid is None: X_valid,y_valid = X_train,y_train
     else: X_valid,_ = _data(X_valid, names)
-    y_valid = np.asarray(y_valid, dtype=np.float32)
+    y_valid = np.asarray(y_valid)
     if len(y_valid) != len(X_valid): raise ValueError("X_valid and y_valid must contain the same number of rows")
     labels,groups = _groups(features, names)
     params = model.get_params() | {"seed":seed, "oob":False}

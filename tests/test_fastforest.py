@@ -1,6 +1,6 @@
 import numpy as np,pandas as pd,pytest
 
-from fastforest import FastForest,Workbench,feature_dependence,feature_relations,sklearn_preprocessor
+from fastforest import FastForest,FastForestClassifier,Workbench,feature_dependence,feature_relations,sklearn_preprocessor
 
 def test_fit_predict_oob_story():
     rng = np.random.default_rng(42)
@@ -105,6 +105,16 @@ def test_fit_predict_oob_story():
     bad_numeric[0,0] = "not-a-number"
     with pytest.raises(ValueError, match="was numeric during training"): mixed_model.predict(bad_numeric)
 
+    dated = pd.DataFrame({"eventDate":["2023-12-31 23:30:15", "2024-01-01 00:00:00", "2024-02-29 12:05:09", "2024-04-01 08:15:30"]*20,
+        "signal":np.arange(80)})
+    dated_y = dated.signal+pd.to_datetime(dated.eventDate).dt.month
+    dated_model = FastForest(n_trees=12, seed=42, adaptive=False, date_columns={'eventDate': '%Y-%m-%d %H:%M:%S'}).fit(dated, dated_y)
+    assert dated_model.feature_names_in_[:3] == ("signal", "eventYear", "eventMonth")
+    assert dated_model.feature_names_in_[-4:] == ("eventHour", "eventMinute", "eventSecond", "eventElapsed")
+    assert len(dated_model.feature_names_in_) == 17 and np.isfinite(dated_model.predict(dated.iloc[:4])).all()
+    displayed = dated_model._encoder.display(dated.iloc[:1])
+    assert displayed[0,1:5].tolist() == [2023, 12, 52, 31]
+
 def test_adaptive_defaults_story():
     rng = np.random.default_rng(42)
     X = rng.random((8_100, 6), dtype=np.float32)
@@ -117,12 +127,60 @@ def test_adaptive_defaults_story():
     fixed = FastForest(n_trees=8, min_node_size=16, adaptive=False, seed=42).fit(X, y)
     assert fixed.adaptive_scores_ == () and fixed.adaptive_choice_ is None
 
+def test_multiclass_prediction_oob_and_analysis_story():
+    rng = np.random.default_rng(42)
+    X = rng.random((900, 6), dtype=np.float32)
+    class_id = np.select([X[:,0]+X[:,1] > 1.25, X[:,2]-X[:,3] > .15], [0, 1], default=2)
+    y = np.asarray(["canopy", "soil", "water"])[class_id]
+    model = FastForestClassifier(n_trees=32, min_node_size=6, max_node_samples=120, seed=42, oob=True, adaptive=False).fit(X, y)
+
+    prediction = model.predict(X)
+    probabilities = model.predict_proba(X)
+    assert model.classes_.tolist() == ["canopy", "soil", "water"]
+    assert 1 <= model.prediction_trees_per_batch_ <= model.n_trees
+    assert prediction.dtype.kind == "U" and probabilities.dtype == np.float32
+    assert prediction.shape == y.shape and probabilities.shape == (len(y), 3)
+    assert np.allclose(probabilities.sum(axis=1), 1, atol=1e-5)
+    assert np.array_equal(prediction, model.classes_[probabilities.argmax(axis=1)])
+    assert np.mean(prediction == y) > .95
+    assert model.oob_decision_function_.shape == probabilities.shape
+    valid = model.oob_counts_ > 0
+    assert valid.mean() > .99 and np.allclose(model.oob_decision_function_[valid].sum(axis=1), 1, atol=1e-5)
+    assert model.oob_score_ > .85
+    assert np.isclose(model.feature_importances_.sum(), 1)
+    assert model.feature_importance(X, y, n_repeats=1, n_samples=300).values[:4].max() > 0
+    assert model.drop_column_importance(X, y, features=["x0"]).values[0] > 0
+    again = FastForestClassifier(n_trees=32, min_node_size=6, max_node_samples=120, seed=42, oob=True, adaptive=False).fit(X, y)
+    assert np.array_equal(probabilities, again.predict_proba(X))
+
+    category = np.arange(len(X))%3
+    grouped_X = np.column_stack([X[:,:2], np.eye(3, dtype=np.float32)[category]])
+    grouped_y = np.asarray(["red", "green", "blue"])[category]
+    grouped = FastForestClassifier(n_trees=16, seed=42, adaptive=False,
+        one_hot_groups={"color":["x2", "x3", "x4"]}).fit(grouped_X, grouped_y)
+    assert grouped.feature_names_in_ == ("x0", "x1", "color") and grouped.n_features_in_ == 3
+    assert grouped.column_info_[-1].kind == "lexical" and grouped.column_info_[-1].cardinality == 3
+    assert grouped.feature_importances_.shape == (3,) and np.mean(grouped.predict(grouped_X) == grouped_y) > .99
+    assert grouped._encoder.display(grouped_X[:3])[:,-1].tolist() == ["x2", "x3", "x4"]
+    assert grouped.feature_importance(grouped_X, grouped_y, n_repeats=1, n_samples=100).values.shape == (3,)
+    invalid_group = grouped_X[:1].copy()
+    invalid_group[:,2:] = 0
+    with pytest.raises(ValueError, match="has no active category"): grouped.predict(invalid_group)
+
+    large_X = rng.random((16_100, 4), dtype=np.float32)
+    large_y = np.where(large_X[:,0]+large_X[:,1] > 1, "high", "low")
+    adaptive = FastForestClassifier(n_trees=8, min_node_size=12, seed=42).fit(large_X, large_y)
+    assert [(score[0], score[1]) for score in adaptive.adaptive_scores_] == [(0.6, 320), (0.9, 320)]
+    assert adaptive.adaptive_choice_ == min(adaptive.adaptive_scores_, key=lambda score:score[2])[:2]
+
 def test_validation_errors():
     X,y = np.ones((4, 2)),np.ones(4)
     def check(call, message):
         with pytest.raises((TypeError, ValueError, RuntimeError), match=message): call()
     check(lambda: FastForest().fit(X[:, 0], y), "X must be a two-dimensional array")
     check(lambda: FastForest().fit(X, y[:, None]), "y must be a one-dimensional array")
+    check(lambda: FastForestClassifier().fit(X, ["one"]*4), "at least two classes")
+    check(lambda: FastForestClassifier().fit(X, ["one", "two", None, "two"]), "cannot be missing")
     check(lambda: FastForest().fit(X, y[:-1]), "X has 4 rows but y has 3 values")
     check(lambda: FastForest().fit(np.array([[1, np.nan]]), [1]), "non-finite numeric value")
     check(lambda: FastForest(bootstrap_max=0).fit(X, y), "bootstrap_max must be greater than zero")

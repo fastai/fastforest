@@ -7,8 +7,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PyString, PyTuple};
 
 use crate::{
-    Config, Encoder, Encoding, FeatureSampling, Forest, ForestError, MaxFeatures, RawColumn,
-    Splitter, Workbench,
+    ClassifierForest, Config, Encoder, Encoding, FeatureSampling, Forest, ForestError, MaxFeatures,
+    RawColumn, Splitter, Workbench,
 };
 
 type PyExplanation<'py> = (Bound<'py, PyArray1<f32>>, f32, Bound<'py, PyArray2<f32>>);
@@ -247,10 +247,20 @@ impl PyEncoder {
         names: Vec<String>,
         markers: &Bound<'py, PyList>,
         max_dummy_cardinality: usize,
+        one_hot_groups: Vec<(String, Vec<usize>)>,
+        date_parts: Vec<(usize, String, u8, String)>,
     ) -> PyResult<(Self, Bound<'py, PyArray2<u32>>)> {
         let columns = raw_columns(py, columns, markers)?;
         let (inner, ranked) = py
-            .detach(|| Encoder::fit(columns, names, max_dummy_cardinality))
+            .detach(|| {
+                Encoder::fit(
+                    columns,
+                    names,
+                    max_dummy_cardinality,
+                    one_hot_groups,
+                    date_parts,
+                )
+            })
             .map_err(value_error)?;
         Ok((Self { inner }, ranked.into_pyarray(py)))
     }
@@ -266,6 +276,30 @@ impl PyEncoder {
             .detach(|| self.inner.transform(columns))
             .map_err(value_error)?;
         Ok(transformed.into_pyarray(py))
+    }
+
+    fn transform_numeric<'py>(
+        &self,
+        py: Python<'py>,
+        values: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        macro_rules! transform {
+            ($ty:ty) => {
+                if let Ok(values) = values.cast::<PyArray2<$ty>>() {
+                    let readonly = values.readonly();
+                    let values = readonly.as_array();
+                    let transformed = py
+                        .detach(|| self.inner.transform_numeric(values))
+                        .map_err(value_error)?;
+                    return Ok(transformed.into_pyarray(py));
+                }
+            };
+        }
+        transform!(f32);
+        transform!(f64);
+        Err(PyValueError::new_err(
+            "numeric matrix must have dtype float32 or float64",
+        ))
     }
 
     fn metadata(&self, column: usize) -> PyResult<PyColumnMetadata> {
@@ -488,9 +522,176 @@ impl PyForest {
     }
 }
 
+#[pyclass(name = "ClassifierForest", frozen)]
+struct PyClassifierForest {
+    inner: ClassifierForest,
+}
+
+#[pymethods]
+impl PyClassifierForest {
+    #[staticmethod]
+    #[pyo3(signature = (
+        x, y, n_classes, cutoff_values, cutoff_offsets, encoded_to_raw, n_trees=50, min_node_size=4, bootstrap_fraction=None,
+        bootstrap_max=Some(40_000), replacement=false, max_node_samples=320, min_candidate_rows=20, candidate_attempt_factor=2,
+        cutoff_divisor=3.0, seed=None, oob=false, adaptive=true, splitter=1, max_features_kind=2, max_features_value=0.75,
+        leaf_regularization=0.0, feature_sampling=0
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn fit(
+        py: Python<'_>,
+        x: PyReadonlyArray2<'_, u32>,
+        y: PyReadonlyArray1<'_, u32>,
+        n_classes: usize,
+        cutoff_values: PyReadonlyArray1<'_, f32>,
+        cutoff_offsets: PyReadonlyArray1<'_, usize>,
+        encoded_to_raw: PyReadonlyArray1<'_, usize>,
+        n_trees: usize,
+        min_node_size: usize,
+        bootstrap_fraction: Option<f32>,
+        bootstrap_max: Option<usize>,
+        replacement: bool,
+        max_node_samples: usize,
+        min_candidate_rows: usize,
+        candidate_attempt_factor: usize,
+        cutoff_divisor: f32,
+        seed: Option<u64>,
+        oob: bool,
+        adaptive: bool,
+        splitter: u8,
+        max_features_kind: u8,
+        max_features_value: f32,
+        leaf_regularization: f32,
+        feature_sampling: u8,
+    ) -> PyResult<Self> {
+        let config = Config {
+            n_trees,
+            min_node_size,
+            bootstrap_fraction,
+            bootstrap_max,
+            replacement,
+            max_node_samples,
+            min_candidate_rows,
+            candidate_attempt_factor,
+            cutoff_divisor,
+            seed,
+            oob,
+            adaptive,
+            workbench: workbench(
+                splitter,
+                max_features_kind,
+                max_features_value,
+                leaf_regularization,
+                feature_sampling,
+            )?,
+        };
+        let x = x.as_array();
+        let y = y.as_array();
+        let cutoff_values = cutoff_values.as_slice()?;
+        let cutoff_offsets = cutoff_offsets.as_slice()?;
+        let encoded_to_raw = encoded_to_raw.as_slice()?;
+        let inner = py
+            .detach(|| {
+                ClassifierForest::fit(
+                    x,
+                    y,
+                    n_classes,
+                    cutoff_values,
+                    cutoff_offsets,
+                    Some(encoded_to_raw),
+                    &config,
+                )
+            })
+            .map_err(value_error)?;
+        Ok(Self { inner })
+    }
+
+    fn predict<'py>(
+        &self,
+        py: Python<'py>,
+        x: PyReadonlyArray2<'_, f32>,
+    ) -> PyResult<Bound<'py, PyArray1<u32>>> {
+        let x = x.as_array();
+        let predictions = py.detach(|| self.inner.predict(x)).map_err(value_error)?;
+        Ok(predictions.into_pyarray(py))
+    }
+
+    fn predict_proba<'py>(
+        &self,
+        py: Python<'py>,
+        x: PyReadonlyArray2<'_, f32>,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let x = x.as_array();
+        let probabilities = py
+            .detach(|| self.inner.predict_proba(x))
+            .map_err(value_error)?;
+        let probabilities =
+            Array2::from_shape_vec((x.nrows(), self.inner.n_classes()), probabilities)
+                .expect("probability matrix has the wrong size");
+        Ok(probabilities.into_pyarray(py))
+    }
+
+    #[getter]
+    fn feature_importances<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.inner.feature_importances().to_vec().into_pyarray(py)
+    }
+
+    #[getter]
+    fn prediction_trees_per_batch(&self) -> usize {
+        self.inner.prediction_trees_per_batch()
+    }
+
+    #[getter]
+    fn oob_decision_function<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f32>>> {
+        self.inner.oob_decision().map(|values| {
+            Array2::from_shape_vec(
+                (
+                    values.len() / self.inner.n_classes(),
+                    self.inner.n_classes(),
+                ),
+                values.to_vec(),
+            )
+            .expect("OOB probability matrix has the wrong size")
+            .into_pyarray(py)
+        })
+    }
+
+    #[getter]
+    fn oob_counts<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<u32>>> {
+        self.inner
+            .oob_counts()
+            .map(|values| values.to_vec().into_pyarray(py))
+    }
+
+    #[getter]
+    fn adaptive_scores(&self) -> Vec<(f64, usize, f64)> {
+        self.inner
+            .adaptive_scores()
+            .iter()
+            .map(|score| {
+                (
+                    f64::from((score.max_features * 10.0).round() as i32) / 10.0,
+                    score.max_node_samples,
+                    score.oob_brier,
+                )
+            })
+            .collect()
+    }
+
+    #[getter]
+    fn adaptive_choice(&self) -> Option<(f64, usize)> {
+        self.inner.adaptive_choice().map(|score| {
+            (
+                f64::from((score.max_features * 10.0).round() as i32) / 10.0,
+                score.max_node_samples,
+            )
+        })
+    }
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyForest>()?;
+    m.add_class::<PyClassifierForest>()?;
     m.add_class::<PyEncoder>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

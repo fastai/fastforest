@@ -2,11 +2,12 @@ import numpy as np
 from dataclasses import dataclass
 
 from ._core import Forest as _Forest
+from ._core import ClassifierForest as _ClassifierForest
 from ._core import __version__
-from .preprocessing import ColumnInfo,_Encoder
+from .preprocessing import ColumnInfo,_Encoder,_is_nan
 from .sklearn import sklearn_hist_preprocessor,sklearn_preprocessor
 
-__all__ = ["FastForest", "Workbench", "ColumnInfo", "Importance", "Explanation", "PartialDependence", "FeatureRelations", "FeatureDependence",
+__all__ = ["FastForest", "FastForestClassifier", "Workbench", "ColumnInfo", "Importance", "Explanation", "PartialDependence", "FeatureRelations", "FeatureDependence",
     "permutation_importance", "drop_column_importance", "partial_dependence", "feature_relations", "feature_dependence",
     "sklearn_preprocessor", "sklearn_hist_preprocessor", "__version__"]
 
@@ -15,6 +16,23 @@ def _vector(x, name="y"):
     x = np.asarray(x, dtype=np.float32)
     if x.ndim != 1: raise ValueError(f"{name} must be a one-dimensional array")
     return np.ascontiguousarray(x)
+
+def _class_vector(y):
+    "Map arbitrary class labels to contiguous native integer IDs."
+    y = np.asarray(y)
+    if y.ndim != 1: raise ValueError("y must be a one-dimensional array")
+    if any(value is None or _is_nan(value) for value in y): raise ValueError("class labels cannot be missing")
+    try: classes,codes = np.unique(y, return_inverse=True)
+    except TypeError as error: raise ValueError("class labels must be mutually comparable") from error
+    if len(classes) < 2: raise ValueError("classification requires at least two classes")
+    return classes,np.ascontiguousarray(codes, dtype=np.uint32)
+
+def _default_trees(n_rows, bootstrap_fraction, bootstrap_max, oob, n_outputs=1):
+    "Choose a bounded forest size from the effective sampled rows per tree."
+    fraction = (.8 if oob else 1.) if bootstrap_fraction is None else bootstrap_fraction
+    sampled = max(1, int(n_rows*fraction))
+    if bootstrap_max is not None: sampled = max(1, min(sampled, bootstrap_max*n_outputs))
+    return min(50, max(20, (2_000_000+sampled-1)//sampled))
 
 @dataclass(frozen=True)
 class Workbench:
@@ -46,16 +64,16 @@ class Workbench:
         return splitter,3,float(value),float(self.leaf_regularization),sampling
 
 class FastForest:
-    "A fast approximate random-forest regressor."
-    def __init__(self, n_trees=50, min_node_size=4, bootstrap_fraction=None, bootstrap_max=40_000, replacement=False,
+    "A fast approximate-forest regressor."
+    def __init__(self, n_trees=None, min_node_size=4, bootstrap_fraction=None, bootstrap_max=40_000, replacement=False,
         max_node_samples=320, min_candidate_rows=20, candidate_attempt_factor=2, cutoff_divisor=3.0, seed=None, oob=False, adaptive=True,
-        missing_values=None, max_dummy_cardinality=4, workbench=None):
+        missing_values=None, max_dummy_cardinality=4, one_hot_groups=None, date_columns=None, workbench=None):
         self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
         self.bootstrap_max,self.replacement = bootstrap_max,replacement
         self.max_node_samples,self.min_candidate_rows = max_node_samples,min_candidate_rows
         self.candidate_attempt_factor,self.cutoff_divisor = candidate_attempt_factor,cutoff_divisor
         self.seed,self.oob,self.adaptive,self.missing_values = seed,oob,adaptive,missing_values
-        self.max_dummy_cardinality = max_dummy_cardinality
+        self.max_dummy_cardinality,self.one_hot_groups,self.date_columns = max_dummy_cardinality,one_hot_groups,date_columns
         self.workbench = Workbench() if workbench is None else workbench
         if not isinstance(self.workbench, Workbench): raise TypeError("workbench must be a Workbench")
         self._model = None
@@ -63,9 +81,10 @@ class FastForest:
     def fit(self, X, y):
         "Fit the forest to feature rows `X` and regression targets `y`."
         y = _vector(y)
-        self._encoder = _Encoder(self.missing_values, self.max_dummy_cardinality)
+        self._encoder = _Encoder(self.missing_values, self.max_dummy_cardinality, self.one_hot_groups, self.date_columns)
         X = self._encoder.fit_transform(X)
-        tree_args = (self.n_trees, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max, self.replacement)
+        self.n_trees_ = self.n_trees if self.n_trees is not None else _default_trees(len(X), self.bootstrap_fraction, self.bootstrap_max, self.oob)
+        tree_args = (self.n_trees_, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max, self.replacement)
         split_args = (self.max_node_samples, self.min_candidate_rows, self.candidate_attempt_factor, self.cutoff_divisor)
         group_ids = self._encoder.encoded_to_raw if self.workbench.feature_sampling == "columns" else self._encoder.feature_group_ids
         self._model = _Forest.fit(X, y, self._encoder.cutoff_values, self._encoder.cutoff_offsets, group_ids,
@@ -117,7 +136,8 @@ class FastForest:
         if method == "split": return self.split_importance(kwargs.pop("feature_names", None))
         if method != "permutation": raise ValueError("method must be 'permutation' or 'split'")
         if X is None or y is None: raise ValueError("permutation importance requires X and y")
-        kwargs.setdefault("feature_names", self.feature_names_in_)
+        kwargs.setdefault("feature_names", self._encoder.input_names)
+        if self.one_hot_groups is not None: kwargs.setdefault("features", self._encoder.analysis_groups)
         return permutation_importance(self, X, y, **kwargs)
 
     def drop_column_importance(self, X_train, y_train, X_valid=None, y_valid=None, **kwargs):
@@ -133,7 +153,7 @@ class FastForest:
     def get_params(self):
         "Return constructor parameters."
         names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples",
-            "min_candidate_rows", "candidate_attempt_factor", "cutoff_divisor", "seed", "oob", "adaptive", "missing_values", "max_dummy_cardinality")
+            "min_candidate_rows", "candidate_attempt_factor", "cutoff_divisor", "seed", "oob", "adaptive", "missing_values", "max_dummy_cardinality", "one_hot_groups", "date_columns")
         names += ("workbench",)
         return {name:getattr(self, name) for name in names}
 
@@ -142,6 +162,94 @@ class FastForest:
         if self.seed is not None: args += f", seed={self.seed}"
         if self.oob: args += ", oob=True"
         return f"FastForest({args})"
+
+class FastForestClassifier:
+    "A fast multiclass approximate-forest classifier."
+    def __init__(self, n_trees=None, min_node_size=4, bootstrap_fraction=None, bootstrap_max=40_000, replacement=False,
+        max_node_samples=320, min_candidate_rows=20, candidate_attempt_factor=2, cutoff_divisor=3.0, seed=None, oob=False, adaptive=True,
+        missing_values=None, max_dummy_cardinality=4, one_hot_groups=None, date_columns=None, workbench=None):
+        self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
+        self.bootstrap_max,self.replacement = bootstrap_max,replacement
+        self.max_node_samples,self.min_candidate_rows = max_node_samples,min_candidate_rows
+        self.candidate_attempt_factor,self.cutoff_divisor = candidate_attempt_factor,cutoff_divisor
+        self.seed,self.oob,self.adaptive,self.missing_values = seed,oob,adaptive,missing_values
+        self.max_dummy_cardinality,self.one_hot_groups,self.date_columns = max_dummy_cardinality,one_hot_groups,date_columns
+        self.workbench = Workbench() if workbench is None else workbench
+        if not isinstance(self.workbench, Workbench): raise TypeError("workbench must be a Workbench")
+        self._model = None
+
+    def fit(self, X, y):
+        "Fit the forest to feature rows `X` and arbitrary class labels `y`."
+        self.classes_,y = _class_vector(y)
+        self.n_classes_ = len(self.classes_)
+        self._encoder = _Encoder(self.missing_values, self.max_dummy_cardinality, self.one_hot_groups, self.date_columns)
+        X = self._encoder.fit_transform(X)
+        self.n_trees_ = self.n_trees if self.n_trees is not None else _default_trees(
+            len(X), self.bootstrap_fraction, self.bootstrap_max, self.oob, self.n_classes_)
+        tree_args = (self.n_trees_, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max, self.replacement)
+        split_args = (self.max_node_samples, self.min_candidate_rows, self.candidate_attempt_factor, self.cutoff_divisor)
+        group_ids = self._encoder.encoded_to_raw if self.workbench.feature_sampling == "columns" else self._encoder.feature_group_ids
+        self._model = _ClassifierForest.fit(X, y, self.n_classes_, self._encoder.cutoff_values, self._encoder.cutoff_offsets, group_ids,
+            *tree_args, *split_args, self.seed, self.oob, self.adaptive, *self.workbench._native())
+        self.n_features_in_ = len(self._encoder.names)
+        self.feature_names_in_ = self._encoder.names
+        self.column_info_ = self._encoder.column_info
+        self.feature_importances_ = self._encoder.aggregate(self._model.feature_importances)
+        self.prediction_trees_per_batch_ = self._model.prediction_trees_per_batch
+        self.oob_decision_function_ = self._model.oob_decision_function
+        self.oob_counts_ = self._model.oob_counts
+        self.oob_score_ = None
+        if self.oob:
+            valid = self.oob_counts_ > 0
+            if valid.any(): self.oob_score_ = float(np.mean(self.classes_[self.oob_decision_function_[valid].argmax(axis=1)] == self.classes_[y[valid]]))
+        self.adaptive_scores_ = tuple(self._model.adaptive_scores)
+        self.adaptive_choice_ = self._model.adaptive_choice
+        return self
+
+    def predict_proba(self, X):
+        "Return one probability per `(row, class)`, ordered as `classes_`."
+        if self._model is None: raise RuntimeError("FastForestClassifier must be fitted before prediction")
+        return self._model.predict_proba(self._encoder.transform(X))
+
+    def predict(self, X):
+        "Predict class labels for feature rows `X`."
+        if self._model is None: raise RuntimeError("FastForestClassifier must be fitted before prediction")
+        return self.classes_[self._model.predict(self._encoder.transform(X))]
+
+    def split_importance(self, feature_names=None):
+        "Return fast split-gain importance; prefer permutation importance for reliable analysis."
+        if self._model is None: raise RuntimeError("FastForestClassifier must be fitted before importance analysis")
+        names = tuple(str(name) for name in feature_names) if feature_names is not None else self.feature_names_in_
+        values = np.asarray(self.feature_importances_)
+        return Importance(names, values, np.zeros_like(values), np.nan, "split-gain")
+
+    def feature_importance(self, X=None, y=None, method="permutation", **kwargs):
+        "Measure feature importance, using validation-set permutation accuracy by default."
+        if method == "split": return self.split_importance(kwargs.pop("feature_names", None))
+        if method != "permutation": raise ValueError("method must be 'permutation' or 'split'")
+        if X is None or y is None: raise ValueError("permutation importance requires X and y")
+        kwargs.setdefault("feature_names", self._encoder.input_names)
+        if self.one_hot_groups is not None: kwargs.setdefault("features", self._encoder.analysis_groups)
+        kwargs.setdefault("metric", "accuracy")
+        return permutation_importance(self, X, y, **kwargs)
+
+    def drop_column_importance(self, X_train, y_train, X_valid=None, y_valid=None, **kwargs):
+        "Measure importance by refitting without each feature or feature group."
+        kwargs.setdefault("feature_names", self.feature_names_in_)
+        kwargs.setdefault("metric", "accuracy")
+        return drop_column_importance(self, X_train, y_train, X_valid, y_valid, **kwargs)
+
+    def get_params(self):
+        "Return constructor parameters."
+        names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples",
+            "min_candidate_rows", "candidate_attempt_factor", "cutoff_divisor", "seed", "oob", "adaptive", "missing_values", "max_dummy_cardinality", "one_hot_groups", "date_columns", "workbench")
+        return {name:getattr(self, name) for name in names}
+
+    def __repr__(self):
+        args = f"n_trees={self.n_trees}, min_node_size={self.min_node_size}"
+        if self.seed is not None: args += f", seed={self.seed}"
+        if self.oob: args += ", oob=True"
+        return f"FastForestClassifier({args})"
 
 from .analysis import (Explanation, FeatureDependence, FeatureRelations, Importance, PartialDependence,
     drop_column_importance, feature_dependence, feature_relations, partial_dependence, permutation_importance)

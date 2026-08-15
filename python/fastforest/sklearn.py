@@ -38,15 +38,16 @@ def _adapter(markers, numeric):
     from sklearn.preprocessing import FunctionTransformer
     return FunctionTransformer(_clean_frame, kw_args=dict(markers=markers, numeric=numeric), feature_names_out="one-to-one")
 
-def _target_encoder(random_state):
+def _target_encoder(random_state, target_type):
     import sklearn
     from sklearn.preprocessing import TargetEncoder
     if tuple(map(int, sklearn.__version__.split(".")[:2])) < (1, 9):
-        return TargetEncoder(target_type="continuous", cv=5, shuffle=True, random_state=random_state)
-    from sklearn.model_selection import KFold
-    return TargetEncoder(target_type="continuous", cv=KFold(5, shuffle=True, random_state=random_state))
+        return TargetEncoder(target_type=target_type, cv=5, shuffle=True, random_state=random_state)
+    from sklearn.model_selection import KFold,StratifiedKFold
+    cv = KFold(5, shuffle=True, random_state=random_state) if target_type == "continuous" else StratifiedKFold(5, shuffle=True, random_state=random_state)
+    return TargetEncoder(target_type=target_type, cv=cv)
 
-def sklearn_preprocessor(df, missing_values=None, onehot_max=20, random_state=42):
+def sklearn_preprocessor(df, missing_values=None, onehot_max=20, random_state=42, target_type="continuous"):
     "Build sklearn's documented one-hot/target preprocessing policy from a training dataframe."
     import numpy as np
     from sklearn.compose import ColumnTransformer
@@ -62,12 +63,12 @@ def sklearn_preprocessor(df, missing_values=None, onehot_max=20, random_state=42
     transformers = []
     if numeric: transformers.append(("numeric", SimpleImputer(strategy="median", add_indicator=True), numeric))
     if onehot: transformers.append(("onehot", OneHotEncoder(handle_unknown="ignore", dtype=np.float32), onehot))
-    if target: transformers.append(("target", _target_encoder(random_state), target))
+    if target: transformers.append(("target", _target_encoder(random_state, target_type), target))
     if not transformers: raise ValueError("dataframe has no usable columns")
     columns = ColumnTransformer(transformers, verbose_feature_names_out=False)
     return make_pipeline(_adapter(markers, numeric), columns)
 
-def sklearn_hist_preprocessor(df, missing_values=None, native_max=255, random_state=42):
+def sklearn_hist_preprocessor(df, missing_values=None, native_max=255, random_state=42, target_type="continuous"):
     "Build sklearn's documented native/target preprocessing policy for HistGradientBoosting."
     from sklearn.compose import ColumnTransformer
     from sklearn.pipeline import make_pipeline
@@ -80,7 +81,7 @@ def sklearn_hist_preprocessor(df, missing_values=None, native_max=255, random_st
     target = tuple(name for name in categorical if cardinality[name] > native_max)
     transformers = []
     if numeric: transformers.append(("numeric", "passthrough", numeric))
-    if target: transformers.append(("target", _target_encoder(random_state), target))
+    if target: transformers.append(("target", _target_encoder(random_state, target_type), target))
     if native:
         encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
         transformers.append(("categorical", encoder, native))

@@ -1,4 +1,7 @@
-use ndarray::Array2;
+use std::collections::HashMap;
+
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
+use ndarray::{Array2, ArrayView2};
 use rayon::prelude::*;
 
 use crate::ForestError;
@@ -165,10 +168,26 @@ struct PreparedColumn {
 #[derive(Clone, Debug)]
 pub struct Encoder {
     columns: Vec<Column>,
+    input_names: Vec<String>,
+    input_columns: Vec<InputColumn>,
     cutoff_values: Vec<f32>,
     cutoff_offsets: Vec<usize>,
     encoded_to_raw: Vec<usize>,
     feature_group_ids: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+enum InputColumn {
+    Direct(usize),
+    OneHot {
+        indices: Vec<usize>,
+        categories: Vec<String>,
+    },
+    DatePart {
+        index: usize,
+        format: String,
+        part: u8,
+    },
 }
 
 fn invalid(message: impl Into<String>) -> ForestError {
@@ -187,6 +206,78 @@ fn validate_rows(columns: &[RawColumn], names: &[String]) -> Result<usize, Fores
         return Err(invalid("X columns must have the same number of rows"));
     }
     Ok(rows)
+}
+
+fn input_layout(
+    names: &[String],
+    groups: &[(String, Vec<usize>)],
+    date_parts: &[(usize, String, u8, String)],
+) -> Result<(Vec<InputColumn>, Vec<String>), ForestError> {
+    let mut grouped = vec![false; names.len()];
+    for (group, indices) in groups {
+        if indices.len() < 2 {
+            return Err(invalid(format!(
+                "one-hot group {group:?} must contain at least two columns"
+            )));
+        }
+        for &index in indices {
+            if index >= names.len() {
+                return Err(invalid(format!(
+                    "one-hot group {group:?} contains an out-of-range column"
+                )));
+            }
+            if std::mem::replace(&mut grouped[index], true) {
+                return Err(invalid(format!(
+                    "column {:?} belongs to more than one one-hot group",
+                    names[index]
+                )));
+            }
+        }
+    }
+    let mut date_columns = vec![false; names.len()];
+    for (index, _, _, _) in date_parts {
+        if *index >= names.len() {
+            return Err(invalid("date column is out of range"));
+        }
+        if grouped[*index] && !date_columns[*index] {
+            return Err(invalid(format!(
+                "column {:?} cannot be both grouped and expanded as a date",
+                names[*index]
+            )));
+        }
+        grouped[*index] = true;
+        date_columns[*index] = true;
+    }
+    let mut input_columns = Vec::new();
+    let mut logical_names = Vec::new();
+    for (index, name) in names.iter().enumerate() {
+        if !grouped[index] {
+            input_columns.push(InputColumn::Direct(index));
+            logical_names.push(name.clone());
+        }
+    }
+    for (group, indices) in groups {
+        input_columns.push(InputColumn::OneHot {
+            indices: indices.clone(),
+            categories: indices.iter().map(|index| names[*index].clone()).collect(),
+        });
+        logical_names.push(group.clone());
+    }
+    for (index, format, part, name) in date_parts {
+        input_columns.push(InputColumn::DatePart {
+            index: *index,
+            format: format.clone(),
+            part: *part,
+        });
+        logical_names.push(name.clone());
+    }
+    let mut unique = logical_names.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    if unique.len() != logical_names.len() {
+        return Err(invalid("one-hot group and feature names must be unique"));
+    }
+    Ok((input_columns, logical_names))
 }
 
 fn parse_numeric(
@@ -210,6 +301,162 @@ fn parse_numeric(
         parsed.push(Some(value));
     }
     Ok(Some(parsed))
+}
+
+fn indicator_values(raw: RawColumn, group: &str) -> Result<Vec<Option<f32>>, ForestError> {
+    match raw.into_simple() {
+        RawColumn::Numeric(values) => Ok(values),
+        RawColumn::Text(values) => parse_numeric(&values, group)?.ok_or_else(|| {
+            invalid(format!(
+                "one-hot group {group:?} must contain only numeric indicator columns"
+            ))
+        }),
+        RawColumn::Categorical { .. } => unreachable!(),
+    }
+}
+
+fn collapse_one_hot(
+    columns: Vec<RawColumn>,
+    categories: Vec<String>,
+    group: &str,
+) -> Result<RawColumn, ForestError> {
+    let indicators: Result<Vec<_>, _> = columns
+        .into_iter()
+        .map(|column| indicator_values(column, group))
+        .collect();
+    let indicators = indicators?;
+    let rows = indicators.first().map_or(0, Vec::len);
+    let codes: Result<Vec<_>, _> = (0..rows)
+        .into_par_iter()
+        .map(|row| {
+            let mut active = None;
+            for (category, values) in indicators.iter().enumerate() {
+                let Some(value) = values[row] else {
+                    return Err(invalid(format!(
+                        "one-hot group {group:?} has a missing value at row {row}"
+                    )));
+                };
+                if value != 0.0 && value != 1.0 {
+                    return Err(invalid(format!(
+                        "one-hot group {group:?} has a value other than 0 or 1 at row {row}"
+                    )));
+                }
+                if value == 1.0 && active.replace(category).is_some() {
+                    return Err(invalid(format!(
+                        "one-hot group {group:?} has multiple active categories at row {row}"
+                    )));
+                }
+            }
+            active.map(|category| category as i32).ok_or_else(|| {
+                invalid(format!(
+                    "one-hot group {group:?} has no active category at row {row}"
+                ))
+            })
+        })
+        .collect();
+    Ok(RawColumn::Categorical {
+        codes: codes?,
+        categories: categories.into_iter().map(Some).collect(),
+        null_value: None,
+    })
+}
+
+fn parse_dates(
+    raw: &RawColumn,
+    format: &str,
+    name: &str,
+) -> Result<Vec<Option<NaiveDateTime>>, ForestError> {
+    let RawColumn::Text(values) = raw else {
+        return Err(invalid(format!(
+            "date column {name:?} must contain strings"
+        )));
+    };
+    values
+        .par_iter()
+        .enumerate()
+        .map(|(row, value)| {
+            let Some(value) = value else { return Ok(None) };
+            let parsed = NaiveDateTime::parse_from_str(value, format).or_else(|_| {
+                NaiveDate::parse_from_str(value, format)
+                    .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
+            });
+            parsed.map(Some).map_err(|_| {
+                invalid(format!(
+                    "date column {name:?} has an invalid value at row {row}"
+                ))
+            })
+        })
+        .collect()
+}
+
+fn date_value(value: NaiveDateTime, part: u8) -> f32 {
+    let date = value.date();
+    let month_start = date.day() == 1;
+    let month_end = date
+        .succ_opt()
+        .is_none_or(|next| next.month() != date.month());
+    match part {
+        0 => date.year() as f32,
+        1 => date.month() as f32,
+        2 => date.iso_week().week() as f32,
+        3 => date.day() as f32,
+        4 => date.weekday().num_days_from_monday() as f32,
+        5 => date.ordinal() as f32,
+        6 => f32::from(month_end),
+        7 => f32::from(month_start),
+        8 => f32::from(month_end && date.month().is_multiple_of(3)),
+        9 => f32::from(month_start && date.month() % 3 == 1),
+        10 => f32::from(month_end && date.month() == 12),
+        11 => f32::from(month_start && date.month() == 1),
+        12 => value.hour() as f32,
+        13 => value.minute() as f32,
+        14 => value.second() as f32,
+        15 => value.and_utc().timestamp() as f32,
+        _ => unreachable!(),
+    }
+}
+
+fn arrange_columns(
+    columns: Vec<RawColumn>,
+    input_columns: &[InputColumn],
+    logical_names: &[String],
+) -> Result<Vec<RawColumn>, ForestError> {
+    let mut dates = HashMap::new();
+    for (position, source) in input_columns.iter().enumerate() {
+        if let InputColumn::DatePart { index, format, .. } = source {
+            if !dates.contains_key(index) {
+                dates.insert(
+                    *index,
+                    parse_dates(&columns[*index], format, &logical_names[position])?,
+                );
+            }
+        }
+    }
+    let mut columns: Vec<_> = columns.into_iter().map(Some).collect();
+    input_columns
+        .iter()
+        .zip(logical_names)
+        .map(|(source, name)| match source {
+            InputColumn::Direct(index) => Ok(columns[*index].take().unwrap()),
+            InputColumn::OneHot {
+                indices,
+                categories,
+            } => collapse_one_hot(
+                indices
+                    .iter()
+                    .map(|index| columns[*index].take().unwrap())
+                    .collect(),
+                categories.clone(),
+                name,
+            ),
+            InputColumn::DatePart { index, part, .. } => Ok(RawColumn::Numeric(
+                dates[index]
+                    .iter()
+                    .map(|value| value.map(|value| date_value(value, *part)))
+                    .collect(),
+            )),
+        })
+        .collect()
 }
 
 fn numeric_parts(values: Vec<Option<f32>>, name: &str) -> Result<Parts<f32>, ForestError> {
@@ -364,7 +611,84 @@ fn fit_column(
     name: String,
     max_dummy_cardinality: usize,
 ) -> Result<FittedColumn, ForestError> {
-    let raw = raw.into_simple();
+    let raw = match raw {
+        RawColumn::Categorical {
+            codes,
+            categories,
+            null_value,
+        } => {
+            let labels: Vec<_> = codes
+                .iter()
+                .map(|code| {
+                    if *code < 0 {
+                        null_value.as_ref()
+                    } else {
+                        categories.get(*code as usize).and_then(Option::as_ref)
+                    }
+                })
+                .collect();
+            let mut unique: Vec<_> = labels
+                .iter()
+                .filter_map(|value| (*value).cloned())
+                .collect();
+            unique.sort_unstable();
+            unique.dedup();
+            if unique.is_empty() {
+                return Ok(FittedColumn {
+                    column: Column {
+                        name,
+                        values: Values::Text(Vec::new()),
+                        all_int: false,
+                        median_numeric: None,
+                        median_text: None,
+                        had_missing: true,
+                        encodings: Vec::new(),
+                    },
+                    ranked: Vec::new(),
+                    bounds: Vec::new(),
+                });
+            }
+            let mut counts = vec![0; unique.len()];
+            let ranked: Vec<_> = labels
+                .iter()
+                .map(|value| {
+                    value.map_or(u32::MAX, |value| {
+                        let code = unique.binary_search(value).unwrap();
+                        counts[code] += 1;
+                        code as u32
+                    })
+                })
+                .collect();
+            let missing: Vec<_> = labels.iter().map(|value| value.is_none()).collect();
+            let observed = ranked.len() - missing.iter().filter(|value| **value).count();
+            let mut cumulative = 0;
+            let median_code = counts
+                .iter()
+                .position(|count| {
+                    cumulative += count;
+                    cumulative > observed / 2
+                })
+                .unwrap() as u32;
+            return Ok(finish_column(
+                name,
+                PreparedColumn {
+                    median_text: missing
+                        .iter()
+                        .any(|value| *value)
+                        .then(|| unique[median_code as usize].clone()),
+                    values: Values::Text(unique),
+                    codes: ranked,
+                    counts,
+                    median_code,
+                    median_numeric: None,
+                    missing,
+                    all_int: false,
+                },
+                max_dummy_cardinality,
+            ));
+        }
+        raw => raw,
+    };
     let had_missing = match &raw {
         RawColumn::Numeric(values) => values.iter().any(Option::is_none),
         RawColumn::Text(values) => values.iter().any(Option::is_none),
@@ -458,14 +782,18 @@ impl Encoder {
         columns: Vec<RawColumn>,
         names: Vec<String>,
         max_dummy_cardinality: usize,
+        one_hot_groups: Vec<(String, Vec<usize>)>,
+        date_parts: Vec<(usize, String, u8, String)>,
     ) -> Result<(Self, Array2<u32>), ForestError> {
         if max_dummy_cardinality == 0 {
             return Err(invalid("max_dummy_cardinality must be a positive integer"));
         }
         let rows = validate_rows(&columns, &names)?;
+        let (input_columns, logical_names) = input_layout(&names, &one_hot_groups, &date_parts)?;
+        let columns = arrange_columns(columns, &input_columns, &logical_names)?;
         let fitted: Result<Vec<_>, _> = columns
             .into_par_iter()
-            .zip(names)
+            .zip(logical_names)
             .map(|(column, name)| fit_column(column, name, max_dummy_cardinality))
             .collect();
         let fitted = fitted?;
@@ -495,6 +823,8 @@ impl Encoder {
         let matrix = assemble(&features, rows);
         let encoder = Self {
             columns: fitted.into_iter().map(|column| column.column).collect(),
+            input_names: names,
+            input_columns,
             cutoff_values,
             cutoff_offsets,
             encoded_to_raw,
@@ -504,12 +834,13 @@ impl Encoder {
     }
 
     pub fn transform(&self, columns: Vec<RawColumn>) -> Result<Array2<f32>, ForestError> {
+        let rows = validate_rows(&columns, &self.input_names)?;
         let names: Vec<_> = self
             .columns
             .iter()
             .map(|column| column.name.clone())
             .collect();
-        let rows = validate_rows(&columns, &names)?;
+        let columns = arrange_columns(columns, &self.input_columns, &names)?;
         let encoded: Result<Vec<_>, _> = columns
             .into_par_iter()
             .zip(&self.columns)
@@ -517,6 +848,102 @@ impl Encoder {
             .collect();
         let features: Vec<_> = encoded?.into_iter().flatten().collect();
         Ok(assemble(&features, rows))
+    }
+
+    pub fn transform_numeric<T>(
+        &self,
+        values: ArrayView2<'_, T>,
+    ) -> Result<Array2<f32>, ForestError>
+    where
+        T: Copy + Into<f64> + Send + Sync,
+    {
+        if values.nrows() == 0 {
+            return Err(invalid("X must contain at least one row"));
+        }
+        if values.ncols() != self.input_names.len() {
+            return Err(invalid(format!(
+                "expected {} features, got {}",
+                self.input_names.len(),
+                values.ncols()
+            )));
+        }
+        let encoded_cols = self.encoded_to_raw.len();
+        if encoded_cols == 0 {
+            return Ok(Array2::zeros((values.nrows(), 0)));
+        }
+        let mut data = vec![0.0; values.nrows() * encoded_cols];
+        data.par_chunks_mut(encoded_cols)
+            .enumerate()
+            .try_for_each(|(row, output)| {
+                let mut encoded = 0;
+                for (source, column) in self.input_columns.iter().zip(&self.columns) {
+                    let (value, numeric) = match source {
+                        InputColumn::Direct(raw) => {
+                            let value = values[[row, *raw]].into() as f32;
+                            if !value.is_finite() {
+                                return Err(invalid(format!(
+                                    "column {:?} contains a non-finite numeric value",
+                                    column.name
+                                )));
+                            }
+                            if !column.is_numeric() {
+                                return Err(invalid(
+                                    "numeric matrix transformation requires numeric fitted columns",
+                                ));
+                            }
+                            (value, true)
+                        }
+                        InputColumn::OneHot {
+                            indices,
+                            categories,
+                        } => {
+                            let mut active = None;
+                            for (category, raw) in indices.iter().enumerate() {
+                                let value = values[[row, *raw]].into() as f32;
+                                if !value.is_finite() || value != 0.0 && value != 1.0 {
+                                    return Err(invalid(format!(
+                                        "one-hot group {:?} has a value other than 0 or 1 at row {row}",
+                                        column.name
+                                    )));
+                                }
+                                if value == 1.0 && active.replace(category).is_some() {
+                                    return Err(invalid(format!(
+                                        "one-hot group {:?} has multiple active categories at row {row}",
+                                        column.name
+                                    )));
+                                }
+                            }
+                            let category = active.ok_or_else(|| {
+                                invalid(format!(
+                                    "one-hot group {:?} has no active category at row {row}",
+                                    column.name
+                                ))
+                            })?;
+                            let Values::Text(unique) = &column.values else {
+                                unreachable!()
+                            };
+                            (unique.binary_search(&categories[category]).unwrap() as f32, false)
+                        }
+                        InputColumn::DatePart { .. } => {
+                            return Err(invalid("numeric matrix transformation cannot contain date columns"));
+                        }
+                    };
+                    for encoding in &column.encodings {
+                        output[encoded] = match encoding {
+                            Encoding::Ordered => value,
+                            Encoding::Dummy(category) if numeric => {
+                                let Values::Numeric(unique) = &column.values else { unreachable!() };
+                                f32::from(value == unique[*category as usize])
+                            }
+                            Encoding::Dummy(category) => f32::from(value == *category as f32),
+                            Encoding::Missing => 0.0,
+                        };
+                        encoded += 1;
+                    }
+                }
+                Ok::<_, ForestError>(())
+            })?;
+        Ok(Array2::from_shape_vec((values.nrows(), encoded_cols), data).unwrap())
     }
 
     pub fn columns(&self) -> &[Column] {
@@ -682,8 +1109,14 @@ mod tests {
                 Some("b".into()),
             ]),
         ];
-        let (encoder, ranked) =
-            Encoder::fit(columns, vec!["number".into(), "label".into()], 3).unwrap();
+        let (encoder, ranked) = Encoder::fit(
+            columns,
+            vec!["number".into(), "label".into()],
+            3,
+            vec![],
+            vec![],
+        )
+        .unwrap();
         assert_eq!(ranked.dim(), (4, 5));
         assert!(encoder.columns[0].is_numeric());
         assert!(encoder.columns[0].had_missing());
@@ -697,5 +1130,63 @@ mod tests {
         assert_eq!(predicted.dim(), (2, 5));
         assert_eq!(predicted[[1, 2]], 1.0);
         assert_eq!(&predicted.row(0).as_slice().unwrap()[3..], &[0.0, 0.0]);
+
+        let raw = vec![
+            RawColumn::Numeric(vec![Some(0.0), Some(1.0), Some(2.0), Some(1.0)]),
+            RawColumn::Numeric(vec![Some(10.0), Some(20.0), Some(30.0), Some(40.0)]),
+        ];
+        let (numeric, _) = Encoder::fit(
+            raw,
+            vec!["small".into(), "ordered".into()],
+            3,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        let matrix = ndarray::array![[2.0_f64, 15.0], [0.0, 50.0]];
+        let direct = numeric.transform_numeric(matrix.view()).unwrap();
+        let columns = vec![
+            RawColumn::Numeric(vec![Some(2.0), Some(0.0)]),
+            RawColumn::Numeric(vec![Some(15.0), Some(50.0)]),
+        ];
+        assert_eq!(direct, numeric.transform(columns).unwrap());
+
+        let one_hot = vec![
+            RawColumn::Numeric(vec![Some(1.0), Some(0.0), Some(0.0), Some(1.0)]),
+            RawColumn::Numeric(vec![Some(0.0), Some(1.0), Some(0.0), Some(0.0)]),
+            RawColumn::Numeric(vec![Some(0.0), Some(0.0), Some(1.0), Some(0.0)]),
+        ];
+        let groups = vec![("color".into(), vec![0, 1, 2])];
+        let (grouped, fitted) = Encoder::fit(
+            one_hot,
+            vec!["red".into(), "green".into(), "blue".into()],
+            2,
+            groups,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(grouped.columns[0].text_values(), &["blue", "green", "red"]);
+        assert_eq!(fitted.column(0).to_vec(), vec![2, 1, 0, 2]);
+        let direct = grouped
+            .transform_numeric(ndarray::array![[0.0_f32, 1.0, 0.0], [0.0, 0.0, 1.0]].view())
+            .unwrap();
+        assert_eq!(direct.column(0).to_vec(), vec![1.0, 0.0]);
+
+        let dates = vec![RawColumn::Text(vec![
+            Some("2023-12-31 23:30:15".into()),
+            Some("2024-01-01 00:00:00".into()),
+        ])];
+        let format = "%Y-%m-%d %H:%M:%S".to_string();
+        let parts = vec![
+            (0, format.clone(), 0, "eventYear".into()),
+            (0, format.clone(), 2, "eventWeek".into()),
+            (0, format.clone(), 4, "eventDayofweek".into()),
+            (0, format, 12, "eventHour".into()),
+        ];
+        let (dated, _) = Encoder::fit(dates, vec!["eventDate".into()], 4, vec![], parts).unwrap();
+        assert_eq!(dated.columns[0].numeric_values(), &[2023.0, 2024.0]);
+        assert_eq!(dated.columns[1].numeric_values(), &[1.0, 52.0]);
+        assert_eq!(dated.columns[2].numeric_values(), &[0.0, 6.0]);
+        assert_eq!(dated.columns[3].numeric_values(), &[0.0, 23.0]);
     }
 }
