@@ -148,7 +148,29 @@ Across six numeric and mixed-data regressions, fastforest is fastest to fit and 
   </tbody>
 </table>
 
-<sub>Bold is best for that dataset and metric. Each dataset uses one fixed 80/20 split on a 16-core Apple M4 Max. Both forests use 50 trees; HistGBM and all other hyperparameters use library defaults. Fastforest's adaptive default selected 90% of features for SGEMM and Diamonds and 60% for California Housing, Allstate, and Diabetes; Concrete retained the 75% fallback because its training split has fewer than 8,000 rows. Fastforest fit time includes this pilot. Mixed-data sklearn RF preprocessing uses median imputation plus missing indicators for numeric columns, one-hot encoding through 20 levels, and target encoding above 20. HistGBM uses native categoricals through its 255-level limit and target encoding above it. Fit includes schema inspection and preprocessing but excludes process startup and IPC. Each model/dataset combination has a 180-second limit; sklearn RF timed out on Allstate. Fixed seeds make comparisons reproducible, and the SGEMM target is log-transformed mean runtime. Reproduce with <a href="tools/accuracy.py"><code>tools/accuracy.py</code></a>.</sub>
+<sub>Bold is best for that dataset and metric. Results use one fixed 80/20 split on a 16-core Apple M4 Max; fit includes preprocessing and FastForest's adaptive pilot. See Benchmarking for details and reproduction instructions.</sub>
+
+## Benchmarking
+
+The table compares 50-tree FastForest and sklearn random forests with default sklearn HistGBM. Each dataset uses the same reproducible 80/20 split. FastForest's adaptive default selected 90% of features for SGEMM and Diamonds and 60% for California Housing, Allstate, and Diabetes. Concrete retained the 75% fallback because its training split has fewer than 8,000 rows.
+
+For mixed data, sklearn RF uses median imputation plus missing indicators for numeric columns, one-hot encoding through 20 categorical levels, and target encoding above 20. HistGBM uses native categoricals through its 255-level limit and target encoding above that. Fit timing includes model construction, schema inspection, preprocessing, and fitting, but excludes process startup and inter-process transfer. Prediction timing includes input transformation. Every model/dataset combination has a 180-second limit; sklearn RF reached it on Allstate. The SGEMM target is the log-transformed mean runtime.
+
+Install the development dependencies and release build, then reproduce one dataset with:
+
+```bash
+pip install -e '.[dev]'
+maturin develop --release
+python tools/accuracy.py --dataset california
+```
+
+Available datasets are `sgemm`, `california`, `concrete`, `diamonds`, `allstate`, and `diabetes`. Run FastForest alone with `--ff_only`, or reproduce the complete table with:
+
+```bash
+for dataset in sgemm california concrete diamonds allstate diabetes; do
+  python tools/accuracy.py --dataset "$dataset"
+done
+```
 
 ## Install
 

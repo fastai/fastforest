@@ -39,8 +39,11 @@ def _adapter(markers, numeric):
     return FunctionTransformer(_clean_frame, kw_args=dict(markers=markers, numeric=numeric), feature_names_out="one-to-one")
 
 def _target_encoder(random_state):
-    from sklearn.model_selection import KFold
+    import sklearn
     from sklearn.preprocessing import TargetEncoder
+    if tuple(map(int, sklearn.__version__.split(".")[:2])) < (1, 9):
+        return TargetEncoder(target_type="continuous", cv=5, shuffle=True, random_state=random_state)
+    from sklearn.model_selection import KFold
     return TargetEncoder(target_type="continuous", cv=KFold(5, shuffle=True, random_state=random_state))
 
 def sklearn_preprocessor(df, missing_values=None, onehot_max=20, random_state=42):
