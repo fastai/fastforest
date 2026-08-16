@@ -1,17 +1,19 @@
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{ArrayView1, ArrayView2};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use crate::class_split::{ClassSplitScratch, find_class_split};
+use crate::class_split::{ClassSplitScratch, find_class_split, root_impurity};
 use crate::forest::{
-    LEAF_COL, group_features, sample_rows, validate_encoded_data, validate_prediction_data,
+    LEAF_COL, group_features, oob_rows, sample_rows, validate_encoded_data,
+    validate_prediction_data,
 };
-use crate::split::{NodeRows, partition};
-use crate::{Config, FeatureSampling, ForestError, MaxFeatures, Splitter};
+use crate::split::{FeatureGroup, NodeRows, TreeCutoffs, partition};
+use crate::{Config, ForestError};
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 struct ClassNode {
     cut_val: f32,
     leaf: u32,
@@ -48,7 +50,7 @@ impl TrainingClassNode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ClassTree {
     nodes: Vec<ClassNode>,
     probabilities: Vec<f32>,
@@ -66,6 +68,22 @@ impl ClassTree {
             let go_right = usize::from(value(node.cut_col as usize) > node.cut_val);
             node_idx = node.child as usize + go_right;
         }
+    }
+
+    fn structure(&self) -> (usize, usize, usize) {
+        let mut leaves = 0;
+        let mut depth = 0;
+        let mut stack = vec![(0, 0)];
+        while let Some((index, node_depth)) = stack.pop() {
+            let node = &self.nodes[index];
+            depth = depth.max(node_depth);
+            if node.is_leaf() { leaves += 1 }
+            else {
+                stack.push((node.child as usize, node_depth+1));
+                stack.push((node.child as usize+1, node_depth+1));
+            }
+        }
+        (self.nodes.len(), leaves, depth)
     }
 
     fn add_probabilities_by(&self, value: impl Fn(usize) -> f32, output: &mut [f32]) {
@@ -130,12 +148,19 @@ impl TrainingClassTree {
         x: ArrayView2<'_, u32>,
         y: ArrayView1<'_, u32>,
         n_classes: usize,
+        cutoff_offsets: &[usize],
         config: &Config,
-        feature_groups: Option<&[Vec<usize>]>,
+        feature_groups: Option<&[FeatureGroup]>,
         seed: u64,
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut rows = sample_rows(x.nrows(), config, &mut rng);
+        let mut cutoff_rng = StdRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
+        let tree_cutoffs = TreeCutoffs::fit(x, &rows, cutoff_offsets, config.tree_cutoff_samples, &mut cutoff_rng);
+        let root_rows = rows.len();
+        let root_impurity = if config.min_local_gain > 0.0 || config.min_global_gain > 0.0 {
+            root_impurity(y, &rows, n_classes)
+        } else { 1.0 };
         let in_bag = config.oob.then(|| {
             let mut mask = vec![false; x.nrows()];
             rows.iter().for_each(|&row| mask[row as usize] = true);
@@ -157,9 +182,13 @@ impl TrainingClassTree {
                 },
                 n_classes,
                 config,
+                cutoff_offsets,
+                tree_cutoffs.as_ref(),
                 feature_groups,
                 &mut rng,
                 &mut scratch,
+                root_impurity,
+                root_rows,
             );
             let (Some(cut_col), cut_val) = (split.cut_col, split.cut_val) else {
                 nodes[node_idx].leaf = u32::try_from(probabilities.len() / n_classes)
@@ -199,28 +228,55 @@ impl TrainingClassTree {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ClassificationAdaptiveScore {
-    pub max_features: f32,
-    pub max_node_samples: usize,
-    pub oob_brier: f64,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClassifierForest {
     trees: Vec<ClassTree>,
     n_features: usize,
     n_classes: usize,
     feature_importances: Vec<f32>,
+    #[serde(skip)]
     oob_decision: Option<Vec<f32>>,
+    #[serde(skip)]
     oob_counts: Option<Vec<u32>>,
-    adaptive_scores: Vec<ClassificationAdaptiveScore>,
-    adaptive_choice: Option<ClassificationAdaptiveScore>,
+    #[serde(skip)]
+    oob_indices: Option<Vec<usize>>,
 }
 
 impl ClassifierForest {
-    const PILOT_ROWS_PER_CLASS: usize = 8_000;
     const PREDICTION_CACHE_BYTES: usize = 1 << 19;
+
+    pub(crate) fn validate_loaded(&self, encoded_features: usize) -> Result<(), ForestError> {
+        if self.trees.is_empty() || self.n_classes < 2 {
+            return Err(ForestError::new("saved classifier dimensions are invalid"));
+        }
+        if self.n_features != encoded_features || self.feature_importances.len() != encoded_features {
+            return Err(ForestError::new("saved classifier feature dimensions are inconsistent"));
+        }
+        for tree in &self.trees {
+            if tree.nodes.is_empty()
+                || tree.n_classes != self.n_classes
+                || tree.probabilities.len() % self.n_classes != 0
+            {
+                return Err(ForestError::new("saved classifier tree dimensions are invalid"));
+            }
+            let leaves = tree.probabilities.len() / self.n_classes;
+            if tree.probabilities.iter().any(|value| !value.is_finite()) {
+                return Err(ForestError::new("saved classifier contains a non-finite probability"));
+            }
+            for node in &tree.nodes {
+                if !node.cut_val.is_finite()
+                    || node.is_leaf() && node.leaf as usize >= leaves
+                    || !node.is_leaf()
+                        && (node.cut_col as usize >= encoded_features
+                            || node.child as usize + 1 >= tree.nodes.len())
+                {
+                    return Err(ForestError::new("saved classifier contains an invalid node index"));
+                }
+            }
+        }
+        Ok(())
+    }
+
 
     fn trees_per_batch(&self) -> usize {
         let bytes: usize = self
@@ -276,6 +332,7 @@ impl ClassifierForest {
         cutoff_values: &[f32],
         cutoff_offsets: &[usize],
         feature_group_ids: Option<&[usize]>,
+        frequent_parents: Option<&[usize]>,
         config: &Config,
     ) -> Result<Self, ForestError> {
         validate_encoded_data(x, y.len(), cutoff_values, cutoff_offsets)?;
@@ -290,50 +347,56 @@ impl ClassifierForest {
                 "targets contain a class outside 0..n_classes",
             ));
         }
-        if config.workbench.leaf_regularization != 0.0 {
-            return Err(ForestError::new(
-                "leaf_regularization is not supported for classification",
-            ));
-        }
-        let feature_groups = match feature_group_ids {
-            Some(ids) => Some(group_features(x.ncols(), ids)?),
-            None if config.workbench.feature_sampling == FeatureSampling::Columns => {
-                return Err(ForestError::new(
-                    "column feature sampling requires feature group ids",
-                ));
-            }
-            None => None,
-        };
+        let feature_groups = feature_group_ids
+            .map(|ids| group_features(x.ncols(), ids, frequent_parents))
+            .transpose()?;
+        let output_dimensions = n_classes.saturating_sub(1).max(1);
         let mut class_config = config.clone();
         class_config.bootstrap_max = config
             .bootstrap_max
-            .map(|max| max.saturating_mul(n_classes));
-        let pilot_rows = Self::PILOT_ROWS_PER_CLASS.saturating_mul(n_classes);
-        if config.adaptive
-            && config.workbench.splitter == Splitter::Histogram
-            && x.nrows() > pilot_rows
-            && x.ncols() > 0
-        {
-            Self::fit_adaptive(
-                x,
-                y,
-                n_classes,
-                cutoff_values,
-                cutoff_offsets,
-                feature_groups.as_deref(),
-                &class_config,
-            )
-        } else {
-            Self::fit_fixed(
-                x,
-                y,
-                n_classes,
-                cutoff_values,
-                cutoff_offsets,
-                feature_groups.as_deref(),
-                &class_config,
-            )
+            .map(|max| max.saturating_mul(output_dimensions));
+        Self::fit_fixed(
+            x,
+            y,
+            n_classes,
+            cutoff_values,
+            cutoff_offsets,
+            feature_groups.as_deref(),
+            &class_config,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn fit_batch(
+        x: ArrayView2<'_, u32>,
+        y: ArrayView1<'_, u32>,
+        n_classes: usize,
+        cutoff_values: &[f32],
+        cutoff_offsets: &[usize],
+        feature_group_ids: Option<&[usize]>,
+        frequent_parents: Option<&[usize]>,
+        configs: &[Config],
+        oob_rows: Option<usize>,
+    ) -> Result<Vec<Self>, ForestError> {
+        validate_encoded_data(x, y.len(), cutoff_values, cutoff_offsets)?;
+        if configs.is_empty() { return Err(ForestError::new("batch must contain at least one configuration")) }
+        configs.iter().try_for_each(Config::validate)?;
+        if oob_rows == Some(0) { return Err(ForestError::new("OOB evaluation rows must be greater than zero")) }
+        if n_classes < 2 || y.iter().any(|&class| class as usize >= n_classes) {
+            return Err(ForestError::new("classification targets must use at least two classes in 0..n_classes"));
         }
+        let feature_groups = feature_group_ids
+            .map(|ids| group_features(x.ncols(), ids, frequent_parents))
+            .transpose()?;
+        let output_dimensions = n_classes.saturating_sub(1).max(1);
+        let configs: Vec<_> = configs.iter().map(|config| {
+            let mut config = config.clone();
+            config.bootstrap_max = config.bootstrap_max.map(|max| max.saturating_mul(output_dimensions));
+            config
+        }).collect();
+        configs.par_iter().map(|config| Self::fit_fixed(
+            x, y, n_classes, cutoff_values, cutoff_offsets, feature_groups.as_deref(), config, oob_rows)).collect()
     }
 
     fn fit_fixed(
@@ -342,18 +405,22 @@ impl ClassifierForest {
         n_classes: usize,
         cutoff_values: &[f32],
         cutoff_offsets: &[usize],
-        feature_groups: Option<&[Vec<usize>]>,
+        feature_groups: Option<&[FeatureGroup]>,
         config: &Config,
+        oob_row_override: Option<usize>,
     ) -> Result<Self, ForestError> {
         let mut seed_rng = StdRng::seed_from_u64(config.seed.unwrap_or_else(rand::random));
         let seeds: Vec<u64> = (0..config.n_trees).map(|_| seed_rng.random()).collect();
         let built: Vec<_> = seeds
             .into_par_iter()
-            .map(|seed| TrainingClassTree::build(x, y, n_classes, config, feature_groups, seed))
+            .map(|seed| TrainingClassTree::build(x, y, n_classes, cutoff_offsets, config, feature_groups, seed))
             .collect();
         let mut trees = Vec::with_capacity(config.n_trees);
-        let mut oob_decision = config.oob.then(|| vec![0.0; x.nrows() * n_classes]);
-        let mut oob_counts = config.oob.then(|| vec![0; x.nrows()]);
+        let oob_indices = oob_rows(x.nrows(), config, oob_row_override);
+        let mut oob_decision = oob_indices
+            .as_ref()
+            .map(|indices| vec![0.0; indices.len() * n_classes]);
+        let mut oob_counts = oob_indices.as_ref().map(|indices| vec![0; indices.len()]);
         let mut feature_importances = vec![0.0; x.ncols()];
         for (tree, in_bag, importance) in built {
             feature_importances
@@ -364,18 +431,19 @@ impl ClassifierForest {
                 let sums = oob_decision.as_mut().unwrap();
                 let counts = oob_counts.as_mut().unwrap();
                 let data = x.as_slice();
-                for row_idx in 0..x.nrows() {
+                for (output_idx, &row_idx) in oob_indices.as_ref().unwrap().iter().enumerate() {
                     if mask[row_idx] {
                         continue;
                     }
-                    let output = &mut sums[row_idx * n_classes..(row_idx + 1) * n_classes];
+                    let output =
+                        &mut sums[output_idx * n_classes..(output_idx + 1) * n_classes];
                     if let Some(data) = data {
                         let start = row_idx * x.ncols();
                         tree.add_probabilities_by(|col| data[start + col], output);
                     } else {
                         tree.add_probabilities_by(|col| x[[row_idx, col]], output);
                     }
-                    counts[row_idx] += 1;
+                    counts[output_idx] += 1;
                 }
             }
             trees.push(tree.into_native(cutoff_values, cutoff_offsets));
@@ -402,99 +470,8 @@ impl ClassifierForest {
             feature_importances,
             oob_decision,
             oob_counts,
-            adaptive_scores: Vec::new(),
-            adaptive_choice: None,
+            oob_indices,
         })
-    }
-
-    fn fit_adaptive(
-        x: ArrayView2<'_, u32>,
-        y: ArrayView1<'_, u32>,
-        n_classes: usize,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        feature_groups: Option<&[Vec<usize>]>,
-        config: &Config,
-    ) -> Result<Self, ForestError> {
-        const CANDIDATES: [f32; 2] = [0.6, 0.9];
-        let pilot_rows = Self::PILOT_ROWS_PER_CLASS * n_classes;
-        let seed = config.seed.unwrap_or_else(rand::random);
-        let mut sample_rng = StdRng::seed_from_u64(seed ^ 0x9e37_79b9_7f4a_7c15);
-        let pilot_indexes =
-            rand::seq::index::sample(&mut sample_rng, x.nrows(), pilot_rows).into_vec();
-        let pilot_x = Array2::from_shape_fn((pilot_rows, x.ncols()), |(row, col)| {
-            x[[pilot_indexes[row], col]]
-        });
-        let pilot_y = Array1::from_shape_fn(pilot_rows, |row| y[pilot_indexes[row]]);
-        let pilot_trees = rayon::current_num_threads().saturating_mul(2).max(32);
-        let mut scores = Vec::with_capacity(CANDIDATES.len());
-        for max_features in CANDIDATES {
-            let mut pilot_config = config.clone();
-            pilot_config.n_trees = pilot_trees;
-            pilot_config.bootstrap_fraction = Some(0.5);
-            pilot_config.bootstrap_max = None;
-            pilot_config.replacement = false;
-            pilot_config.seed = Some(seed);
-            pilot_config.oob = true;
-            pilot_config.adaptive = false;
-            pilot_config.workbench.max_features = MaxFeatures::Fraction(max_features);
-            let forest = Self::fit_fixed(
-                pilot_x.view(),
-                pilot_y.view(),
-                n_classes,
-                cutoff_values,
-                cutoff_offsets,
-                feature_groups,
-                &pilot_config,
-            )?;
-            let decision = forest.oob_decision.as_ref().unwrap();
-            let counts = forest.oob_counts.as_ref().unwrap();
-            let (loss, rows) = decision
-                .chunks_exact(n_classes)
-                .zip(counts)
-                .zip(&pilot_y)
-                .filter(|((_, count), _)| **count > 0)
-                .fold(
-                    (0.0, 0_usize),
-                    |(loss, rows), ((probabilities, _), &target)| {
-                        let row_loss = probabilities
-                            .iter()
-                            .enumerate()
-                            .map(|(class, &probability)| {
-                                let expected = f64::from(u8::from(class == target as usize));
-                                (f64::from(probability) - expected).powi(2)
-                            })
-                            .sum::<f64>();
-                        (loss + row_loss, rows + 1)
-                    },
-                );
-            scores.push(ClassificationAdaptiveScore {
-                max_features,
-                max_node_samples: config.max_node_samples,
-                oob_brier: loss / rows as f64,
-            });
-        }
-        let choice = scores
-            .iter()
-            .copied()
-            .min_by(|left, right| left.oob_brier.total_cmp(&right.oob_brier))
-            .unwrap();
-        let mut selected = config.clone();
-        selected.seed = Some(seed);
-        selected.adaptive = false;
-        selected.workbench.max_features = MaxFeatures::Fraction(choice.max_features);
-        let mut forest = Self::fit_fixed(
-            x,
-            y,
-            n_classes,
-            cutoff_values,
-            cutoff_offsets,
-            feature_groups,
-            &selected,
-        )?;
-        forest.adaptive_scores = scores;
-        forest.adaptive_choice = Some(choice);
-        Ok(forest)
     }
 
     pub fn predict_proba(&self, x: ArrayView2<'_, f32>) -> Result<Vec<f32>, ForestError> {
@@ -596,6 +573,12 @@ impl ClassifierForest {
     pub fn n_features(&self) -> usize {
         self.n_features
     }
+    pub fn n_trees(&self) -> usize {
+        self.trees.len()
+    }
+    pub fn tree_structures(&self) -> Vec<(usize, usize, usize)> {
+        self.trees.iter().map(ClassTree::structure).collect()
+    }
     pub fn n_classes(&self) -> usize {
         self.n_classes
     }
@@ -611,10 +594,44 @@ impl ClassifierForest {
     pub fn oob_counts(&self) -> Option<&[u32]> {
         self.oob_counts.as_deref()
     }
-    pub fn adaptive_scores(&self) -> &[ClassificationAdaptiveScore] {
-        &self.adaptive_scores
+    pub fn oob_indices(&self) -> Option<&[usize]> {
+        self.oob_indices.as_deref()
     }
-    pub fn adaptive_choice(&self) -> Option<ClassificationAdaptiveScore> {
-        self.adaptive_choice
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::{Array1, Array2};
+
+    #[test]
+    fn batch_matches_standalone_forests_exactly() {
+        let x = Array2::from_shape_fn((240, 5), |(row, col)| ((row*7 + col*11) % 17) as u32);
+        let y = Array1::from_shape_fn(240, |row| ((x[[row, 0]] + 2*x[[row, 1]]) % 3) as u32);
+        let mut cutoffs = Vec::new();
+        let mut offsets = vec![0];
+        for _ in 0..x.ncols() {
+            cutoffs.extend((0..17).map(|value| value as f32));
+            offsets.push(cutoffs.len());
+        }
+        let base = Config { n_trees: 8, bootstrap_max: None, min_node_size: 6, max_node_samples: 60,
+            seed: Some(77), oob: true, ..Config::default() };
+        let configs = [base.clone(), Config { min_node_size: 12, tree_cutoff_samples: Some(8),
+            max_features: crate::MaxFeatures::Fraction(0.6), ..base }];
+        let standalone: Vec<_> = configs.iter().map(|config| ClassifierForest::fit(x.view(), y.view(), 3,
+            &cutoffs, &offsets, None, None, config).unwrap()).collect();
+        let batch = ClassifierForest::fit_batch(x.view(), y.view(), 3, &cutoffs, &offsets, None, None, &configs, None).unwrap();
+        for (standalone, batched) in standalone.iter().zip(&batch) {
+            assert_eq!(standalone.trees, batched.trees);
+            assert_eq!(standalone.feature_importances, batched.feature_importances);
+            assert_eq!(standalone.oob_counts, batched.oob_counts);
+            assert_eq!(standalone.oob_indices, batched.oob_indices);
+            assert_eq!(standalone.oob_decision.as_ref().unwrap().iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+                batched.oob_decision.as_ref().unwrap().iter().map(|value| value.to_bits()).collect::<Vec<_>>());
+        }
+        let reversed = ClassifierForest::fit_batch(x.view(), y.view(), 3, &cutoffs, &offsets, None, None,
+            &[configs[1].clone(), configs[0].clone()], None).unwrap();
+        assert_eq!(batch[0].trees, reversed[1].trees);
+        assert_eq!(batch[1].trees, reversed[0].trees);
     }
 }

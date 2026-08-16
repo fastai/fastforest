@@ -1,15 +1,23 @@
 //! Fast approximate-forest regression and classification.
 
 mod class_split;
+pub mod cli;
+mod compiled;
 mod classification;
 mod forest;
+mod file;
+mod model;
 mod preprocessing;
 #[cfg(feature = "python")]
 mod python;
 mod split;
-mod workbench;
 
-pub use classification::{ClassificationAdaptiveScore, ClassifierForest};
-pub use forest::{AdaptiveScore, Config, Forest, ForestError};
-pub use preprocessing::{Column, Encoder, Encoding, RawColumn};
-pub use workbench::{FeatureSampling, MaxFeatures, Splitter, Workbench};
+pub use classification::ClassifierForest;
+pub use compiled::compile_model;
+pub use forest::{Config, FitPlan, Forest, ForestError, MaxFeatures, plan_fit};
+pub use file::{
+    FileFitOptions, Task, convert_csv_to_arrow, fit_arrow, fit_csv, fit_file, predict_arrow,
+    predict_csv, predict_file,
+};
+pub use model::{ModelMetadata, SavedModel, SavedValue};
+pub use preprocessing::{Column, Encoder, Encoding};

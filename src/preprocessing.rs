@@ -1,18 +1,26 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
-use ndarray::{Array2, ArrayView2};
+use arrow_array::{
+    Array, BooleanArray, DictionaryArray, Float32Array, Float64Array, Int8Array, Int16Array,
+    Int32Array, Int64Array, RecordBatch, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+};
+use arrow_array::types::{Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type};
+use arrow_cast::display::array_value_to_string;
+use arrow_schema::DataType;
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use ndarray::Array2;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use crate::ForestError;
+use crate::{ForestError, SavedValue};
 
 #[derive(Clone, Debug)]
-pub enum RawColumn {
+pub(crate) enum RawColumn {
     Numeric(Vec<Option<f32>>),
     Text(Vec<Option<String>>),
     Categorical {
         codes: Vec<i32>,
-        categories: Vec<Option<String>>,
+        categories: Arc<[Option<String>]>,
         null_value: Option<String>,
     },
 }
@@ -28,7 +36,7 @@ impl RawColumn {
 
     fn expand_categories(
         codes: Vec<i32>,
-        categories: Vec<Option<String>>,
+        categories: Arc<[Option<String>]>,
         null_value: Option<String>,
     ) -> Vec<Option<String>> {
         codes
@@ -74,22 +82,23 @@ impl RawColumn {
                 .collect(),
         }
     }
+
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Encoding {
     Ordered,
     Dummy(u32),
     Missing,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum Values {
     Numeric(Vec<f32>),
     Text(Vec<String>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Column {
     name: String,
     values: Values,
@@ -145,6 +154,7 @@ struct FittedColumn {
     column: Column,
     ranked: Vec<Vec<u32>>,
     bounds: Vec<Vec<f32>>,
+    frequent: Vec<bool>,
 }
 
 struct Parts<T> {
@@ -165,18 +175,20 @@ struct PreparedColumn {
     all_int: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Encoder {
     columns: Vec<Column>,
     input_names: Vec<String>,
     input_columns: Vec<InputColumn>,
+    allow_new_missing: bool,
     cutoff_values: Vec<f32>,
     cutoff_offsets: Vec<usize>,
     encoded_to_raw: Vec<usize>,
     feature_group_ids: Vec<usize>,
+    frequent_parents: Vec<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum InputColumn {
     Direct(usize),
     OneHot {
@@ -192,6 +204,120 @@ enum InputColumn {
 
 fn invalid(message: impl Into<String>) -> ForestError {
     ForestError::new(message)
+}
+
+pub(crate) fn marker_matches(value: &str, marker: &SavedValue) -> bool {
+    match marker.kind {
+        0 => value.is_empty(),
+        1 => value.parse::<f64>().is_ok_and(f64::is_nan),
+        2 => value == if marker.value == "1" { "true" } else { "false" },
+        3 => value.parse::<i64>().ok().is_some_and(|parsed| parsed.to_string() == marker.value),
+        4 => value.parse::<f64>().ok() == marker.value.parse::<f64>().ok(),
+        5 => value == marker.value,
+        _ => false,
+    }
+}
+
+macro_rules! numeric_arrow_column {
+    ($array:expr, $marker:expr, $ty:ty) => {{
+        let array = $array.as_any().downcast_ref::<$ty>().unwrap();
+        RawColumn::Numeric((0..array.len()).map(|row| {
+            if array.is_null(row) { return None }
+            let value = array.value(row) as f64;
+            (!marker_matches(&value.to_string(), $marker)).then_some(value as f32)
+        }).collect())
+    }};
+}
+
+macro_rules! dictionary_arrow_column {
+    ($array:expr, $marker:expr, $ty:ty) => {{
+        let array = $array.as_any().downcast_ref::<DictionaryArray<$ty>>().unwrap();
+        let categories: Result<Vec<_>, ForestError> = (0..array.values().len()).map(|row| {
+            if array.values().is_null(row) { return Ok(None) }
+            let value = array_value_to_string(array.values().as_ref(), row)
+                .map_err(|error| invalid(format!("could not read Arrow category: {error}")))?;
+            Ok((!marker_matches(&value, $marker)).then_some(value))
+        }).collect();
+        RawColumn::Categorical {
+            codes: (0..array.len()).map(|row| if array.is_null(row) { -1 } else { array.keys().value(row) as i32 }).collect(),
+            categories: categories?.into(),
+            null_value: None,
+        }
+    }};
+}
+
+fn arrow_column(array: &dyn Array, marker: &SavedValue) -> Result<RawColumn, ForestError> {
+    let column = match array.data_type() {
+        DataType::Float32 => numeric_arrow_column!(array, marker, Float32Array),
+        DataType::Float64 => numeric_arrow_column!(array, marker, Float64Array),
+        DataType::Int8 => numeric_arrow_column!(array, marker, Int8Array),
+        DataType::Int16 => numeric_arrow_column!(array, marker, Int16Array),
+        DataType::Int32 => numeric_arrow_column!(array, marker, Int32Array),
+        DataType::Int64 => numeric_arrow_column!(array, marker, Int64Array),
+        DataType::UInt8 => numeric_arrow_column!(array, marker, UInt8Array),
+        DataType::UInt16 => numeric_arrow_column!(array, marker, UInt16Array),
+        DataType::UInt32 => numeric_arrow_column!(array, marker, UInt32Array),
+        DataType::UInt64 => numeric_arrow_column!(array, marker, UInt64Array),
+        DataType::Boolean => {
+            let array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+            RawColumn::Numeric((0..array.len()).map(|row| {
+                if array.is_null(row) { return None }
+                let value = array.value(row);
+                (!marker_matches(if value { "true" } else { "false" }, marker)).then_some(f32::from(value))
+            }).collect())
+        }
+        DataType::Dictionary(key, _) => match key.as_ref() {
+            DataType::Int8 => dictionary_arrow_column!(array, marker, Int8Type),
+            DataType::Int16 => dictionary_arrow_column!(array, marker, Int16Type),
+            DataType::Int32 => dictionary_arrow_column!(array, marker, Int32Type),
+            DataType::Int64 => dictionary_arrow_column!(array, marker, Int64Type),
+            DataType::UInt8 => dictionary_arrow_column!(array, marker, UInt8Type),
+            DataType::UInt16 => dictionary_arrow_column!(array, marker, UInt16Type),
+            DataType::UInt32 => dictionary_arrow_column!(array, marker, UInt32Type),
+            DataType::UInt64 => dictionary_arrow_column!(array, marker, UInt64Type),
+            data_type => return Err(invalid(format!("unsupported Arrow dictionary key type {data_type}"))),
+        },
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View
+        | DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _) | DataType::Time32(_)
+        | DataType::Time64(_) => RawColumn::Text((0..array.len()).map(|row| {
+            if array.is_null(row) { return Ok(None) }
+            let value = array_value_to_string(array, row).map_err(|error| invalid(format!("could not read Arrow value: {error}")))?;
+            Ok((!marker_matches(&value, marker)).then_some(value))
+        }).collect::<Result<_, ForestError>>()?),
+        data_type => return Err(invalid(format!("unsupported Arrow column type {data_type}"))),
+    };
+    Ok(column)
+}
+
+fn numeric_arrow_value(array: &dyn Array, row: usize) -> Option<f32> {
+    if array.is_null(row) { return None }
+    Some(match array.data_type() {
+        DataType::Float32 => array.as_any().downcast_ref::<Float32Array>().unwrap().value(row),
+        DataType::Float64 => array.as_any().downcast_ref::<Float64Array>().unwrap().value(row) as f32,
+        DataType::Int8 => array.as_any().downcast_ref::<Int8Array>().unwrap().value(row) as f32,
+        DataType::Int16 => array.as_any().downcast_ref::<Int16Array>().unwrap().value(row) as f32,
+        DataType::Int32 => array.as_any().downcast_ref::<Int32Array>().unwrap().value(row) as f32,
+        DataType::Int64 => array.as_any().downcast_ref::<Int64Array>().unwrap().value(row) as f32,
+        DataType::UInt8 => array.as_any().downcast_ref::<UInt8Array>().unwrap().value(row) as f32,
+        DataType::UInt16 => array.as_any().downcast_ref::<UInt16Array>().unwrap().value(row) as f32,
+        DataType::UInt32 => array.as_any().downcast_ref::<UInt32Array>().unwrap().value(row) as f32,
+        DataType::UInt64 => array.as_any().downcast_ref::<UInt64Array>().unwrap().value(row) as f32,
+        DataType::Boolean => f32::from(array.as_any().downcast_ref::<BooleanArray>().unwrap().value(row)),
+        _ => return None,
+    })
+}
+
+fn numeric_arrow_type(data_type: &DataType) -> bool {
+    matches!(data_type, DataType::Float32 | DataType::Float64 | DataType::Int8 | DataType::Int16
+        | DataType::Int32 | DataType::Int64 | DataType::UInt8 | DataType::UInt16 | DataType::UInt32
+        | DataType::UInt64 | DataType::Boolean)
+}
+
+fn arrow_columns(batch: &RecordBatch, markers: &[SavedValue]) -> Result<Vec<RawColumn>, ForestError> {
+    if batch.num_columns() != markers.len() {
+        return Err(invalid("missing_values must have one value per column"));
+    }
+    batch.columns().par_iter().zip(markers).map(|(array, marker)| arrow_column(array.as_ref(), marker)).collect()
 }
 
 fn validate_rows(columns: &[RawColumn], names: &[String]) -> Result<usize, ForestError> {
@@ -356,7 +482,7 @@ fn collapse_one_hot(
         .collect();
     Ok(RawColumn::Categorical {
         codes: codes?,
-        categories: categories.into_iter().map(Some).collect(),
+        categories: categories.into_iter().map(Some).collect::<Vec<_>>().into(),
         null_value: None,
     })
 }
@@ -366,27 +492,30 @@ fn parse_dates(
     format: &str,
     name: &str,
 ) -> Result<Vec<Option<NaiveDateTime>>, ForestError> {
-    let RawColumn::Text(values) = raw else {
-        return Err(invalid(format!(
-            "date column {name:?} must contain strings"
-        )));
+    let parse = |value: &str| {
+        DateTime::parse_from_str(value, format).map(|value| value.naive_utc()).ok()
+            .or_else(|| NaiveDateTime::parse_from_str(value, format).ok())
+            .or_else(|| NaiveDate::parse_from_str(value, format).ok().map(|date| date.and_hms_opt(0, 0, 0).unwrap()))
+            .or_else(|| NaiveTime::parse_from_str(value, format).ok().map(|time| NaiveDate::from_ymd_opt(1900, 1, 1).unwrap().and_time(time)))
     };
-    values
-        .par_iter()
-        .enumerate()
-        .map(|(row, value)| {
-            let Some(value) = value else { return Ok(None) };
-            let parsed = NaiveDateTime::parse_from_str(value, format).or_else(|_| {
-                NaiveDate::parse_from_str(value, format)
-                    .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
-            });
-            parsed.map(Some).map_err(|_| {
-                invalid(format!(
-                    "date column {name:?} has an invalid value at row {row}"
-                ))
-            })
-        })
-        .collect()
+    match raw {
+        RawColumn::Text(values) => Ok(values
+            .par_iter()
+            .map(|value| value.as_deref().and_then(&parse))
+            .collect()),
+        RawColumn::Categorical { codes, categories, null_value } => {
+            let parsed: Vec<_> = categories.iter().map(|value| value.as_deref().and_then(&parse)).collect();
+            let parsed_null = null_value.as_deref().and_then(&parse);
+            codes
+                .par_iter()
+                .map(|code| {
+                    if *code < 0 { return Ok(parsed_null) }
+                    parsed.get(*code as usize).copied().ok_or_else(|| invalid(format!("date column {name:?} has an invalid category code")))
+                })
+                .collect()
+        }
+        RawColumn::Numeric(_) => Err(invalid(format!("date column {name:?} must contain strings"))),
+    }
 }
 
 fn date_value(value: NaiveDateTime, part: u8) -> f32 {
@@ -468,7 +597,7 @@ fn numeric_parts(values: Vec<Option<f32>>, name: &str) -> Result<Parts<f32>, For
     }
     let mut unique = observed.clone();
     unique.sort_unstable_by(|a, b| a.total_cmp(b));
-    unique.dedup();
+    unique.dedup_by(|left, right| left.total_cmp(right).is_eq());
     let mut counts = vec![0; unique.len()];
     let mut codes = Vec::with_capacity(values.len());
     for value in &values {
@@ -525,6 +654,7 @@ fn finish_column(
     name: String,
     prepared: PreparedColumn,
     max_dummy_cardinality: usize,
+    frequent_value_fraction: f32,
 ) -> FittedColumn {
     let PreparedColumn {
         values,
@@ -544,18 +674,14 @@ fn finish_column(
             .for_each(|code| *code = median_code);
     }
     let cardinality = counts.len();
-    let baseline = (cardinality <= max_dummy_cardinality).then(|| {
-        let minimum = counts.iter().copied().min().unwrap();
-        counts.iter().position(|count| *count == minimum).unwrap() as u32
-    });
     let mut encodings = Vec::new();
     let mut ranked = Vec::new();
     let mut bounds = Vec::new();
-    if let Some(baseline) = baseline {
-        for category in 0..cardinality as u32 {
-            if category == baseline {
-                continue;
-            }
+    let mut frequent_flags = Vec::new();
+    if cardinality == 1 {
+    } else if cardinality <= max_dummy_cardinality {
+        let first = usize::from(cardinality == 2);
+        for category in first as u32..cardinality as u32 {
             encodings.push(Encoding::Dummy(category));
             ranked.push(
                 codes
@@ -564,8 +690,28 @@ fn finish_column(
                     .collect(),
             );
             bounds.push(vec![0.0, 0.0]);
+            frequent_flags.push(false);
         }
     } else {
+        let frequent = if frequent_value_fraction > 0.0 {
+            let minimum = frequent_value_fraction * missing.len() as f32;
+            counts
+                .iter()
+                .enumerate()
+                .filter(|(_, count)| **count as f32 > minimum)
+                .map(|(category, _)| {
+                    (
+                        category as u32,
+                        codes
+                            .iter()
+                            .map(|code| u32::from(*code == category as u32))
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         encodings.push(Encoding::Ordered);
         ranked.push(codes);
         let cutoff = match &values {
@@ -585,11 +731,19 @@ fn finish_column(
                 .collect(),
         };
         bounds.push(cutoff);
+        frequent_flags.push(false);
+        for (category, values) in frequent {
+            encodings.push(Encoding::Dummy(category));
+            ranked.push(values);
+            bounds.push(vec![0.0, 0.0]);
+            frequent_flags.push(true);
+        }
     }
     if had_missing {
         encodings.push(Encoding::Missing);
         ranked.push(missing.iter().map(|value| u32::from(*value)).collect());
         bounds.push(vec![0.0, 0.0]);
+        frequent_flags.push(false);
     }
     FittedColumn {
         column: Column {
@@ -603,6 +757,7 @@ fn finish_column(
         },
         ranked,
         bounds,
+        frequent: frequent_flags,
     }
 }
 
@@ -610,6 +765,7 @@ fn fit_column(
     raw: RawColumn,
     name: String,
     max_dummy_cardinality: usize,
+    frequent_value_fraction: f32,
 ) -> Result<FittedColumn, ForestError> {
     let raw = match raw {
         RawColumn::Categorical {
@@ -646,6 +802,7 @@ fn fit_column(
                     },
                     ranked: Vec::new(),
                     bounds: Vec::new(),
+                    frequent: Vec::new(),
                 });
             }
             let mut counts = vec![0; unique.len()];
@@ -672,10 +829,7 @@ fn fit_column(
             return Ok(finish_column(
                 name,
                 PreparedColumn {
-                    median_text: missing
-                        .iter()
-                        .any(|value| *value)
-                        .then(|| unique[median_code as usize].clone()),
+                    median_text: Some(unique[median_code as usize].clone()),
                     values: Values::Text(unique),
                     codes: ranked,
                     counts,
@@ -685,14 +839,10 @@ fn fit_column(
                     all_int: false,
                 },
                 max_dummy_cardinality,
+                frequent_value_fraction,
             ));
         }
         raw => raw,
-    };
-    let had_missing = match &raw {
-        RawColumn::Numeric(values) => values.iter().any(Option::is_none),
-        RawColumn::Text(values) => values.iter().any(Option::is_none),
-        RawColumn::Categorical { .. } => unreachable!(),
     };
     let observed = match &raw {
         RawColumn::Numeric(values) => values.iter().flatten().count(),
@@ -712,6 +862,7 @@ fn fit_column(
             },
             ranked: Vec::new(),
             bounds: Vec::new(),
+            frequent: Vec::new(),
         });
     }
     let numeric = match raw {
@@ -730,11 +881,12 @@ fn fit_column(
                         counts: parts.counts,
                         median_code,
                         median_numeric: None,
-                        median_text: had_missing.then_some(parts.median),
+                        median_text: Some(parts.median),
                         missing,
                         all_int: false,
                     },
                     max_dummy_cardinality,
+                    frequent_value_fraction,
                 ));
             }
         },
@@ -755,38 +907,119 @@ fn fit_column(
             codes: parts.codes,
             counts: parts.counts,
             median_code,
-            median_numeric: had_missing.then_some(parts.median),
+            median_numeric: Some(parts.median),
             median_text: None,
             missing,
             all_int,
         },
         max_dummy_cardinality,
+        frequent_value_fraction,
     ))
 }
 
-fn assemble<T: Copy + Default + Send + Sync>(features: &[Vec<T>], rows: usize) -> Array2<T> {
+fn assemble_range<T: Copy + Default + Send + Sync>(features: &[Vec<T>], start: usize, rows: usize) -> Array2<T> {
     let cols = features.len();
     let mut data = vec![T::default(); rows * cols];
     data.par_chunks_mut(cols.max(1))
         .enumerate()
         .for_each(|(row, output)| {
             for (col, feature) in features.iter().enumerate() {
-                output[col] = feature[row];
+                output[col] = feature[start + row];
             }
         });
     Array2::from_shape_vec((rows, cols), data).unwrap()
 }
 
+fn assemble<T: Copy + Default + Send + Sync>(features: &[Vec<T>], rows: usize) -> Array2<T> {
+    assemble_range(features, 0, rows)
+}
+
 impl Encoder {
-    pub fn fit(
+    pub fn fit_arrow(
+        batch: &RecordBatch, markers: &[SavedValue],
+        max_dummy_cardinality: usize, frequent_value_fraction: f32, allow_new_missing: bool,
+        one_hot_groups: Vec<(String, Vec<usize>)>, date_parts: Vec<(usize, String, u8, String)>,
+    ) -> Result<(Self, Array2<u32>), ForestError> {
+        let names = batch.schema().fields().iter().map(|field| field.name().clone()).collect();
+        let columns = arrow_columns(batch, markers)?;
+        Self::fit(columns, names, max_dummy_cardinality, frequent_value_fraction, allow_new_missing, one_hot_groups, date_parts)
+    }
+
+    pub fn transform_arrow(&self, batch: &RecordBatch, markers: &[SavedValue]) -> Result<Array2<f32>, ForestError> {
+        let schema = batch.schema();
+        let names: Vec<_> = schema.fields().iter().map(|field| field.name().as_str()).collect();
+        if names != self.input_names.iter().map(String::as_str).collect::<Vec<_>>() {
+            return Err(invalid("prediction columns must match training columns"));
+        }
+        let direct_numeric = markers.iter().all(|marker| marker.kind == 5 && marker.value.is_empty())
+            && self.input_columns.iter().all(|source| matches!(source, InputColumn::Direct(_)))
+            && self.columns.iter().all(|column| column.is_numeric() && !column.had_missing())
+            && batch.columns().iter().all(|array| numeric_arrow_type(array.data_type()));
+        if direct_numeric {
+            let encoded_cols = self.encoded_to_raw.len();
+            let mut data = vec![0.0; batch.num_rows()*encoded_cols];
+            data.par_chunks_mut(encoded_cols.max(1)).enumerate().try_for_each(|(row, output)| {
+                let mut encoded = 0;
+                for (array, column) in batch.columns().iter().zip(&self.columns) {
+                    let value = match numeric_arrow_value(array.as_ref(), row) {
+                        Some(value) => value,
+                        None if self.allow_new_missing => column.median_numeric.unwrap(),
+                        None => return Err(invalid(format!(
+                            "column {:?} has a missing value at row {row}, but had none during training", column.name))),
+                    };
+                    if !value.is_finite() { return Err(invalid(format!("column {:?} contains a non-finite numeric value", column.name))) }
+                    let Values::Numeric(unique) = &column.values else { unreachable!() };
+                    for encoding in &column.encodings {
+                        output[encoded] = match encoding {
+                            Encoding::Ordered => value,
+                            Encoding::Dummy(category) => f32::from(value == unique[*category as usize]),
+                            Encoding::Missing => unreachable!(),
+                        };
+                        encoded += 1;
+                    }
+                }
+                Ok::<_, ForestError>(())
+            })?;
+            return Ok(Array2::from_shape_vec((batch.num_rows(), encoded_cols), data).unwrap())
+        }
+        self.transform(arrow_columns(batch, markers)?)
+    }
+
+    pub(crate) fn validate_loaded(&self) -> Result<(), ForestError> {
+        if self.input_names.is_empty() || self.input_columns.len() != self.columns.len() {
+            return Err(invalid("saved preprocessing schema dimensions are invalid"));
+        }
+        let encoded = self.encoded_to_raw.len();
+        if self.cutoff_offsets.len() != encoded + 1
+            || self.feature_group_ids.len() != encoded
+            || self.frequent_parents.len() != encoded
+            || self.cutoff_offsets.first() != Some(&0)
+            || self.cutoff_offsets.last() != Some(&self.cutoff_values.len())
+            || self.cutoff_offsets.windows(2).any(|pair| pair[0] > pair[1])
+            || self.encoded_to_raw.iter().any(|&column| column >= self.columns.len())
+            || self.frequent_parents.iter().enumerate().any(|(feature, &parent)| {
+                parent != usize::MAX && (parent >= feature || parent >= encoded)
+            })
+        {
+            return Err(invalid("saved preprocessing feature mappings are invalid"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn fit(
         columns: Vec<RawColumn>,
         names: Vec<String>,
-        max_dummy_cardinality: usize,
+        max_dummy_cardinality: usize, frequent_value_fraction: f32, allow_new_missing: bool,
         one_hot_groups: Vec<(String, Vec<usize>)>,
         date_parts: Vec<(usize, String, u8, String)>,
     ) -> Result<(Self, Array2<u32>), ForestError> {
         if max_dummy_cardinality == 0 {
             return Err(invalid("max_dummy_cardinality must be a positive integer"));
+        }
+        if !frequent_value_fraction.is_finite() || !(0.0..=1.0).contains(&frequent_value_fraction) {
+            return Err(invalid(
+                "frequent_value_fraction must be finite and between zero and one",
+            ));
         }
         let rows = validate_rows(&columns, &names)?;
         let (input_columns, logical_names) = input_layout(&names, &one_hot_groups, &date_parts)?;
@@ -794,7 +1027,9 @@ impl Encoder {
         let fitted: Result<Vec<_>, _> = columns
             .into_par_iter()
             .zip(logical_names)
-            .map(|(column, name)| fit_column(column, name, max_dummy_cardinality))
+            .map(|(column, name)| {
+                fit_column(column, name, max_dummy_cardinality, frequent_value_fraction)
+            })
             .collect();
         let fitted = fitted?;
         let mut features = Vec::new();
@@ -802,16 +1037,24 @@ impl Encoder {
         let mut cutoff_offsets = vec![0];
         let mut encoded_to_raw = Vec::new();
         let mut feature_group_ids = Vec::new();
+        let mut frequent_parents = Vec::new();
         let mut next_group = 0;
         for (raw, column) in fitted.iter().enumerate() {
             let atomic = column.column.is_numeric() && column.column.had_missing();
             let atomic_group = next_group;
-            for (ranked, bounds) in column.ranked.iter().zip(&column.bounds) {
+            let parent = features.len();
+            for ((ranked, bounds), frequent) in column
+                .ranked
+                .iter()
+                .zip(&column.bounds)
+                .zip(&column.frequent)
+            {
                 features.push(ranked.clone());
                 cutoff_values.extend(bounds);
                 cutoff_offsets.push(cutoff_values.len());
                 encoded_to_raw.push(raw);
                 feature_group_ids.push(if atomic { atomic_group } else { next_group });
+                frequent_parents.push(if *frequent { parent } else { usize::MAX });
                 if !atomic {
                     next_group += 1;
                 }
@@ -825,15 +1068,17 @@ impl Encoder {
             columns: fitted.into_iter().map(|column| column.column).collect(),
             input_names: names,
             input_columns,
+            allow_new_missing,
             cutoff_values,
             cutoff_offsets,
             encoded_to_raw,
             feature_group_ids,
+            frequent_parents,
         };
         Ok((encoder, matrix))
     }
 
-    pub fn transform(&self, columns: Vec<RawColumn>) -> Result<Array2<f32>, ForestError> {
+    fn transform_features(&self, columns: Vec<RawColumn>) -> Result<(Vec<Vec<f32>>, usize), ForestError> {
         let rows = validate_rows(&columns, &self.input_names)?;
         let names: Vec<_> = self
             .columns
@@ -844,110 +1089,25 @@ impl Encoder {
         let encoded: Result<Vec<_>, _> = columns
             .into_par_iter()
             .zip(&self.columns)
-            .map(|(raw, fitted)| transform_column(raw, fitted))
+            .zip(&self.input_columns)
+            .map(|((raw, fitted), source)| transform_column(raw, fitted,
+                self.allow_new_missing || matches!(source, InputColumn::DatePart { .. })))
             .collect();
         let features: Vec<_> = encoded?.into_iter().flatten().collect();
-        Ok(assemble(&features, rows))
+        Ok((features, rows))
     }
 
-    pub fn transform_numeric<T>(
-        &self,
-        values: ArrayView2<'_, T>,
-    ) -> Result<Array2<f32>, ForestError>
-    where
-        T: Copy + Into<f64> + Send + Sync,
-    {
-        if values.nrows() == 0 {
-            return Err(invalid("X must contain at least one row"));
-        }
-        if values.ncols() != self.input_names.len() {
-            return Err(invalid(format!(
-                "expected {} features, got {}",
-                self.input_names.len(),
-                values.ncols()
-            )));
-        }
-        let encoded_cols = self.encoded_to_raw.len();
-        if encoded_cols == 0 {
-            return Ok(Array2::zeros((values.nrows(), 0)));
-        }
-        let mut data = vec![0.0; values.nrows() * encoded_cols];
-        data.par_chunks_mut(encoded_cols)
-            .enumerate()
-            .try_for_each(|(row, output)| {
-                let mut encoded = 0;
-                for (source, column) in self.input_columns.iter().zip(&self.columns) {
-                    let (value, numeric) = match source {
-                        InputColumn::Direct(raw) => {
-                            let value = values[[row, *raw]].into() as f32;
-                            if !value.is_finite() {
-                                return Err(invalid(format!(
-                                    "column {:?} contains a non-finite numeric value",
-                                    column.name
-                                )));
-                            }
-                            if !column.is_numeric() {
-                                return Err(invalid(
-                                    "numeric matrix transformation requires numeric fitted columns",
-                                ));
-                            }
-                            (value, true)
-                        }
-                        InputColumn::OneHot {
-                            indices,
-                            categories,
-                        } => {
-                            let mut active = None;
-                            for (category, raw) in indices.iter().enumerate() {
-                                let value = values[[row, *raw]].into() as f32;
-                                if !value.is_finite() || value != 0.0 && value != 1.0 {
-                                    return Err(invalid(format!(
-                                        "one-hot group {:?} has a value other than 0 or 1 at row {row}",
-                                        column.name
-                                    )));
-                                }
-                                if value == 1.0 && active.replace(category).is_some() {
-                                    return Err(invalid(format!(
-                                        "one-hot group {:?} has multiple active categories at row {row}",
-                                        column.name
-                                    )));
-                                }
-                            }
-                            let category = active.ok_or_else(|| {
-                                invalid(format!(
-                                    "one-hot group {:?} has no active category at row {row}",
-                                    column.name
-                                ))
-                            })?;
-                            let Values::Text(unique) = &column.values else {
-                                unreachable!()
-                            };
-                            (unique.binary_search(&categories[category]).unwrap() as f32, false)
-                        }
-                        InputColumn::DatePart { .. } => {
-                            return Err(invalid("numeric matrix transformation cannot contain date columns"));
-                        }
-                    };
-                    for encoding in &column.encodings {
-                        output[encoded] = match encoding {
-                            Encoding::Ordered => value,
-                            Encoding::Dummy(category) if numeric => {
-                                let Values::Numeric(unique) = &column.values else { unreachable!() };
-                                f32::from(value == unique[*category as usize])
-                            }
-                            Encoding::Dummy(category) => f32::from(value == *category as f32),
-                            Encoding::Missing => 0.0,
-                        };
-                        encoded += 1;
-                    }
-                }
-                Ok::<_, ForestError>(())
-            })?;
-        Ok(Array2::from_shape_vec((values.nrows(), encoded_cols), data).unwrap())
+    fn transform(&self, columns: Vec<RawColumn>) -> Result<Array2<f32>, ForestError> {
+        let (features, rows) = self.transform_features(columns)?;
+        Ok(assemble(&features, rows))
     }
 
     pub fn columns(&self) -> &[Column] {
         &self.columns
+    }
+
+    pub fn input_names(&self) -> &[String] {
+        &self.input_names
     }
 
     pub fn cutoff_values(&self) -> &[f32] {
@@ -964,6 +1124,10 @@ impl Encoder {
 
     pub fn feature_group_ids(&self) -> &[usize] {
         &self.feature_group_ids
+    }
+
+    pub fn frequent_parents(&self) -> &[usize] {
+        &self.frequent_parents
     }
 }
 
@@ -1007,12 +1171,12 @@ fn text_input(raw: RawColumn) -> Vec<Option<String>> {
     }
 }
 
-fn transform_column(raw: RawColumn, fitted: &Column) -> Result<Vec<Vec<f32>>, ForestError> {
+fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) -> Result<Vec<Vec<f32>>, ForestError> {
     if fitted.encodings.is_empty() {
         return Ok(Vec::new());
     }
     let missing = raw.missing();
-    if !fitted.had_missing
+    if !fitted.had_missing && !allow_new_missing
         && let Some(row) = missing.iter().position(|missing| *missing)
     {
         return Err(invalid(format!(
@@ -1113,43 +1277,54 @@ mod tests {
             columns,
             vec!["number".into(), "label".into()],
             3,
+            0.0,
+            false,
             vec![],
             vec![],
         )
         .unwrap();
-        assert_eq!(ranked.dim(), (4, 5));
+        assert_eq!(ranked.dim(), (4, 7));
         assert!(encoder.columns[0].is_numeric());
         assert!(encoder.columns[0].had_missing());
-        assert_eq!(encoder.feature_group_ids, vec![0, 0, 0, 1, 2]);
+        assert_eq!(encoder.feature_group_ids, vec![0, 0, 0, 0, 1, 2, 3]);
         let predicted = encoder
             .transform(vec![
                 RawColumn::Text(vec![Some("5".into()), None]),
                 RawColumn::Text(vec![Some("new".into()), Some("a".into())]),
             ])
             .unwrap();
-        assert_eq!(predicted.dim(), (2, 5));
-        assert_eq!(predicted[[1, 2]], 1.0);
-        assert_eq!(&predicted.row(0).as_slice().unwrap()[3..], &[0.0, 0.0]);
+        assert_eq!(predicted.dim(), (2, 7));
+        assert_eq!(predicted[[1, 3]], 1.0);
+        assert_eq!(&predicted.row(0).as_slice().unwrap()[4..], &[0.0, 0.0, 0.0]);
 
         let raw = vec![
-            RawColumn::Numeric(vec![Some(0.0), Some(1.0), Some(2.0), Some(1.0)]),
+            RawColumn::Numeric(vec![Some(0.0), Some(1.0), Some(1.0), Some(0.0)]),
             RawColumn::Numeric(vec![Some(10.0), Some(20.0), Some(30.0), Some(40.0)]),
+            RawColumn::Numeric(vec![Some(5.0); 4]),
         ];
         let (numeric, _) = Encoder::fit(
             raw,
-            vec!["small".into(), "ordered".into()],
+            vec!["binary".into(), "ordered".into(), "constant".into()],
             3,
+            0.2,
+            false,
             vec![],
             vec![],
         )
         .unwrap();
-        let matrix = ndarray::array![[2.0_f64, 15.0], [0.0, 50.0]];
-        let direct = numeric.transform_numeric(matrix.view()).unwrap();
+        assert_eq!(numeric.columns[0].encodings().len(), 1);
+        assert_eq!(numeric.columns[1].encodings().len(), 5);
+        assert!(numeric.columns[2].encodings().is_empty());
+        assert_eq!(
+            numeric.frequent_parents(),
+            &[usize::MAX, usize::MAX, 1, 1, 1, 1]
+        );
         let columns = vec![
-            RawColumn::Numeric(vec![Some(2.0), Some(0.0)]),
+            RawColumn::Numeric(vec![Some(1.0), Some(0.0)]),
             RawColumn::Numeric(vec![Some(15.0), Some(50.0)]),
+            RawColumn::Numeric(vec![Some(5.0), Some(5.0)]),
         ];
-        assert_eq!(direct, numeric.transform(columns).unwrap());
+        assert_eq!(numeric.transform(columns).unwrap().dim(), (2, 6));
 
         let one_hot = vec![
             RawColumn::Numeric(vec![Some(1.0), Some(0.0), Some(0.0), Some(1.0)]),
@@ -1161,15 +1336,19 @@ mod tests {
             one_hot,
             vec!["red".into(), "green".into(), "blue".into()],
             2,
+            0.0,
+            false,
             groups,
             vec![],
         )
         .unwrap();
         assert_eq!(grouped.columns[0].text_values(), &["blue", "green", "red"]);
         assert_eq!(fitted.column(0).to_vec(), vec![2, 1, 0, 2]);
-        let direct = grouped
-            .transform_numeric(ndarray::array![[0.0_f32, 1.0, 0.0], [0.0, 0.0, 1.0]].view())
-            .unwrap();
+        let direct = grouped.transform(vec![
+            RawColumn::Numeric(vec![Some(0.0), Some(0.0)]),
+            RawColumn::Numeric(vec![Some(1.0), Some(0.0)]),
+            RawColumn::Numeric(vec![Some(0.0), Some(1.0)]),
+        ]).unwrap();
         assert_eq!(direct.column(0).to_vec(), vec![1.0, 0.0]);
 
         let dates = vec![RawColumn::Text(vec![
@@ -1183,7 +1362,8 @@ mod tests {
             (0, format.clone(), 4, "eventDayofweek".into()),
             (0, format, 12, "eventHour".into()),
         ];
-        let (dated, _) = Encoder::fit(dates, vec!["eventDate".into()], 4, vec![], parts).unwrap();
+        let (dated, _) =
+            Encoder::fit(dates, vec!["eventDate".into()], 4, 0.0, false, vec![], parts).unwrap();
         assert_eq!(dated.columns[0].numeric_values(), &[2023.0, 2024.0]);
         assert_eq!(dated.columns[1].numeric_values(), &[1.0, 52.0]);
         assert_eq!(dated.columns[2].numeric_values(), &[0.0, 6.0]);

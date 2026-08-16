@@ -18,17 +18,15 @@ def main(
     cols:int=50,     # Number of features
     trees:int=50,    # Number of trees
     bootstrap_max:int=40_000, # Maximum training rows sampled per tree
-    min_candidate_rows:int=20, # Candidate-count row floor
-    candidate_attempt_factor:int=2, # Maximum proposals per requested unique candidate
-    adaptive:bool=True, # Select 60% or 90% of features on datasets over 8k rows
+    cutoff_divisor:float=10., # No-sort splitter candidate-count divisor
+    max_features:float=.75, # Fraction of feature units considered per node
     repeats:int=5,   # Timed repetitions; the best is reported
 ):
     "Benchmark ordinary fit, OOB fit, and batch prediction on synthetic data."
     rng = np.random.default_rng(42)
     X = rng.random((rows, cols), dtype=np.float32)
     y = (10 + 4*X[:, 0] - 2*X[:, 1] + X[:, -1]).astype(np.float32)
-    kwargs = dict(n_trees=trees, bootstrap_max=bootstrap_max, min_candidate_rows=min_candidate_rows,
-        candidate_attempt_factor=candidate_attempt_factor, adaptive=adaptive, seed=42)
+    kwargs = dict(n_trees=trees, bootstrap_max=bootstrap_max, cutoff_divisor=cutoff_divisor, max_features=max_features, seed=42)
 
     fit_time,model = best_time(lambda: FastForest(**kwargs).fit(X, y), repeats)
     oob_time,_ = best_time(lambda: FastForest(**kwargs, oob=True).fit(X, y), repeats)

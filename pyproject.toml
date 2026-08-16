@@ -14,11 +14,11 @@ classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["numpy>=2.0"]
+dependencies = ["numpy>=2.0", "pyarrow>=18"]
 
 [project.optional-dependencies]
 sklearn = ["pandas", "scikit-learn>=1.7.2"]
-dev = ["fastship>=0.0.11", "maturin>=1.0,<2.0", "pandas", "pytest", "scikit-learn>=1.7.2"]
+dev = ["fastcore", "fastship>=0.0.11", "maturin>=1.0,<2.0", "pandas", "pytest", "scikit-learn>=1.7.2"]
 
 [project.urls]
 Homepage = "https://github.com/fastai/fastforest"
@@ -29,6 +29,7 @@ Issues = "https://github.com/fastai/fastforest/issues"
 features = ["extension-module"]
 python-source = "python"
 module-name = "fastforest._core"
+data = "target/wheel-data"
 
 [tool.uv]
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]

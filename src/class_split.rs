@@ -3,8 +3,8 @@ use rand::RngExt;
 use rand::rngs::StdRng;
 use std::collections::HashSet;
 
-use crate::split::{NodeRows, sample_features, sampled_min_size};
-use crate::{Config, Splitter};
+use crate::Config;
+use crate::split::{FeatureGroup, NodeRows, TreeCutoffs, evaluation_rows, sample_features, sampled_min_size};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClassSplit {
@@ -28,6 +28,14 @@ struct Bin {
     class: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DenseFeature {
+    cut_col: usize,
+    cardinality: usize,
+    offset: usize,
+    mapped: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct ClassSplitScratch {
     candidates: Vec<Candidate>,
@@ -36,6 +44,9 @@ pub(crate) struct ClassSplitScratch {
     left_classes: Vec<u32>,
     keys: HashSet<u64>,
     bins: Vec<Bin>,
+    bin_classes: Vec<u32>,
+    dense_features: Vec<DenseFeature>,
+    dense_lookup: Vec<usize>,
 }
 
 struct EvaluationWindow {
@@ -51,21 +62,25 @@ pub(crate) fn find_class_split(
     node: NodeRows<'_>,
     n_classes: usize,
     config: &Config,
-    feature_groups: Option<&[Vec<usize>]>,
+    cutoff_offsets: &[usize],
+    tree_cutoffs: Option<&TreeCutoffs>,
+    feature_groups: Option<&[FeatureGroup]>,
     rng: &mut StdRng,
     scratch: &mut ClassSplitScratch,
+    root_impurity: f32,
+    root_rows: usize,
 ) -> ClassSplit {
+    let max_samples = evaluation_rows(node.n_rows, config);
     if x.ncols() == 0
         || node.n_rows < config.min_node_size
-        || all_same(y, node, config.max_node_samples)
+        || all_same(y, node, max_samples)
     {
         return leaf();
     }
-    match config.workbench.splitter {
-        Splitter::Random => random_split(x, y, node, n_classes, config, rng, scratch),
-        Splitter::Histogram => {
-            histogram_split(x, y, node, n_classes, config, feature_groups, rng, scratch)
-        }
+    if config.random_splitter {
+        random_split(x, y, node, n_classes, config, feature_groups, rng, scratch, root_impurity, root_rows)
+    } else {
+        histogram_split(x, y, node, n_classes, config, cutoff_offsets, tree_cutoffs, feature_groups, rng, scratch, root_impurity, root_rows)
     }
 }
 
@@ -115,48 +130,45 @@ fn random_split(
     node: NodeRows<'_>,
     n_classes: usize,
     config: &Config,
+    feature_groups: Option<&[FeatureGroup]>,
     rng: &mut StdRng,
     scratch: &mut ClassSplitScratch,
+    root_impurity: f32,
+    root_rows: usize,
 ) -> ClassSplit {
-    let used_n = node.n_rows.min(config.max_node_samples);
-    let candidate_rows = used_n.max(config.min_candidate_rows) as f64;
-    let n_candidates =
-        ((candidate_rows * (x.ncols() as f64).sqrt()) / config.cutoff_divisor as f64) as usize;
-    let target_candidates = n_candidates
-        .max(4)
-        .min(node.n_rows.saturating_mul(x.ncols()));
-    scratch.candidates.clear();
-    scratch.keys.clear();
-    for _ in 0..target_candidates.saturating_mul(config.candidate_attempt_factor) {
-        let cut_col = rng.random_range(0..x.ncols());
-        let split_pos = rng.random_range(node.start..node.start + node.n_rows);
-        let cut_val = x[[node.rows[split_pos] as usize, cut_col]];
-        let key = (cut_col as u64) << 32 | cut_val as u64;
-        if scratch.keys.insert(key) {
-            scratch.candidates.push(Candidate {
-                cut_col,
-                cut_val,
-                ..Candidate::default()
-            });
-            if scratch.candidates.len() == target_candidates {
-                break;
-            }
-        }
-    }
-    let window = evaluation_window(y, node, n_classes, config.max_node_samples, rng, scratch);
+    let used_n = evaluation_rows(node.n_rows, config);
+    let features = sample_features(x.ncols(), config, feature_groups, rng);
+    propose_candidates(x, node, used_n, &features, config.cutoff_divisor, rng, scratch);
+    let window = evaluation_window(y, node, n_classes, used_n, rng, scratch);
     scratch.candidate_classes.clear();
     scratch
         .candidate_classes
         .resize(scratch.candidates.len() * n_classes, 0);
-    for &row in &node.rows[window.start..window.start + window.n_rows] {
-        let row = row as usize;
-        let class = y[row] as usize;
-        for (candidate_idx, candidate) in scratch.candidates.iter_mut().enumerate() {
-            if x[[row, candidate.cut_col]] < candidate.cut_val {
-                let count = &mut scratch.candidate_classes[candidate_idx * n_classes + class];
-                candidate.left_squares += 2 * u64::from(*count) + 1;
-                *count += 1;
-                candidate.left_count += 1;
+    if let Some(data) = x.as_slice() {
+        for &row in &node.rows[window.start..window.start + window.n_rows] {
+            let row = row as usize;
+            let class = y[row] as usize;
+            let offset = row * x.ncols();
+            for (candidate_idx, candidate) in scratch.candidates.iter_mut().enumerate() {
+                if data[offset + candidate.cut_col] < candidate.cut_val {
+                    let count = &mut scratch.candidate_classes[candidate_idx * n_classes + class];
+                    candidate.left_squares += 2 * u64::from(*count) + 1;
+                    *count += 1;
+                    candidate.left_count += 1;
+                }
+            }
+        }
+    } else {
+        for &row in &node.rows[window.start..window.start + window.n_rows] {
+            let row = row as usize;
+            let class = y[row] as usize;
+            for (candidate_idx, candidate) in scratch.candidates.iter_mut().enumerate() {
+                if x[[row, candidate.cut_col]] < candidate.cut_val {
+                    let count = &mut scratch.candidate_classes[candidate_idx * n_classes + class];
+                    candidate.left_squares += 2 * u64::from(*count) + 1;
+                    *count += 1;
+                    candidate.left_count += 1;
+                }
             }
         }
     }
@@ -176,7 +188,37 @@ fn random_split(
         scratch.candidates.iter().copied(),
         &window,
         config.min_node_size,
+        node,
+        config,
+        root_impurity,
+        root_rows,
     )
+}
+
+fn propose_candidates(
+    x: ArrayView2<'_, u32>,
+    node: NodeRows<'_>,
+    used_n: usize,
+    features: &[usize],
+    divisor: f32,
+    rng: &mut StdRng,
+    scratch: &mut ClassSplitScratch,
+) {
+    scratch.candidates.clear();
+    scratch.keys.clear();
+    if features.is_empty() { return }
+    let attempts = ((used_n as f32 * (features.len() as f32).sqrt() / divisor) as usize)
+        .max(4)
+        .min(node.n_rows.saturating_mul(features.len()));
+    for _ in 0..attempts {
+        let cut_col = features[rng.random_range(0..features.len())];
+        let position = rng.random_range(node.start..node.start + node.n_rows);
+        let cut_val = x[[node.rows[position] as usize, cut_col]];
+        let key = (cut_col as u64) << 32 | cut_val as u64;
+        if scratch.keys.insert(key) {
+            scratch.candidates.push(Candidate { cut_col, cut_val, ..Candidate::default() });
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -186,17 +228,93 @@ fn histogram_split(
     node: NodeRows<'_>,
     n_classes: usize,
     config: &Config,
-    feature_groups: Option<&[Vec<usize>]>,
+    cutoff_offsets: &[usize],
+    tree_cutoffs: Option<&TreeCutoffs>,
+    feature_groups: Option<&[FeatureGroup]>,
     rng: &mut StdRng,
     scratch: &mut ClassSplitScratch,
+    root_impurity: f32,
+    root_rows: usize,
 ) -> ClassSplit {
     let features = sample_features(x.ncols(), config, feature_groups, rng);
-    let window = evaluation_window(y, node, n_classes, config.max_node_samples, rng, scratch);
+    let window = evaluation_window(y, node, n_classes, evaluation_rows(node.n_rows, config), rng, scratch);
     let impurity = weighted_gini(0, 0, window.n_rows, window.total_squares);
     let min_size = sampled_min_size(window.n_rows, config.min_node_size);
     let mut criterion = impurity;
     let mut best = None;
+    scratch.dense_features.clear();
+    scratch.dense_lookup.clear();
+    scratch.dense_lookup.resize(x.ncols(), usize::MAX);
+    let sort_work = window.n_rows * (window.n_rows.ilog2() as usize + 1);
+    let mut total_bins = 0;
+    for &cut_col in &features {
+        let mapped = tree_cutoffs.and_then(|cutoffs| cutoffs.feature(cut_col));
+        let cardinality = mapped.map_or(cutoff_offsets[cut_col + 1] - cutoff_offsets[cut_col], |_| tree_cutoffs.unwrap().cardinality(cut_col));
+        if mapped.is_some() || cardinality <= window.n_rows && cardinality * n_classes <= sort_work {
+            scratch.dense_lookup[cut_col] = scratch.dense_features.len();
+            scratch.dense_features.push(DenseFeature { cut_col, cardinality, offset: total_bins, mapped: mapped.is_some() });
+            total_bins += cardinality;
+        }
+    }
+    scratch.bin_classes.clear();
+    scratch.bin_classes.resize(total_bins * n_classes, 0);
+    if let Some(data) = x.as_slice() {
+        for &row in &node.rows[window.start..window.start + window.n_rows] {
+            let row = row as usize;
+            let class = y[row] as usize;
+            let row_offset = row * x.ncols();
+            for feature in &scratch.dense_features {
+                let rank = data[row_offset + feature.cut_col];
+                let local = if feature.mapped { tree_cutoffs.unwrap().bin(feature.cut_col, rank) } else { rank as usize };
+                let bin = feature.offset + local;
+                scratch.bin_classes[bin * n_classes + class] += 1;
+            }
+        }
+    } else {
+        for &row in &node.rows[window.start..window.start + window.n_rows] {
+            let row = row as usize;
+            let class = y[row] as usize;
+            for feature in &scratch.dense_features {
+                let rank = x[[row, feature.cut_col]];
+                let local = if feature.mapped { tree_cutoffs.unwrap().bin(feature.cut_col, rank) } else { rank as usize };
+                let bin = feature.offset + local;
+                scratch.bin_classes[bin * n_classes + class] += 1;
+            }
+        }
+    }
     for cut_col in features {
+        let dense = scratch.dense_lookup[cut_col];
+        if dense != usize::MAX {
+            let DenseFeature { cardinality, offset, mapped, .. } = scratch.dense_features[dense];
+            scratch.left_classes.clear();
+            scratch.left_classes.resize(n_classes, 0);
+            let (mut left_count, mut left_squares, mut right_squares) = (0, 0_u64, window.total_squares);
+            for cut_val in 1..cardinality {
+                let start = (offset + cut_val - 1) * n_classes;
+                let counts = &scratch.bin_classes[start..start + n_classes];
+                for (class, &added) in counts.iter().enumerate() {
+                    let added = u64::from(added);
+                    let left = u64::from(scratch.left_classes[class]);
+                    let right = u64::from(scratch.total_classes[class]) - left;
+                    left_squares += 2 * left * added + added * added;
+                    right_squares -= 2 * right * added - added * added;
+                    scratch.left_classes[class] += added as u32;
+                    left_count += added as usize;
+                }
+                let next = (offset + cut_val) * n_classes;
+                if scratch.bin_classes[next..next + n_classes].iter().all(|&count| count == 0) { continue }
+                if left_count < min_size || window.n_rows - left_count < min_size { continue }
+                let score = weighted_gini(left_count, left_squares, window.n_rows, right_squares);
+                if score > criterion {
+                    criterion = score;
+                    best = Some(Candidate {
+                        left_count, left_squares, right_squares, cut_col,
+                        cut_val: if mapped { tree_cutoffs.unwrap().cutoff(cut_col, cut_val) } else { cut_val as u32 },
+                    });
+                }
+            }
+            continue;
+        }
         scratch.bins.clear();
         scratch.bins.extend(
             (window.start..window.start + window.n_rows).map(|position| {
@@ -243,13 +361,17 @@ fn histogram_split(
             }
         }
     }
-    finish(best, criterion, impurity)
+    finish(best, criterion, impurity, node, config, root_impurity, root_rows)
 }
 
 fn select_best(
     candidates: impl Iterator<Item = Candidate>,
     window: &EvaluationWindow,
     min_node_size: usize,
+    node: NodeRows<'_>,
+    config: &Config,
+    root_impurity: f32,
+    root_rows: usize,
 ) -> ClassSplit {
     let impurity = weighted_gini(0, 0, window.n_rows, window.total_squares);
     let min_size = sampled_min_size(window.n_rows, min_node_size);
@@ -269,15 +391,38 @@ fn select_best(
             criterion = score;
         }
     }
-    finish(best, criterion, impurity)
+    finish(best, criterion, impurity, node, config, root_impurity, root_rows)
 }
 
-fn finish(best: Option<Candidate>, criterion: f32, impurity: f32) -> ClassSplit {
+fn finish(
+    best: Option<Candidate>,
+    criterion: f32,
+    impurity: f32,
+    node: NodeRows<'_>,
+    config: &Config,
+    root_impurity: f32,
+    root_rows: usize,
+) -> ClassSplit {
+    let gain = (criterion - impurity).max(0.0);
+    let local_gain = gain / (-impurity).max(f32::MIN_POSITIVE);
+    let global_gain = gain * node.n_rows as f32
+        / (root_impurity.max(f32::MIN_POSITIVE) * root_rows as f32);
+    let accepted = best.is_some()
+        && local_gain >= config.min_local_gain
+        && global_gain >= config.min_global_gain;
+    let best = best.filter(|_| accepted);
     ClassSplit {
         cut_col: best.map(|candidate| candidate.cut_col),
         cut_val: best.map_or(0, |candidate| candidate.cut_val),
-        gain: (criterion - impurity).max(0.0),
+        gain: if accepted { gain } else { 0.0 },
     }
+}
+
+pub(crate) fn root_impurity(y: ArrayView1<'_, u32>, rows: &[u32], n_classes: usize) -> f32 {
+    let mut counts = vec![0_u32; n_classes];
+    for &row in rows { counts[y[row as usize] as usize] += 1 }
+    let squares = counts.iter().map(|&count| u64::from(count) * u64::from(count)).sum();
+    -weighted_gini(0, 0, rows.len(), squares)
 }
 
 fn weighted_gini(

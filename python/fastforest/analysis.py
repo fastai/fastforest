@@ -2,15 +2,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .preprocessing import _missing_mask
+from .preprocessing import _missing_mask,_table,_take_rows
 
 def _data(X, feature_names=None):
-    values = np.asarray(X)
-    if values.ndim != 2: raise ValueError("X must be a two-dimensional array")
-    if not len(values): raise ValueError("X must contain at least one row")
-    if feature_names is None: feature_names = getattr(X, "columns", None)
-    if feature_names is None: feature_names = [f"x{i}" for i in range(values.shape[1])]
-    names = tuple(str(name) for name in feature_names)
+    values,names = _table(X)
+    if feature_names is not None: names = tuple(str(name) for name in feature_names)
     if len(names) != values.shape[1]: raise ValueError("feature_names must have one name per column")
     if len(set(names)) != len(names): raise ValueError("feature_names must be unique")
     return np.ascontiguousarray(values),names
@@ -41,7 +37,7 @@ def _groups(features, names):
 def _sample(X, y=None, n_samples=None, seed=42):
     if n_samples is None or n_samples < 0 or n_samples >= len(X): return (X,y) if y is not None else X
     idx = np.random.default_rng(seed).choice(len(X), n_samples, replace=False)
-    return (X[idx],y[idx]) if y is not None else X[idx]
+    return (_take_rows(X, idx),_take_rows(y, idx)) if y is not None else _take_rows(X, idx)
 
 def _r2(y, prediction):
     residual = np.square(y-prediction).sum()
@@ -219,11 +215,11 @@ class FeatureDependence:
 
 def permutation_importance(model, X, y, features=None, n_repeats=5, n_samples=5000, metric="r2", seed=42, feature_names=None):
     "Measure validation-set importance by permuting individual or grouped features."
+    X,y = _sample(X, y, n_samples, seed)
     X,names = _data(X, feature_names)
     y = np.asarray(y)
     if len(y) != len(X): raise ValueError("X and y must contain the same number of rows")
     if n_repeats < 1: raise ValueError("n_repeats must be at least 1")
-    X,y = _sample(X, y, n_samples, seed)
     labels,groups = _groups(features, names)
     score = _metric(metric)
     baseline = score(y, model.predict(X))
@@ -236,13 +232,18 @@ def permutation_importance(model, X, y, features=None, n_repeats=5, n_samples=50
             drops[i,repeat] = baseline-score(y, model.predict(shuffled))
     return Importance(tuple(labels), drops.mean(axis=1), drops.std(axis=1), float(baseline), "permutation")
 
-def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, features=None, metric="r2", seed=42, feature_names=None):
+def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, features=None, metric="r2", seed=42,
+    feature_names=None, n_train_samples=40_000, n_valid_samples=5000):
     "Measure importance by retraining after dropping each feature or feature group."
+    if (X_valid is None) != (y_valid is None): raise ValueError("X_valid and y_valid must be provided together")
+    X_train,y_train = _sample(X_train, y_train, n_train_samples, seed)
     X_train,names = _data(X_train, feature_names)
     y_train = np.asarray(y_train)
     if len(y_train) != len(X_train): raise ValueError("X_train and y_train must contain the same number of rows")
-    if X_valid is None: X_valid,y_valid = X_train,y_train
-    else: X_valid,_ = _data(X_valid, names)
+    if X_valid is None: X_valid,y_valid = _sample(X_train, y_train, n_valid_samples, seed+1)
+    else:
+        X_valid,y_valid = _sample(X_valid, y_valid, n_valid_samples, seed+1)
+        X_valid,_ = _data(X_valid, names)
     y_valid = np.asarray(y_valid)
     if len(y_valid) != len(X_valid): raise ValueError("X_valid and y_valid must contain the same number of rows")
     labels,groups = _groups(features, names)
@@ -264,9 +265,10 @@ def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, 
 
 def partial_dependence(model, X, features, grid_points=20, n_samples=500, seed=42, feature_names=None):
     "Compute one-feature PDP/ICE data or a two-feature partial-dependence surface."
+    X = _sample(X, n_samples=n_samples, seed=seed)
     X,names = _data(X, feature_names)
     if hasattr(model, "_encoder"): X = model._encoder.display(X)
-    sample = _sample(X, n_samples=n_samples, seed=seed)
+    sample = X
     if isinstance(features, dict):
         if len(features) != 1: raise ValueError("categorical partial dependence requires one named feature group")
         label,selectors = next(iter(features.items()))
@@ -329,8 +331,9 @@ def _ranks(values):
     for start,end in zip(starts, ends): ranks[order[start:end]] = (start+end-1)/2
     return ranks
 
-def feature_relations(X, feature_names=None):
+def feature_relations(X, feature_names=None, n_samples=5000, seed=42):
     "Compute tie-aware Spearman correlation and average-linkage feature clustering."
+    X = _sample(X, n_samples=n_samples, seed=seed)
     X,names = _data(X, feature_names)
     if X.shape[1] < 2: raise ValueError("feature relations require at least two features")
     ranked = np.column_stack([_ranks(X[:,i]) for i in range(X.shape[1])])
@@ -353,9 +356,9 @@ def feature_relations(X, feature_names=None):
 def feature_dependence(X, n_samples=5000, n_trees=25, seed=42, feature_names=None):
     "Predict each feature from the others and measure nonlinear permutation dependencies."
     from . import FastForest
+    X = _sample(X, n_samples=n_samples, seed=seed)
     X,names = _data(X, feature_names)
     if X.shape[1] < 2: raise ValueError("feature dependence requires at least two features")
-    X = _sample(X, n_samples=n_samples, seed=seed)
     if len(X) < 5: raise ValueError("feature dependence requires at least five rows")
     order = np.random.default_rng(seed).permutation(len(X))
     split = max(1, len(X)*4//5)

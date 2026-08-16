@@ -1,0 +1,14 @@
+dataset,label,url,rows,summary_detail,benchmark_detail,meta_group
+sgemm,SGEMM GPU,https://archive.ics.uci.edu/dataset/440/sgemm+gpu+kernel+performance,241600,14 features · numeric,14 features,
+california,California Housing,https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset,20640,8 features · numeric,8 features,
+concrete,Concrete Strength,https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength,1030,8 features · numeric,8 features,concrete_compressive_strength
+diamonds,Diamonds,https://www.openml.org/d/42225,53940,9 features · mixed,9 features,diamonds
+allstate,Allstate Claims,https://www.openml.org/d/42571,188318,130 features · mixed,130 features,allstate_claims_severity
+diabetes,Diabetes 130-US Hospitals,https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008,101766,46 features · mixed,46 features,diabetes_130_us
+walmart,Walmart Store Sales,https://www.kaggle.com/competitions/walmart-recruiting-store-sales-forecasting,421570,15 features · mixed,15 features,
+rossmann,Rossmann Store Sales,https://www.kaggle.com/competitions/rossmann-store-sales,844338,16 features · mixed,16 features,rossmann_store_sales
+ashrae,ASHRAE Great Energy Predictor III,https://www.kaggle.com/competitions/ashrae-energy-prediction,20216100,15 features · mixed,15 features,ashrae
+covertype_bin,Covertype,https://archive.ics.uci.edu/dataset/31/covertype,581012,binary features,binary features,covertype
+covertype_group,Covertype,https://archive.ics.uci.edu/dataset/31/covertype,581012,grouped features,grouped features,covertype
+adult,Adult Census Income,https://www.openml.org/d/1590,48842,14 features · mixed,14 mixed features,amlb_adult
+bank,Bank Marketing,https://www.openml.org/d/1461,45211,16 features · mixed,16 mixed features,bank_marketing
