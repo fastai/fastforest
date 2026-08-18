@@ -385,6 +385,9 @@ fn numeric_arrow_type(data_type: &DataType) -> bool {
 }
 
 fn arrow_text_column(array: &dyn Array, marker: &SavedValue) -> Result<RawColumn, ForestError> {
+    if matches!(array.data_type(), DataType::Dictionary(_, _)) {
+        return arrow_column(array, marker);
+    }
     Ok(RawColumn::Text(
         (0..array.len())
             .map(|row| {

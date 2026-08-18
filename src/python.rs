@@ -12,7 +12,7 @@ use crate::{
     ClassifierForest, Config, DEFAULT_MAX_DUMMY_CARDINALITY, Encoder, Encoding, Forest, ForestError, MaxFeatures, ModelMetadata,
     SavedModel, SavedValue, plan_fit, resolve_replacement,
 };
-const PREDICTION_BLOCK_BYTES: usize = 16 << 20;
+const PREDICTION_BLOCK_BYTES: usize = 64 << 20;
 
 fn prediction_block_rows(rows: usize, features: usize, outputs: usize) -> usize {
     let bytes_per_row = 4 * (features + outputs).max(1);
