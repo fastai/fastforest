@@ -130,7 +130,6 @@ impl RawColumn {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Encoding {
     Ordered,
-    Missing,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -152,6 +151,13 @@ pub struct Column {
 }
 
 impl Column {
+    fn cardinality(&self) -> usize {
+        match &self.values {
+            Values::Numeric(values) => values.len(),
+            Values::Text(values) | Values::Categorical(values) => values.len(),
+        }
+    }
+
     pub fn is_numeric(&self) -> bool {
         matches!(self.values, Values::Numeric(_))
     }
@@ -209,7 +215,6 @@ struct PreparedColumn {
     values: Values,
     codes: Vec<u32>,
     counts: Vec<usize>,
-    median_code: u32,
     median_numeric: Option<f32>,
     median_text: Option<String>,
     missing: Vec<bool>,
@@ -225,7 +230,6 @@ pub struct Encoder {
     cutoff_values: Vec<f32>,
     cutoff_offsets: Vec<usize>,
     encoded_to_raw: Vec<usize>,
-    feature_group_ids: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -844,30 +848,29 @@ fn text_parts(values: Vec<Option<String>>) -> Parts<String> {
 }
 
 fn finish_column(name: String, prepared: PreparedColumn) -> FittedColumn {
-    let PreparedColumn { values, mut codes, counts, median_code, median_numeric, median_text, missing, all_int } = prepared;
+    let PreparedColumn { values, mut codes, counts, median_numeric, median_text, missing, all_int } = prepared;
     let had_missing = missing.iter().any(|value| *value);
     if had_missing {
-        codes.iter_mut().filter(|code| **code == u32::MAX).for_each(|code| *code = median_code);
+        let missing_rank = counts.len() as u32;
+        codes.iter_mut().filter(|code| **code == u32::MAX).for_each(|code| *code = missing_rank);
     }
     let cardinality = counts.len();
     let mut encodings = Vec::new();
     let mut ranked = Vec::new();
     let mut bounds = Vec::new();
-    if cardinality > 1 {
+    if cardinality > 1 || had_missing {
         encodings.push(Encoding::Ordered);
         ranked.push(codes);
-        let cutoff = match &values {
+        let mut cutoff: Vec<_> = match &values {
             Values::Numeric(unique) => {
                 unique.iter().enumerate().map(|(index, value)| if index == 0 { *value } else { unique[index - 1] }).collect()
             }
             Values::Text(unique) | Values::Categorical(unique) => (0..unique.len()).map(|index| index.saturating_sub(1) as f32).collect(),
         };
+        if had_missing {
+            cutoff.push(f32::MAX);
+        }
         bounds.push(cutoff);
-    }
-    if had_missing {
-        encodings.push(Encoding::Missing);
-        ranked.push(missing.iter().map(|value| u32::from(*value)).collect());
-        bounds.push(vec![0.0, 0.0]);
     }
     FittedColumn { column: Column { name, values, all_int, median_numeric, median_text, had_missing, encodings }, ranked, bounds }
 }
@@ -895,7 +898,6 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
                     values: Values::Categorical(categories.to_vec()),
                     codes: codes.into_iter().map(|code| code.unwrap_or(u32::MAX)).collect(),
                     counts,
-                    median_code,
                     median_numeric: None,
                     median_text: Some(categories[median_code as usize].clone()),
                     missing,
@@ -954,7 +956,6 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
                     values: Values::Text(unique),
                     codes: ranked,
                     counts,
-                    median_code,
                     median_numeric: None,
                     missing,
                     all_int: false,
@@ -990,14 +991,12 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
             None => {
                 let missing: Vec<_> = values.iter().map(Option::is_none).collect();
                 let parts = text_parts(values);
-                let median_code = parts.unique.binary_search(&parts.median).unwrap() as u32;
                 return Ok(finish_column(
                     name,
                     PreparedColumn {
                         values: Values::Text(parts.unique),
                         codes: parts.codes,
                         counts: parts.counts,
-                        median_code,
                         median_numeric: None,
                         median_text: Some(parts.median),
                         missing,
@@ -1012,14 +1011,12 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
     let missing: Vec<_> = values.iter().map(Option::is_none).collect();
     let all_int = values.iter().flatten().all(|value| value.fract() == 0.0);
     let parts = numeric_parts(values, &name)?;
-    let median_code = parts.unique.binary_search_by(|value| value.total_cmp(&parts.median)).unwrap() as u32;
     Ok(finish_column(
         name,
         PreparedColumn {
             values: Values::Numeric(parts.unique),
             codes: parts.codes,
             counts: parts.counts,
-            median_code,
             median_numeric: Some(parts.median),
             median_text: None,
             missing,
@@ -1071,7 +1068,7 @@ impl Encoder {
                 for (array, column) in batch.columns().iter().zip(&self.columns) {
                     let value = match numeric_arrow_value(array.as_ref(), row) {
                         Some(value) => value,
-                        None if self.allow_new_missing => column.median_numeric.unwrap(),
+                        None if self.allow_new_missing => f32::NAN,
                         None => {
                             return Err(invalid(format!(
                                 "column {:?} has a missing value at row {row}, but had none during training",
@@ -1086,7 +1083,6 @@ impl Encoder {
                     for encoding in &column.encodings {
                         output[encoded] = match encoding {
                             Encoding::Ordered => value,
-                            Encoding::Missing => unreachable!(),
                         };
                         encoded += 1;
                     }
@@ -1105,7 +1101,6 @@ impl Encoder {
         }
         let encoded = self.encoded_to_raw.len();
         if self.cutoff_offsets.len() != encoded + 1
-            || self.feature_group_ids.len() != encoded
             || self.cutoff_offsets.first() != Some(&0)
             || self.cutoff_offsets.last() != Some(&self.cutoff_values.len())
             || self.cutoff_offsets.windows(2).any(|pair| pair[0] > pair[1])
@@ -1141,23 +1136,12 @@ impl Encoder {
         let mut cutoff_values = Vec::new();
         let mut cutoff_offsets = vec![0];
         let mut encoded_to_raw = Vec::new();
-        let mut feature_group_ids = Vec::new();
-        let mut next_group = 0;
         for (raw, column) in fitted.iter().enumerate() {
-            let atomic = column.column.is_numeric() && column.column.had_missing();
-            let atomic_group = next_group;
             for (ranked, bounds) in column.ranked.iter().zip(&column.bounds) {
                 features.push(ranked.clone());
                 cutoff_values.extend(bounds);
                 cutoff_offsets.push(cutoff_values.len());
                 encoded_to_raw.push(raw);
-                feature_group_ids.push(if atomic { atomic_group } else { next_group });
-                if !atomic {
-                    next_group += 1;
-                }
-            }
-            if atomic && !column.ranked.is_empty() {
-                next_group += 1;
             }
         }
         let matrix = assemble(&features, rows);
@@ -1169,7 +1153,6 @@ impl Encoder {
             cutoff_values,
             cutoff_offsets,
             encoded_to_raw,
-            feature_group_ids,
         };
         Ok((encoder, matrix))
     }
@@ -1277,8 +1260,12 @@ impl Encoder {
         &self.encoded_to_raw
     }
 
-    pub fn feature_group_ids(&self) -> &[usize] {
-        &self.feature_group_ids
+    pub fn missing_ranks(&self) -> Vec<u32> {
+        self.columns
+            .iter()
+            .filter(|column| !column.encodings.is_empty())
+            .map(|column| if column.had_missing { column.cardinality() as u32 } else { u32::MAX })
+            .collect()
     }
 }
 
@@ -1321,29 +1308,25 @@ fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) ->
     }
     let result = match &fitted.values {
         Values::Numeric(_) => {
-            let mut values = numeric_input(raw, fitted)?;
-            if let Some(median) = fitted.median_numeric {
-                values.iter_mut().filter(|value| value.is_none()).for_each(|value| *value = Some(median));
-            }
+            let values = numeric_input(raw, fitted)?;
             fitted
                 .encodings
                 .iter()
                 .map(|encoding| match encoding {
-                    Encoding::Ordered => values.iter().map(|value| value.unwrap()).collect(),
-                    Encoding::Missing => missing.iter().map(|missing| f32::from(*missing)).collect(),
+                    Encoding::Ordered => values.iter().map(|value| value.unwrap_or(f32::NAN)).collect(),
                 })
                 .collect()
         }
         Values::Text(unique) => {
-            let mut values = text_input(raw);
-            if let Some(median) = &fitted.median_text {
-                values.iter_mut().filter(|value| value.is_none()).for_each(|value| *value = Some(median.clone()));
-            }
+            let values = text_input(raw);
             let codes: Vec<_> = values
                 .iter()
-                .map(|value| match unique.binary_search(value.as_ref().unwrap()) {
-                    Ok(index) => index as f32,
-                    Err(index) => index as f32 - 0.5,
+                .map(|value| match value {
+                    None => f32::NAN,
+                    Some(value) => match unique.binary_search(value) {
+                        Ok(index) => index as f32,
+                        Err(index) => index as f32 - 0.5,
+                    },
                 })
                 .collect();
             fitted
@@ -1351,22 +1334,19 @@ fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) ->
                 .iter()
                 .map(|encoding| match encoding {
                     Encoding::Ordered => codes.clone(),
-                    Encoding::Missing => missing.iter().map(|missing| f32::from(*missing)).collect(),
                 })
                 .collect()
         }
-        Values::Categorical(unique) => {
+        Values::Categorical(_) => {
             let RawColumn::Bundle { codes, .. } = raw else {
                 return Err(invalid(format!("column {:?} expected bundled input", fitted.name)));
             };
-            let median = fitted.median_text.as_ref().and_then(|value| unique.iter().position(|candidate| candidate == value)).unwrap_or(0);
-            let codes: Vec<_> = codes.into_iter().map(|code| code.unwrap_or(median as u32)).collect();
+            let codes: Vec<_> = codes.into_iter().map(|code| code.map_or(f32::NAN, |code| code as f32)).collect();
             fitted
                 .encodings
                 .iter()
                 .map(|encoding| match encoding {
-                    Encoding::Ordered => codes.iter().map(|code| *code as f32).collect(),
-                    Encoding::Missing => missing.iter().map(|missing| f32::from(*missing)).collect(),
+                    Encoding::Ordered => codes.clone(),
                 })
                 .collect()
         }

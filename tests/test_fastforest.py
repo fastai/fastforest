@@ -106,11 +106,17 @@ def test_fit_predict_oob_story(tmp_path):
     assert mixed_model.column_info_[3].all_int and mixed_model.column_info_[3].encoded_features == ("x3",)
     assert mixed_model.column_info_[4].encoded_features == ()
     assert mixed_model.column_info_[2].encoded_features == ("x2",)
-    assert mixed_model._encoder.feature_group_ids[0] == mixed_model._encoder.feature_group_ids[1]
-    assert len(np.unique(mixed_model._encoder.feature_group_ids)) == len(mixed_model._encoder.feature_group_ids)-1
+    assert len(mixed_model._encoder.missing_ranks) == len(mixed_model._encoder.encoded_names)
+    assert mixed_model.column_info_[0].encoded_features == ("x0",) and not any(name.endswith("_missing") for name in mixed_model._encoder.encoded_names)
+    assert mixed_model._encoder.missing_ranks[0] != np.iinfo(np.uint32).max
     assert mixed_model.column_info_[1].encoded_features == ("x1",)
     assert mixed_model.feature_importances_.shape == (mixed.shape[1],) and np.isclose(mixed_model.feature_importances_.sum(), 1)
     assert np.isfinite(mixed_model.predict(mixed_frame.iloc[:4])).all()
+    missing_signal = np.arange(600, dtype=np.float32).reshape(-1, 1)
+    missing_target = np.zeros(600, dtype=np.float32)
+    missing_signal[:100],missing_target[:100] = np.nan,10
+    missing_regression = FastForest(n_trees=8, seed=42, missing_values={0:np.nan}).fit(missing_signal, missing_target)
+    assert missing_regression.predict([[np.nan], [500]])[0] > 8 and missing_regression.predict([[np.nan], [500]])[1] < 2
     novel = mixed[:4].copy()
     novel[:,0] = ["10.5", "301", "NA", "-2"]
     novel[:,1] = ["unseen", "common", "middle", "rare"]
@@ -259,6 +265,20 @@ def test_multiclass_prediction_oob_and_analysis_story(tmp_path):
     assert model.drop_column_importance(X, y, features=["x0"]).values[0] > 0
     again = FastForestClassifier(n_trees=32, min_node_size=6, max_node_samples=120, seed=42, oob=True, max_features=.75).fit(X, y)
     assert np.array_equal(probabilities, again.predict_proba(X))
+
+    missing_X = X.copy()
+    missing_X[::9,0] = np.nan
+    missing_model = FastForestClassifier(n_trees=8, seed=42, missing_values={0:np.nan}).fit(missing_X, y)
+    assert missing_model.n_features_in_ == X.shape[1] and missing_model.predict(missing_X[:20]).shape == (20,)
+    missing_signal = np.arange(600, dtype=np.float32).reshape(-1, 1)
+    missing_labels = np.where(np.arange(600) < 100, "missing", "observed")
+    missing_signal[:100] = np.nan
+    missing_classifier = FastForestClassifier(n_trees=8, seed=42, missing_values={0:np.nan}).fit(missing_signal, missing_labels)
+    assert missing_classifier.predict([[np.nan], [500]]).tolist() == ["missing", "observed"]
+    unseen_missing = X[:2].copy()
+    unseen_missing[0,1] = np.nan
+    permissive = FastForestClassifier(n_trees=8, seed=42, missing_values={1:np.nan}, allow_new_missing=True).fit(X, y)
+    assert permissive.predict(unseen_missing).shape == (2,)
 
     category = np.arange(len(X))%3
     grouped_X = np.column_stack([X[:,:2], np.eye(3, dtype=np.float32)[category]])

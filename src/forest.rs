@@ -3,12 +3,11 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
 
 use crate::ensemble::{assemble_forest, combined_importance, combined_oob, tree_seeds};
 use crate::prediction::{PredictionTree, predict_outputs};
-use crate::split::{FeatureGroup, SplitScratch, find_split};
+use crate::split::{SplitScratch, find_split};
 use crate::tree::{Branch, TreeNode, grow_tree, leaf_index, native_node, structure};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -199,7 +198,7 @@ impl Tree {
     }
 
     fn predict_dyn(&self, value: &dyn Fn(usize) -> f32) -> f32 {
-        self.nodes[leaf_index(&self.nodes, value, |observed, cutoff| observed > cutoff)].value
+        self.nodes[leaf_index(&self.nodes, value, |_, observed| observed.is_nan(), |observed, cutoff| observed > cutoff)].value
     }
 
     fn structure(&self) -> (usize, usize, usize) {
@@ -218,7 +217,13 @@ impl Tree {
                 return node.value;
             }
             let value = value(node.feature());
-            let go_right = usize::from(if node.equality() { value != node.cut_val } else { value > node.cut_val });
+            let go_right = usize::from(if value.is_nan() {
+                node.missing_right()
+            } else if node.equality() {
+                value != node.cut_val
+            } else {
+                value > node.cut_val
+            });
             let child = &self.nodes[node.child as usize + go_right];
             contributions[node.feature()] += child.value - node.value;
             node_idx = node.child as usize + go_right;
@@ -241,8 +246,10 @@ struct TrainingTree {
 }
 
 impl TrainingTree {
-    fn predict_by(&self, value: impl Fn(usize) -> u32) -> f32 {
-        self.nodes[leaf_index(&self.nodes, value, |observed, cutoff| observed >= cutoff)].value
+    fn predict_by(&self, value: impl Fn(usize) -> u32, missing_ranks: &[u32]) -> f32 {
+        self.nodes
+            [leaf_index(&self.nodes, value, |feature, observed| observed == missing_ranks[feature], |observed, cutoff| observed >= cutoff)]
+        .value
     }
 
     fn into_native(self, cutoff_values: &[f32], cutoff_offsets: &[usize]) -> Tree {
@@ -251,8 +258,8 @@ impl TrainingTree {
     }
 
     fn build(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_offsets: &[usize], config: &Config, feature_groups: Option<&[FeatureGroup]>,
-        seed: u64, track_in_bag: bool,
+        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, seed: u64,
+        track_in_bag: bool,
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let (mut rows, in_bag) = sampled_rows_with_mask(x.nrows(), config, &mut rng, track_in_bag);
@@ -260,10 +267,16 @@ impl TrainingTree {
         let mut nodes = vec![TrainingNode::new()];
         let mut importance = vec![0.0; x.ncols()];
         let mut split_scratch = SplitScratch::default();
-        grow_tree(x, &mut rows, &mut nodes, &mut importance, |node, tree_node| {
-            let split = find_split(x, y, node, config, cutoff_offsets, feature_groups, &mut rng, &mut split_scratch);
+        grow_tree(x, &mut rows, &mut nodes, &mut importance, missing_ranks, |node, tree_node| {
+            let split = find_split(x, y, node, config, cutoff_offsets, missing_ranks, &mut rng, &mut split_scratch);
             tree_node.value = split.value;
-            split.cut_col.map(|cut_col| Branch { cut_col, cut_val: split.cut_val, equality: split.equality, gain: split.gain })
+            split.cut_col.map(|cut_col| Branch {
+                cut_col,
+                cut_val: split.cut_val,
+                equality: split.equality,
+                missing_right: split.missing_right,
+                gain: split.gain,
+            })
         });
 
         (Self { nodes }, in_bag, importance)
@@ -308,45 +321,46 @@ impl Forest {
     }
 
     pub fn fit(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        feature_group_ids: Option<&[usize]>, config: &Config,
+        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        config: &Config,
     ) -> Result<Self, ForestError> {
         validate_training_data(x, y, cutoff_values, cutoff_offsets)?;
-        let feature_groups = fit_groups(x.ncols(), feature_group_ids, config)?;
-
-        Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, feature_groups.as_deref(), config, None, None)
+        config.validate()?;
+        validate_missing_ranks(x.ncols(), missing_ranks)?;
+        Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, missing_ranks, config, None, None)
     }
 
     pub fn fit_on_tracking(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        feature_group_ids: Option<&[usize]>, config: &Config, tracking_indices: &[usize],
+        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        config: &Config, tracking_indices: &[usize],
     ) -> Result<Self, ForestError> {
         validate_training_data(x, y, cutoff_values, cutoff_offsets)?;
-        let feature_groups = fit_groups(x.ncols(), feature_group_ids, config)?;
+        config.validate()?;
+        validate_missing_ranks(x.ncols(), missing_ranks)?;
         validate_tracking(config, tracking_indices, x.nrows())?;
-        Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, feature_groups.as_deref(), config, None, Some(tracking_indices))
+        Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, missing_ranks, config, None, Some(tracking_indices))
     }
 
     pub fn fit_batch(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        feature_group_ids: Option<&[usize]>, configs: &[Config], oob_rows: Option<usize>,
+        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        configs: &[Config], oob_rows: Option<usize>,
     ) -> Result<Vec<Self>, ForestError> {
         validate_training_data(x, y, cutoff_values, cutoff_offsets)?;
         validate_batch(configs, oob_rows)?;
-        let feature_groups = feature_group_ids.map(|ids| group_features(x.ncols(), ids)).transpose()?;
+        validate_missing_ranks(x.ncols(), missing_ranks)?;
         configs
             .par_iter()
-            .map(|config| Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, feature_groups.as_deref(), config, oob_rows, None))
+            .map(|config| Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, missing_ranks, config, oob_rows, None))
             .collect()
     }
 
     fn fit_fixed(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        feature_groups: Option<&[FeatureGroup]>, config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
+        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
     ) -> Result<Self, ForestError> {
         let built: Vec<_> = tree_seeds(config)
             .into_par_iter()
-            .map(|seed| TrainingTree::build(x, y, cutoff_offsets, config, feature_groups, seed, config.oob))
+            .map(|seed| TrainingTree::build(x, y, cutoff_offsets, missing_ranks, config, seed, config.oob))
             .collect();
 
         let oob_indices = tracking_rows.map(<[usize]>::to_vec).or_else(|| oob_rows(x.nrows(), config, oob_row_override));
@@ -360,9 +374,9 @@ impl Forest {
             |tree, row, output| {
                 output[0] += if let Some(data) = data {
                     let start = row * x.ncols();
-                    tree.predict_by(|col| data[start + col])
+                    tree.predict_by(|col| data[start + col], missing_ranks)
                 } else {
-                    tree.predict_by(|col| x[[row, col]])
+                    tree.predict_by(|col| x[[row, col]], missing_ranks)
                 };
             },
             |tree| tree.into_native(cutoff_values, cutoff_offsets),
@@ -513,30 +527,11 @@ impl fmt::Display for ForestError {
 
 impl std::error::Error for ForestError {}
 
-pub(crate) fn group_features(n_features: usize, feature_group_ids: &[usize]) -> Result<Vec<FeatureGroup>, ForestError> {
-    if feature_group_ids.len() != n_features {
-        return Err(ForestError::new(format!("expected {n_features} feature group ids, got {}", feature_group_ids.len())));
+pub(crate) fn validate_missing_ranks(n_features: usize, missing_ranks: &[u32]) -> Result<(), ForestError> {
+    if missing_ranks.len() != n_features {
+        return Err(ForestError::new(format!("expected {n_features} missing ranks, got {}", missing_ranks.len())));
     }
-    let mut indexes = HashMap::new();
-    let mut groups: Vec<FeatureGroup> = Vec::new();
-    let mut feature_groups = vec![usize::MAX; n_features];
-    for (feature, &id) in feature_group_ids.iter().enumerate() {
-        let next = indexes.len();
-        let group = *indexes.entry(id).or_insert(next);
-        if group == groups.len() {
-            groups.push(FeatureGroup::default());
-        }
-        groups[group].base.push(feature);
-        feature_groups[feature] = group;
-    }
-    Ok(groups)
-}
-
-pub(crate) fn fit_groups(
-    n_features: usize, feature_group_ids: Option<&[usize]>, config: &Config,
-) -> Result<Option<Vec<FeatureGroup>>, ForestError> {
-    config.validate()?;
-    feature_group_ids.map(|ids| group_features(n_features, ids)).transpose()
+    Ok(())
 }
 
 pub(crate) fn validate_tracking(config: &Config, rows: &[usize], n_rows: usize) -> Result<(), ForestError> {
@@ -605,8 +600,8 @@ pub(crate) fn validate_prediction_data(x: ArrayView2<'_, f32>, n_features: usize
     if x.ncols() != n_features {
         return Err(ForestError::new(format!("expected {n_features} features, got {}", x.ncols())));
     }
-    if x.iter().any(|v| !v.is_finite()) {
-        return Err(ForestError::new("features must all be finite"));
+    if x.iter().any(|v| v.is_infinite()) {
+        return Err(ForestError::new("features cannot contain infinities"));
     }
     Ok(())
 }

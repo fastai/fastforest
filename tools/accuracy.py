@@ -431,13 +431,9 @@ def main(
     if dataset == Dataset.ashrae:
         if max_features is not None: ff_kwargs["max_features"] = _max_features(max_features)
         for name in models:
-            print(f"Running {name}...", flush=True)
             results[name] = _run_ashrae_timed(name, data_home, max_rows, rf_trees, ff_kwargs, timeout)
-        completed = next((result for result in results.values() if result is not None), None)
-        dataset_name,n_rows,n_features,split_name = (completed["dataset_meta"] if completed else
-            ("ASHRAE Great Energy Predictor III", 20_216_100, 15, "December 2016"))
     else:
-        dataset_name,X,y,missing_values,task = load_data(dataset, data_home)
+        _,X,y,missing_values,task = load_data(dataset, data_home)
         feature_names = tuple(map(str, X.columns)) if hasattr(X, "columns") else tuple(f"x{i}" for i in range(X.shape[1]))
         if max_features is not None: ff_kwargs["max_features"] = _max_features(max_features)
         y = np.asarray(y, dtype=np.float32 if task == "regression" else None)
@@ -446,27 +442,12 @@ def main(
             selected,_ = train_test_split(np.arange(len(X)), train_size=max_rows, random_state=42,
                 stratify=y if task == "classification" else None)
             X,y = _rows(X, selected),y[selected]
-        train_idx,test_idx,split_name = split_indices(dataset, X, y if task == "classification" else None)
+        train_idx,test_idx,_ = split_indices(dataset, X, y if task == "classification" else None)
         if dataset == Dataset.walmart_nodate: X = X.drop(columns="Date")
         X_train,X_test,y_train,y_test = _rows(X, train_idx),_rows(X, test_idx),y[train_idx],y[test_idx]
         for name in models:
-            print(f"Running {name}...", flush=True)
             results[name] = _run_timed(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, timeout)
-        n_rows,n_features = len(X),X.shape[1]
 
-    print(f"{dataset_name}: {n_rows:,} rows, {n_features} features, {split_name}")
-    fastforest_name = next((name for name in models if name in ("FastForest","AutoForest","Autogrow")), None)
-    if fastforest_name:
-        resolved_trees = results[fastforest_name]["n_trees"] if results[fastforest_name] is not None else ff_trees
-        shown = (FastForestClassifier if task == "classification" else FastForest)(**{
-            name:value for name,value in ff_kwargs.items() if name != "date_columns" and
-            name != ("split_prior_rows" if task == "classification" else "class_weight_power")})
-        print(f"{fastforest_name}: trees={resolved_trees}, min_node_size={shown.min_node_size}, bootstrap_fraction={shown.bootstrap_fraction}, "
-            f"bootstrap_max={shown.bootstrap_max}, replacement={replacement}, max_node_samples={shown.max_node_samples}, "
-            f"{f'class_weight_power={shown.class_weight_power}' if task == 'classification' else f'split_prior_rows={shown.split_prior_rows}'}, "
-            f"cutoff_divisor={shown.cutoff_divisor}, random_splitter={random_splitter}, max_features={shown.max_features}")
-    if "RandomForest" in models: print(f"sklearn RF trees={rf_trees}, one-hot through 20 levels then target encoding")
-    print(f"Timeout: {timeout}s per model/dataset combination")
     if task == "classification": print(f"{'model':<15} {'F1 acc':>14} {'log loss':>14} {'fit total':>12} {'predict total':>14}")
     else: print(f"{'model':<15} {'RMSE':>14} {'R²':>14} {'fit total':>12} {'predict total':>14}")
     for name in models:

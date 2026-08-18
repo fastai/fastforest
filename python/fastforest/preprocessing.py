@@ -165,15 +165,14 @@ class _Encoder:
             numeric,all_int,had_missing,median_num,median_text,numeric_values,text_values,raw_encoded = self._native.metadata(col)
             values = np.asarray(numeric_values, dtype=np.float32) if numeric else np.asarray(text_values, dtype=str)
             median = median_num if numeric else median_text
-            encoded = tuple(("ordered", None) if kind == 0 else ("missing", None) for kind,_ in raw_encoded)
+            encoded = tuple(("ordered", None) for _ in raw_encoded)
             for kind,category in encoded:
                 if kind == "ordered": encoded_names.append(name)
-                else: encoded_names.append(f"{name}_missing")
             fitted.append(_Column(name, marker, numeric, all_int, values, median, had_missing, encoded))
         self.columns = tuple(fitted)
         self.encoded_names = tuple(encoded_names)
         self.encoded_to_raw = np.asarray(self._native.encoded_to_raw)
-        self.feature_group_ids = np.asarray(self._native.feature_group_ids)
+        self.missing_ranks = np.asarray(self._native.missing_ranks)
         self.cutoff_offsets = np.asarray(self._native.cutoff_offsets)
         self.cutoff_values = np.asarray(self._native.cutoff_values)
         bundle_members = {name:members for name,_,members in self._bundles}

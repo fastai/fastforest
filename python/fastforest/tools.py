@@ -261,7 +261,7 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
             replacement, True, fitted_outputs)
         native_configs.append(_native_config(params, replacement, fitted_plan, len(target), seed, True))
     started = perf_counter()
-    args = (encoded, target, encoder.cutoff_values, encoder.cutoff_offsets, encoder.feature_group_ids)
+    args = (encoded, target, encoder.cutoff_values, encoder.cutoff_offsets, encoder.missing_ranks)
     if task == "classification": forests = _ClassifierForest.fit_batch(encoded, target, len(classes), *args[2:], native_configs, oob_rows)
     else: forests = _Forest.fit_batch(*args, native_configs, oob_rows)
     batch_seconds = perf_counter()-started
@@ -316,7 +316,7 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
         started = perf_counter()
         validation = encoder.transform(X_valid)
         predict_preprocess_seconds = perf_counter()-started
-        args = (encoded, target, encoder.cutoff_values, encoder.cutoff_offsets, encoder.feature_group_ids)
+        args = (encoded, target, encoder.cutoff_values, encoder.cutoff_offsets, encoder.missing_ranks)
         for index in indices_in_group:
             params = configs[index][2]
             replacement = replacements[index]

@@ -236,8 +236,7 @@ class FastForest(_ForestFacade):
         tree_args = (self.n_trees_, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max, sample_rows, replacement)
         split_args = (self.max_node_samples, self.split_prior_rows, self.cutoff_divisor)
         max_features = _native_max_features(self.max_features)
-        group_ids = self._encoder.feature_group_ids
-        native = _Forest.fit(X, y, self._encoder.cutoff_values, self._encoder.cutoff_offsets, group_ids,
+        native = _Forest.fit(X, y, self._encoder.cutoff_values, self._encoder.cutoff_offsets, self._encoder.missing_ranks,
             *tree_args, *split_args, self.seed, self.oob, self.random_splitter, *max_features, None)
         return _finish_regression(self, self._encoder, native, pool_indices)
 
@@ -326,8 +325,8 @@ class FastForestClassifier(_ForestFacade):
         tree_args = (self.n_trees_, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max, sample_rows, replacement)
         split_args = (self.max_node_samples, self.class_weight_power, self.cutoff_divisor)
         max_features = _native_max_features(self.max_features)
-        group_ids = self._encoder.feature_group_ids
-        native = _ClassifierForest.fit(X, y, self.n_classes_, self._encoder.cutoff_values, self._encoder.cutoff_offsets, group_ids,
+        native = _ClassifierForest.fit(X, y, self.n_classes_, self._encoder.cutoff_values, self._encoder.cutoff_offsets,
+            self._encoder.missing_ranks,
             *tree_args, *split_args, self.seed, self.oob, self.random_splitter, *max_features, None)
         return _finish_classifier(self, self._encoder, native, pool_indices, y)
 

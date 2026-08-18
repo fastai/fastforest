@@ -111,7 +111,7 @@ class _Auto:
 
     def _fit_native(self, task, encoded, target, encoder, n_rows, replacement, outputs, classes, trees, seed, tracking_indices=None):
         args = self._fit_args(task, n_rows, len(target), replacement, outputs, trees, seed, tracking_indices)
-        common = (encoded,target,encoder.cutoff_values,encoder.cutoff_offsets,encoder.feature_group_ids)
+        common = (encoded,target,encoder.cutoff_values,encoder.cutoff_offsets,encoder.missing_ranks)
         return (_ClassifierForest.fit(encoded,target,len(classes),*common[2:],*args) if task=="classification"
             else _Forest.fit(*common,*args))
 

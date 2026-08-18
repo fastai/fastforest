@@ -303,7 +303,6 @@ impl PyEncoder {
             .iter()
             .map(|encoding| match encoding {
                 Encoding::Ordered => (0, -1),
-                Encoding::Missing => (2, -1),
             })
             .collect();
         Ok((
@@ -362,8 +361,8 @@ impl PyEncoder {
     }
 
     #[getter]
-    fn feature_group_ids<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<usize>> {
-        self.inner.feature_group_ids().to_vec().into_pyarray(py)
+    fn missing_ranks<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        self.inner.missing_ranks().into_pyarray(py)
     }
 }
 
@@ -375,13 +374,13 @@ struct PyForest {
 #[pymethods]
 impl PyForest {
     #[staticmethod]
-    #[pyo3(signature = (x, y, cutoff_values, cutoff_offsets, feature_group_ids, n_trees, min_node_size, bootstrap_fraction, bootstrap_max,
+    #[pyo3(signature = (x, y, cutoff_values, cutoff_offsets, missing_ranks, n_trees, min_node_size, bootstrap_fraction, bootstrap_max,
         sample_rows, replacement, max_node_samples, split_prior_rows, cutoff_divisor, seed, oob, random_splitter, max_features_kind,
         max_features_value, tracking_indices))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, f32>, cutoff_values: PyReadonlyArray1<'_, f32>,
-        cutoff_offsets: PyReadonlyArray1<'_, usize>, feature_group_ids: PyReadonlyArray1<'_, usize>, n_trees: usize, min_node_size: usize,
+        cutoff_offsets: PyReadonlyArray1<'_, usize>, missing_ranks: PyReadonlyArray1<'_, u32>, n_trees: usize, min_node_size: usize,
         bootstrap_fraction: Option<f32>, bootstrap_max: Option<usize>, sample_rows: Option<usize>, replacement: bool,
         max_node_samples: usize, split_prior_rows: f32, cutoff_divisor: f32, seed: Option<u64>, oob: bool, random_splitter: bool,
         max_features_kind: u8, max_features_value: f32, tracking_indices: Option<PyReadonlyArray1<'_, usize>>,
@@ -407,12 +406,12 @@ impl PyForest {
         let y = y.as_array();
         let cutoff_values = cutoff_values.as_slice()?;
         let cutoff_offsets = cutoff_offsets.as_slice()?;
-        let feature_group_ids = feature_group_ids.as_slice()?;
+        let missing_ranks = missing_ranks.as_slice()?;
         let tracking_indices = tracking_indices.as_ref().map(PyReadonlyArray1::as_slice).transpose()?;
         let inner = py
             .detach(|| match tracking_indices {
-                Some(indices) => Forest::fit_on_tracking(x, y, cutoff_values, cutoff_offsets, Some(feature_group_ids), &config, indices),
-                None => Forest::fit(x, y, cutoff_values, cutoff_offsets, Some(feature_group_ids), &config),
+                Some(indices) => Forest::fit_on_tracking(x, y, cutoff_values, cutoff_offsets, missing_ranks, &config, indices),
+                None => Forest::fit(x, y, cutoff_values, cutoff_offsets, missing_ranks, &config),
             })
             .map_err(value_error)?;
         Ok(Self { inner })
@@ -426,7 +425,7 @@ impl PyForest {
     #[allow(clippy::too_many_arguments)]
     fn fit_batch(
         py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, f32>, cutoff_values: PyReadonlyArray1<'_, f32>,
-        cutoff_offsets: PyReadonlyArray1<'_, usize>, feature_group_ids: PyReadonlyArray1<'_, usize>, configs: Vec<PyBatchConfig>,
+        cutoff_offsets: PyReadonlyArray1<'_, usize>, missing_ranks: PyReadonlyArray1<'_, u32>, configs: Vec<PyBatchConfig>,
         oob_rows: Option<usize>,
     ) -> PyResult<Vec<Py<PyForest>>> {
         let configs = configs.into_iter().map(PyBatchConfig::into_config).collect::<PyResult<Vec<_>>>()?;
@@ -434,10 +433,9 @@ impl PyForest {
         let y = y.as_array();
         let cutoff_values = cutoff_values.as_slice()?;
         let cutoff_offsets = cutoff_offsets.as_slice()?;
-        let feature_group_ids = feature_group_ids.as_slice()?;
-        let forests = py
-            .detach(|| Forest::fit_batch(x, y, cutoff_values, cutoff_offsets, Some(feature_group_ids), &configs, oob_rows))
-            .map_err(value_error)?;
+        let missing_ranks = missing_ranks.as_slice()?;
+        let forests =
+            py.detach(|| Forest::fit_batch(x, y, cutoff_values, cutoff_offsets, missing_ranks, &configs, oob_rows)).map_err(value_error)?;
         forests.into_iter().map(|inner| Py::new(py, PyForest { inner })).collect()
     }
 
@@ -524,17 +522,16 @@ struct PyClassifierForest {
 #[pymethods]
 impl PyClassifierForest {
     #[staticmethod]
-    #[pyo3(signature = (x, y, n_classes, cutoff_values, cutoff_offsets, feature_group_ids, n_trees, min_node_size, bootstrap_fraction,
+    #[pyo3(signature = (x, y, n_classes, cutoff_values, cutoff_offsets, missing_ranks, n_trees, min_node_size, bootstrap_fraction,
         bootstrap_max, sample_rows, replacement, max_node_samples, class_weight_power, cutoff_divisor, seed, oob, random_splitter,
         max_features_kind, max_features_value, tracking_indices))]
     #[allow(clippy::too_many_arguments)]
     fn fit(
         py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, u32>, n_classes: usize,
-        cutoff_values: PyReadonlyArray1<'_, f32>, cutoff_offsets: PyReadonlyArray1<'_, usize>,
-        feature_group_ids: PyReadonlyArray1<'_, usize>, n_trees: usize, min_node_size: usize, bootstrap_fraction: Option<f32>,
-        bootstrap_max: Option<usize>, sample_rows: Option<usize>, replacement: bool, max_node_samples: usize, class_weight_power: f32,
-        cutoff_divisor: f32, seed: Option<u64>, oob: bool, random_splitter: bool, max_features_kind: u8, max_features_value: f32,
-        tracking_indices: Option<PyReadonlyArray1<'_, usize>>,
+        cutoff_values: PyReadonlyArray1<'_, f32>, cutoff_offsets: PyReadonlyArray1<'_, usize>, missing_ranks: PyReadonlyArray1<'_, u32>,
+        n_trees: usize, min_node_size: usize, bootstrap_fraction: Option<f32>, bootstrap_max: Option<usize>, sample_rows: Option<usize>,
+        replacement: bool, max_node_samples: usize, class_weight_power: f32, cutoff_divisor: f32, seed: Option<u64>, oob: bool,
+        random_splitter: bool, max_features_kind: u8, max_features_value: f32, tracking_indices: Option<PyReadonlyArray1<'_, usize>>,
     ) -> PyResult<Self> {
         let config = forest_config(
             n_trees,
@@ -557,21 +554,14 @@ impl PyClassifierForest {
         let y = y.as_array();
         let cutoff_values = cutoff_values.as_slice()?;
         let cutoff_offsets = cutoff_offsets.as_slice()?;
-        let feature_group_ids = feature_group_ids.as_slice()?;
+        let missing_ranks = missing_ranks.as_slice()?;
         let tracking_indices = tracking_indices.as_ref().map(PyReadonlyArray1::as_slice).transpose()?;
         let inner = py
             .detach(|| match tracking_indices {
-                Some(indices) => ClassifierForest::fit_on_tracking(
-                    x,
-                    y,
-                    n_classes,
-                    cutoff_values,
-                    cutoff_offsets,
-                    Some(feature_group_ids),
-                    &config,
-                    indices,
-                ),
-                None => ClassifierForest::fit(x, y, n_classes, cutoff_values, cutoff_offsets, Some(feature_group_ids), &config),
+                Some(indices) => {
+                    ClassifierForest::fit_on_tracking(x, y, n_classes, cutoff_values, cutoff_offsets, missing_ranks, &config, indices)
+                }
+                None => ClassifierForest::fit(x, y, n_classes, cutoff_values, cutoff_offsets, missing_ranks, &config),
             })
             .map_err(value_error)?;
         Ok(Self { inner })
@@ -585,19 +575,17 @@ impl PyClassifierForest {
     #[allow(clippy::too_many_arguments)]
     fn fit_batch(
         py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, u32>, n_classes: usize,
-        cutoff_values: PyReadonlyArray1<'_, f32>, cutoff_offsets: PyReadonlyArray1<'_, usize>,
-        feature_group_ids: PyReadonlyArray1<'_, usize>, configs: Vec<PyBatchConfig>, oob_rows: Option<usize>,
+        cutoff_values: PyReadonlyArray1<'_, f32>, cutoff_offsets: PyReadonlyArray1<'_, usize>, missing_ranks: PyReadonlyArray1<'_, u32>,
+        configs: Vec<PyBatchConfig>, oob_rows: Option<usize>,
     ) -> PyResult<Vec<Py<PyClassifierForest>>> {
         let configs = configs.into_iter().map(PyBatchConfig::into_config).collect::<PyResult<Vec<_>>>()?;
         let x = x.as_array();
         let y = y.as_array();
         let cutoff_values = cutoff_values.as_slice()?;
         let cutoff_offsets = cutoff_offsets.as_slice()?;
-        let feature_group_ids = feature_group_ids.as_slice()?;
+        let missing_ranks = missing_ranks.as_slice()?;
         let forests = py
-            .detach(|| {
-                ClassifierForest::fit_batch(x, y, n_classes, cutoff_values, cutoff_offsets, Some(feature_group_ids), &configs, oob_rows)
-            })
+            .detach(|| ClassifierForest::fit_batch(x, y, n_classes, cutoff_values, cutoff_offsets, missing_ranks, &configs, oob_rows))
             .map_err(value_error)?;
         forests.into_iter().map(|inner| Py::new(py, PyClassifierForest { inner })).collect()
     }

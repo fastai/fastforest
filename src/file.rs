@@ -227,7 +227,7 @@ fn fit_sampled(
                 Array1::from_vec(y?).view(),
                 encoder.cutoff_values(),
                 encoder.cutoff_offsets(),
-                Some(encoder.feature_group_ids()),
+                &encoder.missing_ranks(),
                 &config,
             )?;
             Ok(SavedModel::regression(encoder, forest, metadata))
@@ -259,7 +259,7 @@ fn fit_sampled(
                 classes.len(),
                 encoder.cutoff_values(),
                 encoder.cutoff_offsets(),
-                Some(encoder.feature_group_ids()),
+                &encoder.missing_ranks(),
                 &config,
             )?;
             Ok(SavedModel::classification(encoder, forest, metadata, classes))
