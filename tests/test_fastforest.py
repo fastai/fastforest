@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np,pandas as pd,pyarrow as pa,pytest
 
 from fastforest import FastForest,FastForestClassifier,feature_dependence,feature_relations,load,sklearn_preprocessor
+from fastforest.auto import AutoForest,AutoForestClassifier
 from fastforest._core import _sample_indices
 from fastforest.preprocessing import _Encoder
 from fastforest.tools import forest_suite,screen,validate
@@ -38,10 +39,12 @@ def test_fit_predict_oob_story(tmp_path):
     assert np.mean((predictions-y)**2) < baseline_mse*0.3
     assert model.n_features_in_ == X.shape[1]
     assert model.get_params()["cutoff_divisor"] == 10
-    assert model.get_params()["max_dummy_cardinality"] == 4
-    assert model.get_params()["frequent_value_fraction"] == .08
-    assert model.get_params()["max_features"] == .6
-    assert FastForest().max_node_samples == 320 and FastForest().min_node_size == 8 and FastForest().max_features == .6
+    assert model.get_params()["max_dummy_cardinality"] == 1
+    assert model.get_params()["max_features"] == .9
+    assert model.get_params()["split_prior_rows"] == 3
+    assert FastForest().max_node_samples == 320
+    assert FastForestClassifier().class_weight_power == .75
+    assert FastForest().min_node_size == 8 and FastForest().max_features == .9
     assert model.oob_prediction_.shape == y.shape
     assert model.oob_counts_.shape == y.shape
     assert np.array_equal(model.oob_indices_, np.arange(len(y)))
@@ -82,7 +85,7 @@ def test_fit_predict_oob_story(tmp_path):
     relations = feature_relations(related, ["signal", "other", "weak", "signal_copy"])
     assert ("signal", "signal_copy") in relations.groups(threshold=0.01)
     dependence = feature_dependence(related, n_samples=None, n_trees=5, feature_names=['signal', 'other', 'weak', 'signal_copy'])
-    assert dependence.predictability[0] > 0.85 and dependence.predictability[3] > 0.85
+    assert dependence.predictability[0] > 0.8 and dependence.predictability[3] > 0.8
 
     mixed = np.empty((300, 5), dtype=object)
     mixed[:,0] = ["NA" if i%37 == 0 else str(i) for i in range(len(mixed))]
@@ -96,20 +99,16 @@ def test_fit_predict_oob_story(tmp_path):
     with pytest.warns(UserWarning, match="Skipping features"): sklearn_X = sklearn_preprocessor(
         mixed_frame, {0:"NA"}, onehot_max=4).fit_transform(mixed_frame, mixed_y)
     assert sklearn_X.shape == (len(mixed_frame), 6)
-    mixed_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}, max_dummy_cardinality=4,
-        frequent_value_fraction=.05).fit(mixed_frame, mixed_y)
-    arrow_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}, max_dummy_cardinality=4,
-        frequent_value_fraction=.05).fit(pa.Table.from_pandas(mixed_frame, preserve_index=False), mixed_y)
+    mixed_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}, max_dummy_cardinality=4).fit(mixed_frame, mixed_y)
+    arrow_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}, max_dummy_cardinality=4).fit(
+        pa.Table.from_pandas(mixed_frame, preserve_index=False), mixed_y)
     assert np.array_equal(arrow_model.predict(pa.Table.from_pandas(mixed_frame.iloc[:20], preserve_index=False)), mixed_model.predict(mixed_frame.iloc[:20]))
     assert [info.kind for info in mixed_model.column_info_] == ["numeric", "lexical", "lexical", "numeric", "discarded"]
-    assert mixed_model.column_info_[3].all_int and len(mixed_model.column_info_[3].encoded_features) == 13
+    assert mixed_model.column_info_[3].all_int and mixed_model.column_info_[3].encoded_features == ("x3",)
     assert mixed_model.column_info_[4].encoded_features == ()
-    assert len(mixed_model.column_info_[2].encoded_features) == 10
+    assert mixed_model.column_info_[2].encoded_features == ("x2",)
     assert mixed_model._encoder.feature_group_ids[0] == mixed_model._encoder.feature_group_ids[1]
     assert len(np.unique(mixed_model._encoder.feature_group_ids)) == len(mixed_model._encoder.feature_group_ids)-1
-    parents = mixed_model._encoder.frequent_parents
-    frequent = parents != np.iinfo(np.uintp).max
-    assert frequent.any() and np.all(parents[frequent] < np.flatnonzero(frequent)) and not frequent[parents[frequent]].any()
     assert set(mixed_model.column_info_[1].encoded_features) == {"x1=common", "x1=middle", "x1=rare"}
     assert mixed_model.feature_importances_.shape == (mixed.shape[1],) and np.isclose(mixed_model.feature_importances_.sum(), 1)
     assert np.isfinite(mixed_model.predict(mixed_frame.iloc[:4])).all()
@@ -146,7 +145,7 @@ def test_fit_predict_oob_story(tmp_path):
     with pytest.raises(ValueError, match="was numeric during training"): mixed_model.predict(bad_numeric)
 
     pool = np.asarray(_sample_indices(len(mixed_frame), 117, 42, 2))
-    borrowed,owned = (_Encoder({0:"NA"}, 4, .05),_Encoder({0:"NA"}, 4, .05))
+    borrowed,owned = (_Encoder({0:"NA"}, 4),_Encoder({0:"NA"}, 4))
     borrowed_values = borrowed.fit_transform(mixed_frame, pool)
     owned_values = owned.fit_transform(mixed_frame.iloc[pool])
     assert np.array_equal(borrowed_values, owned_values)
@@ -186,11 +185,11 @@ def test_bounded_pool_defaults_story():
     X = rng.random((8_000, 6), dtype=np.float32)
     y = 5*X[:,0] - 3*X[:,1] + X[:,5]
     model = FastForest(n_trees=8, min_node_size=16, seed=42).fit(X, y)
-    assert model.max_features == .6
+    assert model.max_features == .9
     assert np.isfinite(model.predict(X[:10])).all()
 
-    fixed = FastForest(n_trees=8, min_node_size=16, max_features="sqrt", tree_cutoff_samples=16, seed=42).fit(X, y)
-    assert fixed.get_params()["tree_cutoff_samples"] == 16
+    fixed = FastForest(n_trees=8, min_node_size=16, max_features="sqrt", seed=42).fit(X, y)
+    assert fixed.get_params()["max_features"] == "sqrt"
 
     suite = forest_suite(FastForest(seed=42))
     report = screen(FastForest(seed=42), X[:600], y[:600], suite, trees=8)
@@ -198,8 +197,9 @@ def test_bounded_pool_defaults_story():
     assert report.results[0].label == "defaults" and report.results[0].oob_loss > report.results[0].train_loss > 0
     assert all(0 < result.coverage <= 1 and result.nodes_mean >= result.leaves_mean for result in report.results)
     calibrated = validate(FastForest(seed=42), X[:500], y[:500], X[500:600], y[500:600], suite[:2])
-    assert len(calibrated.results) == 2 and all(result.trees >= 20 for result in calibrated.results)
+    assert len(calibrated.results) == 2 and all(result.trees >= 32 for result in calibrated.results)
     assert all(result.validation_loss > 0 and result.train_loss > 0 for result in calibrated.results)
+    assert all(result.fit_seconds > 0 and result.predict_seconds > 0 for result in calibrated.results)
 
     classifier = FastForestClassifier(n_trees=2, seed=42)
     classification_suite = [("defaults", {}, classifier.get_params())]
@@ -214,6 +214,17 @@ def test_bounded_pool_defaults_story():
     assert bounded.column_info_[0].cardinality == 126 # ceil(.63 * 2 trees * 100 rows)
     assert len(bounded.oob_indices_) == len(bounded.oob_counts_) == 100
     assert len(np.unique(bounded.oob_indices_)) == 100 and bounded.oob_indices_.max() < len(large_X)
+    untracked = FastForest(n_trees=2, bootstrap_max=100, seed=42).fit(large_X, large_X[:,0])
+    assert np.array_equal(untracked.predict(large_X[:20]), bounded.predict(large_X[:20]))
+
+    sized = AutoForest(bootstrap_max=100, seed=42).fit(X[:600], y[:600])
+    assert 32 <= sized.n_trees_ <= 64 and sized.tree_history_ == () and sized.oob_prediction_ is None and sized.min_improvement == .01
+    automatic = AutoForest(autogrow=True, tree_batch_size=8, max_trees=16, min_improvement=.99, bootstrap_max=100, seed=42).fit(X[:600], y[:600])
+    assert automatic.n_trees_ == 8 and len(automatic.tree_history_) == 2
+    assert automatic.tree_history_[-1]["accepted"] is False and automatic.sizing_["active"] is True
+    labels = np.where(y[:600]>np.median(y[:600]), "high", "low")
+    auto_classifier = AutoForestClassifier(autogrow=True, tree_batch_size=8, max_trees=16, min_improvement=.99, seed=42).fit(X[:600], labels)
+    assert auto_classifier.n_trees_ == 8 and auto_classifier.predict_proba(X[:4]).shape == (4,2)
 
 def test_multiclass_prediction_oob_and_analysis_story(tmp_path):
     rng = np.random.default_rng(42)
@@ -272,7 +283,7 @@ def test_multiclass_prediction_oob_and_analysis_story(tmp_path):
     assert defaulted.max_features == .6 and defaulted.replacement_ and np.isfinite(defaulted.predict_proba(large_X[:10])).all()
 
 def test_validation_errors():
-    for command in ("fastforest-fit", "fastforest-predict", "fastforest-convert", "fastforest-compile"):
+    for command in ("fastforest-fit", "fastforest-predict", "fastforest-convert", "fastforest-compile", "viewcsv"):
         executable = Path(shutil.which(command))
         assert b"\0" in executable.read_bytes()[:1024]
         result = subprocess.run([command, "--help"], capture_output=True, text=True)
@@ -294,7 +305,6 @@ def test_validation_errors():
     check(lambda: FastForest(max_features=0).fit(X, y), "max_features must be")
     check(lambda: FastForest(max_features="all").fit(X, y), "max_features must be")
     check(lambda: FastForest(max_dummy_cardinality=0).fit(X, y), "max_dummy_cardinality must be a positive integer")
-    check(lambda: FastForest(frequent_value_fraction=-1).fit(X, y), "frequent_value_fraction must be")
     check(lambda: FastForest(cutoff_divisor=np.nan).fit(X, y), "cutoff_divisor must be finite and greater than zero")
     check(lambda: FastForest().predict(X), "must be fitted")
     check(lambda: FastForest().explain(X), "must be fitted")

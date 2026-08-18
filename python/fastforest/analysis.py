@@ -247,7 +247,8 @@ def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, 
     y_valid = np.asarray(y_valid)
     if len(y_valid) != len(X_valid): raise ValueError("X_valid and y_valid must contain the same number of rows")
     labels,groups = _groups(features, names)
-    params = model.get_params() | {"seed":seed, "oob":False}
+    params = model.get_params() | {"seed":seed}
+    if "n_trees" in params: params["oob"] = False
     markers = [column.marker for column in model._encoder.columns] if hasattr(model, "_encoder") else None
     if markers is not None: params["missing_values"] = markers
     baseline_model = type(model)(**params).fit(X_train, y_train)
@@ -355,7 +356,7 @@ def feature_relations(X, feature_names=None, n_samples=5000, seed=42):
 
 def feature_dependence(X, n_samples=5000, n_trees=25, seed=42, feature_names=None):
     "Predict each feature from the others and measure nonlinear permutation dependencies."
-    from . import FastForest
+    from .core import FastForest
     X = _sample(X, n_samples=n_samples, seed=seed)
     X,names = _data(X, feature_names)
     if X.shape[1] < 2: raise ValueError("feature dependence requires at least two features")

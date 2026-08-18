@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p package dist
-          cp target/release/fastforest-fit target/release/fastforest-predict target/release/fastforest-compile target/release/fastforest-convert package/
+          cp target/release/fastforest-fit target/release/fastforest-predict target/release/fastforest-compile target/release/fastforest-convert target/release/viewcsv package/
           cp LICENSE README.md package/
           tar -czf "dist/fastforest-cli-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C package .
       - name: Package Windows CLIs
@@ -72,7 +72,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package,dist
-          Copy-Item target/release/fastforest-fit.exe,target/release/fastforest-predict.exe,target/release/fastforest-compile.exe,target/release/fastforest-convert.exe package/
+          Copy-Item target/release/fastforest-fit.exe,target/release/fastforest-predict.exe,target/release/fastforest-compile.exe,target/release/fastforest-convert.exe,target/release/viewcsv.exe package/
           Copy-Item LICENSE,README.md package/
           Compress-Archive -Path package/* -DestinationPath "dist/fastforest-cli-$env:RUNNER_OS-$env:RUNNER_ARCH.zip"
       - uses: actions/upload-artifact@v7

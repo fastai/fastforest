@@ -4,13 +4,13 @@
 
 Fast approximate-forest regression and multiclass classification in Rust, with Python bindings. It can quickly and accurately fit datasets with arbitrarily large row counts (millions of rows or more), and scales down to tiny datasets too.
 
-Across twelve numeric and mixed-data benchmarks spanning 1,030 to 20,216,100 row datasets covering regression, binary classification, and multiclass classification, fastforest is always either the fastest both to fit and predict, or the most accurate. For more results, see the [benchmarks](#benchmarking) section.
+Across nineteen numeric and mixed-data benchmarks spanning 1,030 to 20,216,100 rows and covering regression, binary classification, and multiclass classification, fastforest is always either the fastest both to fit and predict, or the most accurate. For more results, see the [benchmarks](#benchmarking) section.
 
 ### Regression
 
 {{SUMMARY_REGRESSION}}
 
-<sub>Bold is best for that dataset and metric. Results were measured on an Apple M4 Pro; fit includes preprocessing.</sub>
+<sub>Bold is best for that dataset and metric. AutoForest includes automatic sample sizing; autogrow additionally sizes the forest. Results were measured on an Apple M4 Pro; fit includes preprocessing.</sub>
 
 The SGEMM target is the log-transformed mean runtime.
 
@@ -19,8 +19,6 @@ The SGEMM target is the log-transformed mean runtime.
 {{SUMMARY_CLASSIFICATION}}
 
 F1 acc is macro-averaged F1, giving every class equal weight. Covertype uses its supplied binary features unchanged.
-
-<sub>Untuned rows use model defaults. <code>fastforest tuned</code> uses the held-out meta-advisor described below.</sub>
 
 ## Install
 
@@ -40,20 +38,31 @@ rng = np.random.default_rng(42)
 X = rng.random((1_000, 6))
 y = 4*X[:, 0] - 2*X[:, 1] + X[:, 5]
 
-model = FastForest(seed=42, oob=True).fit(X, y)
-predictions = model.predict(X[:5])
-oob_predictions = model.oob_prediction_
-oob_counts = model.oob_counts_
-oob_rows = model.oob_indices_
+ff = FastForest(seed=42, oob=True).fit(X, y)
+preds = ff.predict(X[:5])
 
 labels = np.where(X[:, 0]+X[:, 1] > 1, "high", "low")
-classifier = FastForestClassifier(seed=42, oob=True).fit(X, labels)
-probabilities = classifier.predict_proba(X[:5])
-classes = classifier.predict(X[:5])
-oob_probabilities = classifier.oob_decision_function_
+ffc = FastForestClassifier(seed=42, oob=True).fit(X, labels)
+probs,classes = ffc.predict_proba(X[:5]), ffc.predict(X[:5])
 ```
 
 `X` may contain numeric values, numeric strings, ordinary strings, and configured missing values. Regression `y` is converted to contiguous `float32` and must be finite. Classification labels may be numeric or strings; `classes_` records their probability-column order. Missing labels and single-class targets are rejected.
+
+### Automatic sizing
+
+`AutoForest` and `AutoForestClassifier` size the samples while retaining the ordinary estimator API; `autogrow=True` also sizes the forest:
+
+```python
+from fastforest.auto import AutoForest,AutoForestClassifier
+
+model = AutoForest(seed=42).fit(X, y)
+classifier = AutoForestClassifier(seed=42).fit(X, labels)
+grown = AutoForest(autogrow=True, seed=42).fit(X, y)
+```
+
+For sufficiently large data, one parallel eight-tree screen tries only larger `bootstrap_max` and `max_node_samples` values. Each extra level requires another 1% reduction in OOB loss, independently on each axis. Ordinary sizing tries bootstrap limits of 80k, 120k, 160k, and 200k and node samples of 640, 960, and 1280; autogrow widens these to 80k, 160k, 240k, and 320k and 640, 1280, and 1920. When the row cap removes wider bootstrap choices, their vacant comparison slots are filled from the ordinary grid. The screen is skipped unless rows exceed `2 * bootstrap_max * max(1, classes-1)`, so the default thresholds are 80,000 rows for regression and binary classification, 160,000 for three classes, and 480,000 for seven classes.
+
+By default, the final model uses fastforest's ordinary adaptive 32–64 tree rule and does not enable OOB. With `autogrow=True`, it instead grows in 32-tree batches. An independent random set of at most 40,000 tracking rows per output is fixed before the first batch; at every checkpoint, each row uses only trees for which it was out-of-bag. Another batch is added while cumulative regression MSE or classification Brier loss improves by at least 1%; the first batch that fails this test is discarded by default. Growth is capped at 512 trees by default; `keep_last_batch`, `min_improvement`, `tree_batch_size`, and `max_trees` control these choices.
 
 ## Creating and Using Models
 
@@ -89,13 +98,13 @@ The native `fastforest-predict` binary, using a default model trained on an 80% 
 
 This section contains additional results; all benchmarks, including those at the top of the README, follow the approaches described here. Unless noted otherwise, results use one reproducible 80/20 split, stratified for classification. Fit timing includes model construction, schema inspection, preprocessing, and fitting, but excludes process startup and inter-process transfer. Prediction timing includes input transformation. Every model/dataset combination has a 180-second limit.
 
-Untuned rows use model defaults. For each `fastforest tuned` row, the corresponding meta-forest scores a batched OOB sweep of eight configurations with eight trees each, reduced to four configurations when the default forest has 20 trees. The meta-forests were trained on 49 other regression datasets or 125 other classification datasets. The predicted-best configuration is fitted normally, and the complete sweep, advisor inference, and final fit are included in fit time. Every dataset shown in this README—including alternate representations of the same dataset—is excluded from meta-forest training.
+Each `AutoForest` row uses the ordinary adaptive tree count. Its following `autogrow` row uses the same sample sizer with growth capped at 192 trees. Both include the sizing screen and final fit in fit time, and appear only when training rows exceed the sample-sizer activation threshold.
 
 ### Regression
 
 {{BENCHMARK_REGRESSION}}
 
-For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-learn's official preprocessing guidance and examples](https://scikit-learn.org/stable/auto_examples/compose/plot_column_transformer_mixed_types.html): wholly numeric columns are parsed and median-imputed, categorical columns use one-hot encoding through 20 levels and target encoding above that, and HistGBM uses native categoricals through its 255-level limit. This numeric parsing is needed for sensible handling of raw CSV-like tables; otherwise the pipeline uses the documented sklearn behavior. fastforest requires no custom preprocessing and takes the original datasets directly. sklearn RF timed out on a smaller Allstate run, so its default configuration was not run. For validation, Walmart uses a 12-week chronological holdout to match the competition's future-period forecasting setup, Rossmann uses its final six weeks, and ASHRAE uses December 2016. fastforest detects and expands their date fields automatically; the sklearn pipeline receives them as ordinary high-cardinality categoricals.
+For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-learn's official preprocessing guidance and examples](https://scikit-learn.org/stable/auto_examples/compose/plot_column_transformer_mixed_types.html): wholly numeric columns are parsed and median-imputed, categorical columns use one-hot encoding through 20 levels and target encoding above that, and HistGBM uses native categoricals through its 255-level limit. This numeric parsing is needed for sensible handling of raw CSV-like tables; otherwise the pipeline uses the documented sklearn behavior. fastforest requires no custom preprocessing and takes the original datasets directly. sklearn RF timed out on a smaller Allstate run, so its default configuration was not run. For validation, Blue Book uses its final 12,000 rows, Walmart uses a 12-week chronological holdout to match the competition's future-period forecasting setup, Rossmann uses its final six weeks, and ASHRAE uses December 2016.
 
 ### Classification
 
@@ -113,14 +122,14 @@ maturin develop --release
 python tools/accuracy.py --dataset california
 ```
 
-Available regression datasets are `sgemm`, `california`, `concrete`, `diamonds`, `allstate`, `diabetes`, `bluebook`, `bluebook_raw`, `walmart`, `walmart_raw`, and `walmart_nodate`. Classification choices are `covertype`, `covertype_grouped`, `adult`, and `bank`. Run one forest alone with `--ff_only` or `--rf_only`, or reproduce all displayed results with:
+Available regression datasets are `sgemm`, `california`, `concrete`, `diamonds`, `allstate`, `diabetes`, `bluebook`, `bluebook_raw`, `walmart`, `walmart_raw`, and `walmart_nodate`. Classification choices are `covertype`, `covertype_grouped`, `adult`, `bank`, `click`, `shuttle`, `airlines`, `higgs`, `sf_police`, and `kddcup99`. Run one forest alone with `--ff_only`, `--auto_only`, or `--rf_only`, or reproduce all displayed results with:
 
 ```bash
 for dataset in sgemm california concrete diamonds allstate diabetes; do
   python tools/accuracy.py --dataset "$dataset"
 done
 
-for dataset in covertype covertype_grouped adult bank; do
+for dataset in covertype covertype_grouped adult bank click shuttle airlines higgs sf_police kddcup99; do
   python tools/accuracy.py --dataset "$dataset"
 done
 
@@ -132,9 +141,8 @@ python tools/accuracy.py --dataset walmart --ff_only
 FastForest fits a deterministic schema for every input column:
 
 1. Non-missing values are parsed as `float32` when every value can be parsed and are otherwise treated as strings. Numeric columns sort numerically and other columns sort lexically. Numeric columns whose values are all integral retain that metadata so analysis displays them with no decimal places.
-2. A constant column is discarded and a binary column becomes one boolean feature. Cardinalities from 3 through `max_dummy_cardinality` become one boolean feature per value; the default maximum is 4. Larger cardinalities become one zero-based rank in the sort order.
-3. By default, any ranked value occurring in more than 8% of the training rows also receives a boolean feature while remaining in the ranked column. Selecting its ranked parent during split search adds one randomly chosen frequent-value indicator as an extra candidate, without displacing another feature. Set `frequent_value_fraction=0` to disable this or provide another fraction.
-4. The default missing value is the empty value. Override it per column with `missing_values`, using column names or indexes. When training contains a missing value, FastForest adds `<column>_missing` and fills the value feature with the observed median. By default, a column containing no training missing values rejects missing values during prediction; set `allow_new_missing=True` to fill them with the fitted training median instead. Entirely missing columns are discarded.
+2. A constant column is discarded and a binary column becomes one boolean feature. Cardinalities from 3 through `max_dummy_cardinality` become one boolean feature per value; the default maximum is 1, so values are ordinarily kept as one ranked feature. Larger cardinalities become one zero-based rank in the sort order.
+3. The default missing value is the empty value. Override it per column with `missing_values`, using column names or indexes. When training contains a missing value, FastForest adds `<column>_missing` and fills the value feature with the observed median. By default, a column containing no training missing values rejects missing values during prediction; set `allow_new_missing=True` to fill them with the fitted training median instead. Entirely missing columns are discarded.
 
 ```python
 X = np.array([
@@ -194,12 +202,12 @@ Each regression tree draws `min(floor(bootstrap_fraction * n_rows), bootstrap_ma
 1. A node with fewer than `min_node_size` rows, or whose first `max_node_samples` sampled targets are equal, becomes a leaf.
 2. A random contiguous window containing at most `max_node_samples` of the node's shuffled rows is selected.
 3. The tree randomly selects the configured fraction of feature units, with a minimum of one. Encoded features are independent units except that every numeric value feature and its missingness indicator form one atomic unit.
-4. For each selected feature, the sampled rows are sorted by their encoded rank and every distinct observed boundary is evaluated. Regression selects the split that most improves size-weighted negative sample standard deviation; classification uses multiclass Gini impurity. Both enforce the sampled child-size minimum.
+4. For each selected feature, the sampled rows are sorted by their encoded rank and every distinct observed boundary is evaluated. Regression minimizes size-weighted sample standard deviation, shrinking each child mean toward its parent by a three-row prior. Classification uses tree-frequency-weighted entropy. These scores penalize poorly supported small children directly; the only hard requirement is that both children are nonempty.
 5. Every regression leaf predicts the mean target of all tree-sampled rows that reached it. A classification leaf stores their class-probability vector. Thus leaf fitting processes each tree's capped sample once in total; it does not route the whole dataset through every tree.
 
-By default, forest size targets two million sampled rows across its trees: `n_trees = clamp(ceil(2_000_000 / sampled_rows_per_tree), 20, 50)`. Set `n_trees` to override it. The standard regression cap resolves to 50 trees; Covertype's seven-class cap resolves to 20. Other defaults are minimum node size 8, all rows capped at 40,000 per output, 60% feature sampling, and at most 320 evaluated rows per node. Enabling OOB changes the default sampling fraction to 0.8 so every row can receive held-out predictions. Preprocessing and trees build in parallel over columns and trees respectively. Classification prediction divides rows into roughly four blocks per Rayon worker and calculates how many fitted trees fit in a conservative 512 KiB working-set budget, including nodes and leaf probabilities. It processes those cache-sized tree batches within each row block; small trees retain row locality, while large trees automatically become tree-major. Supplying `seed` makes the fitted forest deterministic regardless of parallel scheduling.
+By default, forest size targets two million sampled rows across its trees: `n_trees = clamp(ceil(2_000_000 / sampled_rows_per_tree), 32, 64)`. Set `n_trees` to override it. The standard regression cap resolves to 50 trees; Covertype's seven-class cap resolves to 32. Other defaults are minimum node size 8, all rows capped at 40,000 per output, 90% feature sampling for regression or 60% for classification, at most 320 evaluated rows per node, and a three-row regression split prior. Enabling OOB changes the default sampling fraction to 0.8 so every row can receive held-out predictions. Preprocessing and trees build in parallel over columns and trees respectively. Classification prediction divides rows into roughly four blocks per Rayon worker and calculates how many fitted trees fit in a conservative 512 KiB working-set budget, including nodes and leaf probabilities. It processes those cache-sized tree batches within each row block; small trees retain row locality, while large trees automatically become tree-major. Supplying `seed` makes the fitted forest deterministic regardless of parallel scheduling.
 
-`max_features` accepts `"sqrt"` or a fraction in `(0, 1]`; its default is `0.6`. A numeric value and its missing indicator are always sampled as one feature unit.
+`max_features` accepts `"sqrt"` or a fraction in `(0, 1]`; its default is `0.9` for regression and `0.6` for classification. A numeric value and its missing indicator are always sampled as one feature unit.
 
 `FastForestClassifier.predict_proba` averages the leaf probabilities over trees, while `predict` returns the corresponding original label. With OOB enabled, `oob_decision_function_`, `oob_counts_`, and OOB accuracy `oob_score_` are available; `oob_indices_` maps the bounded results to original training rows. Ordinary fitting remains bounded by the shared pool, per-output row cap, and `max_node_samples` rows per node.
 

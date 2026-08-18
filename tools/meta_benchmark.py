@@ -1,4 +1,4 @@
-import json,multiprocessing as mp
+import hashlib,json,multiprocessing as mp
 import os,re,signal,traceback,urllib.request
 from pathlib import Path
 
@@ -7,7 +7,7 @@ from fastcore.script import call_parse
 import pyarrow.parquet as pq
 
 from fastforest import FastForest,FastForestClassifier
-from fastforest.tools import forest_suite,screen,validate
+from fastforest.tools import FOREST_PARAMS,forest_suite,screen,validate
 
 BEYOND_METADATA = "https://raw.githubusercontent.com/autogluon/tabarena/main/packages/tabarena/src/tabarena/benchmark/task/metadata/sources/data/BeyondArena_tasks_metadata.csv"
 
@@ -100,13 +100,48 @@ def _load_task(task, data_home, seed):
     train_idx,valid_idx = (np.asarray(values, dtype=np.int64) for values in splits[repeat][fold])
     return X,y,train_idx,valid_idx,dates,f"BeyondArena {task['task_type']} r{repeat}f{fold}"
 
-def _worker(send, task, data_home, screen_trees, seed):
+def _joint_suite(model, count, seed, dataset):
+    "Random joint configurations, with defaults retained on unselected axes."
+    base = model.get_params()
+    levels = {
+        "min_node_size":(2,8,16,64), "bootstrap_fraction":(None,.5),
+        "bootstrap_max":(20_000,40_000,80_000,160_000,240_000), "replacement":(None,True,False),
+        "max_node_samples":(160,320,640,2560), "random_splitter":(False,True),
+        "max_features":(.6,.9,1.,"sqrt")}
+    alternatives = {name:tuple(value for value in values if value != base[name]) for name,values in levels.items()}
+    digest = hashlib.sha256(f"{seed}:{dataset}".encode()).digest()
+    rng = np.random.default_rng(int.from_bytes(digest[:8], "little"))
+    paired = [(bootstrap_max,max_node_samples) for bootstrap_max in levels["bootstrap_max"] for max_node_samples in levels["max_node_samples"]]
+    rng.shuffle(paired)
+    names = tuple(name for name in alternatives if name not in ("bootstrap_max", "max_node_samples"))
+    result,seen = [],set()
+    for bootstrap_max,max_node_samples in paired[:count]:
+        changes = {"bootstrap_max":bootstrap_max, "max_node_samples":max_node_samples}
+        changes = {name:value for name,value in changes.items() if value != base[name]}
+        selected = rng.choice(names, size=max(0,int(rng.integers(2,6))-len(changes)), replace=False)
+        changes.update({name:alternatives[name][rng.integers(len(alternatives[name]))] for name in selected})
+        params = {name:changes.get(name, base[name]) for name in FOREST_PARAMS}
+        key = tuple(params[name] for name in FOREST_PARAMS)
+        if key in seen: raise RuntimeError("duplicate random joint configuration")
+        seen.add(key)
+        result.append((f"joint_{len(result)+1:02d}", changes, params))
+    if count > len(paired): raise ValueError(f"joint_configs cannot exceed {len(paired)}")
+    return result
+
+def _worker(send, task, data_home, screen_trees, seed, suite_kind, joint_configs, model_params):
     try:
         X,y,train_idx,valid_idx,dates,validation_split = _load_task(task, data_home, seed)
         X_train,X_valid,y_train,y_valid = X.iloc[train_idx],X.iloc[valid_idx],y.iloc[train_idx],y.iloc[valid_idx]
-        cls = FastForestClassifier if task["task"] == "classification" else FastForest
-        model = cls(seed=seed, date_columns=dates, allow_new_missing=True)
-        suite = forest_suite(model)
+        classification = task["task"] == "classification"
+        cls = FastForestClassifier if classification else FastForest
+        defaults = {name:value for name,value in model_params.items() if value is not None and
+            name != ("split_prior_rows" if classification else "class_weight_power")}
+        model = cls(seed=seed, date_columns=dates, allow_new_missing=True, **defaults)
+        if suite_kind == "marginal": suite = forest_suite(model)
+        elif suite_kind == "joint": suite = _joint_suite(model, joint_configs, seed, task["dataset"])
+        else:
+            params = model.get_params()
+            suite = [("defaults", {}, {name:params[name] for name in FOREST_PARAMS})]
         screened = screen(model, X_train, y_train, suite, screen_trees, seed)
         validated = validate(model, X_train, y_train, X_valid, y_valid, suite, seed, allow_unseen_classes=True)
         target_meta = _target_metadata(y_train, task["task"])
@@ -115,14 +150,18 @@ def _worker(send, task, data_home, screen_trees, seed):
             **screened.feature_metadata, **target_meta)
         rows = []
         for screen_result,validation_result,(label,_,params) in zip(screened.results, validated.results, suite):
+            score_params = ({"class_weight_power":model.class_weight_power} if classification
+                else {"split_prior_rows":model.split_prior_rows})
             rows.append(dict(base, loss="brier" if task["task"] == "classification" else "mse", label=label,
                 screen_oob_loss=screen_result.oob_loss, screen_train_loss=screen_result.train_loss,
                 screen_coverage=screen_result.coverage, screen_evaluated_rows=screen_result.evaluated_rows,
                 screen_nodes_mean=screen_result.nodes_mean, screen_leaves_mean=screen_result.leaves_mean,
                 screen_depth_mean=screen_result.depth_mean, full_trees=validation_result.trees,
                 full_validation_loss=validation_result.validation_loss, full_train_loss=validation_result.train_loss,
+                full_fit_seconds=validation_result.fit_seconds, full_predict_seconds=validation_result.predict_seconds,
                 full_pool_rows=validation_result.pool_rows, full_nodes_mean=validation_result.nodes_mean,
-                full_leaves_mean=validation_result.leaves_mean, full_depth_mean=validation_result.depth_mean, **params))
+                full_leaves_mean=validation_result.leaves_mean, full_depth_mean=validation_result.depth_mean,
+                max_dummy_cardinality=model.max_dummy_cardinality, **score_params, **params))
         send.send((True,rows))
     except Exception: send.send((False,traceback.format_exc()))
     finally: send.close()
@@ -133,10 +172,10 @@ def _stop(process):
     process.join(5)
     if process.is_alive(): process.kill()
 
-def run_task(task, data_home, screen_trees, seed, timeout):
+def run_task(task, data_home, screen_trees, seed, timeout, suite_kind="marginal", joint_configs=20, model_params=None):
     context = mp.get_context("spawn")
     receive,send = context.Pipe(False)
-    process = context.Process(target=_worker, args=(send,task,data_home,screen_trees,seed))
+    process = context.Process(target=_worker, args=(send,task,data_home,screen_trees,seed,suite_kind,joint_configs,model_params or {}))
     process.start()
     send.close()
     if not receive.poll(timeout):
@@ -171,21 +210,37 @@ def main(
     amlb_csv:str="meta/amlb/datasets.csv",       # Downloaded non-overlapping AMLB manifest
     output_dir:str="meta/meta_benchmark",       # Manifest, task results, failures, and combined output
     data_home:str=".data/meta_benchmark",       # Download cache
-    slow_csv:str="meta/meta_benchmark/slow.csv", # Persistent datasets skipped after timing out
+    slow_csv:str=None,                           # Persistent timeout list; defaults inside output_dir
     task_timeout:int=60,                         # Maximum seconds including loading and both sweep stages
     screen_trees:int=8,                          # Trees per cheap OOB configuration
+    suite_kind:str="marginal",                  # marginal, joint, or one baseline model
+    joint_configs:int=20,                        # Random joint configurations per dataset
     seed:int=42,                                 # Sampling and forest seed
     limit:int=None,                              # Optional number of pending tasks to run
     include_text:bool=False,                     # Include datasets containing semantic text
     include_slow:bool=False,                     # Retry datasets recorded as slow
     task_names:str=None,                         # Optional comma-separated dataset names
+    replacement:str="adaptive",                 # Baseline sampling: adaptive, true, or false
+    min_node_size:int=None,                      # Baseline minimum node size; model default when omitted
+    split_prior_rows:float=None,                 # Regression split-score prior rows; model default when omitted
+    class_weight_power:float=None,               # Classification inverse-frequency weighting; model default when omitted
+    max_features:str=None,                       # Optional shared baseline fraction or sqrt
 ):
     "Run resumable FastForest sweeps over one canonical split per BeyondArena dataset."
+    if suite_kind not in ("marginal", "joint", "baseline"): raise ValueError("suite_kind must be marginal, joint, or baseline")
+    replacements = {"adaptive":None,"true":True,"false":False}
+    if replacement.lower() not in replacements: raise ValueError("replacement must be adaptive, true, or false")
+    replacement = replacements[replacement.lower()]
+    model_params = dict(replacement=replacement, min_node_size=min_node_size,
+        split_prior_rows=split_prior_rows, class_weight_power=class_weight_power)
+    if max_features is not None: model_params["max_features"] = max_features if max_features == "sqrt" else float(max_features)
+    if joint_configs < 1: raise ValueError("joint_configs must be positive")
     root = Path(__file__).parents[1]
     def resolve(path):
         path = Path(path)
         return path if path.is_absolute() else root/path
-    output,data_home,slow_path = resolve(output_dir),resolve(data_home),resolve(slow_csv)
+    output,data_home = resolve(output_dir),resolve(data_home)
+    slow_path = output/"slow.csv" if slow_csv is None else resolve(slow_csv)
     output.mkdir(parents=True, exist_ok=True)
     results_dir = output/"results"
     results_dir.mkdir(exist_ok=True)
@@ -204,10 +259,10 @@ def main(
         print(f"[{number}/{len(pending)}] {name} ({row.task}, {int(row.rows)}×{int(row.features)})", flush=True)
         task = row.to_dict()
         try:
-            result = run_task(task, data_home, screen_trees, seed, task_timeout)
+            result = run_task(task, data_home, screen_trees, seed, task_timeout, suite_kind, joint_configs, model_params)
             pd.DataFrame(result).to_csv(results_dir/f"{name}.csv", index=False)
             total = _combined(results_dir, output/"all.csv")
-            print(f"  complete · {total//24} datasets in combined output", flush=True)
+            print(f"  complete · {len(list(results_dir.glob('*.csv')))} datasets in combined output", flush=True)
         except Exception as error:
             failures.append(dict(dataset=name, error=str(error)))
             if isinstance(error,TimeoutError):
@@ -216,4 +271,4 @@ def main(
             print(f"  failed · {error}", flush=True)
     pd.DataFrame(failures, columns=["dataset","error"]).to_csv(output/"failures.csv", index=False)
     total = _combined(results_dir, output/"all.csv")
-    print(f"finished · {total//24} complete · {len(failures)} failed", flush=True)
+    print(f"finished · {len(list(results_dir.glob('*.csv')))} complete · {len(failures)} failed", flush=True)

@@ -11,15 +11,15 @@ def render_readme():
     regression = load_results(results/"regression.csv", datasets)
     classification = load_results(results/"classification.csv", datasets)
     tables = {
-        "SUMMARY_REGRESSION": mk_table(regression, [DatasetView("sgemm"), DatasetView("diamonds")], REGRESSION, "summary"),
+        "SUMMARY_REGRESSION": mk_table(regression, [DatasetView("sgemm"), DatasetView("rossmann")], REGRESSION, "summary"),
         "SUMMARY_CLASSIFICATION": mk_table(classification,
-            [DatasetView("covertype_bin"), DatasetView("bank")], CLASSIFICATION, "summary"),
+            [DatasetView("covertype_bin"), DatasetView("adult")], CLASSIFICATION, "summary"),
         "BENCHMARK_REGRESSION": mk_table(regression,
-            [DatasetView(name) for name in ("california", "concrete", "allstate", "diabetes", "walmart", "rossmann", "ashrae")], REGRESSION),
+            [DatasetView(name) for name in ("california", "concrete", "diamonds", "allstate", "diabetes", "bluebook", "walmart", "ashrae")], REGRESSION),
         "BENCHMARK_CLASSIFICATION": mk_table(classification,
-            [DatasetView("adult")], CLASSIFICATION),
+            [DatasetView(name) for name in ("bank", "click", "shuttle", "airlines", "higgs", "sf_police", "kddcup99")], CLASSIFICATION),
         "GROUPED_COVERTYPE": mk_table(classification,
-            [DatasetView("covertype_group", models=("fastforest","fastforest tuned"))], CLASSIFICATION),
+            [DatasetView("covertype_group", comparison="covertype_bin")], CLASSIFICATION),
     }
     readme = (root/"README.tmpl").read_text()
     for name,table in tables.items():

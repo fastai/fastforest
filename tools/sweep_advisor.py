@@ -3,10 +3,10 @@ from pathlib import Path
 import numpy as np,pandas as pd
 from fastcore.script import call_parse
 
-from accuracy import Dataset,_advisor_configs,_rows,load_data,split_indices
+from accuracy import Dataset,_rows,load_data,split_indices
 from fastforest import FastForest,FastForestClassifier
 from fastforest.preprocessing import _Encoder
-from fastforest.tools import FOREST_PARAMS,advisor_features
+from fastforest.tools import ADVISOR_PARAMS,advisor_features
 
 def _sample(X, y, n=40_000, seed=42):
     if len(X) <= n: return X,np.asarray(y)
@@ -81,12 +81,12 @@ def _relative_targets(rows):
     result.loc[regression] = np.sqrt(result.loc[regression])
     return result
 
-def _matrix(rows, meta=None, categorical=False):
+def _matrix(rows, meta=None, categorical=False, task=None, sweep_labels=None):
     data = rows.copy() if meta is None else rows.merge(meta, on="dataset", validate="many_to_one")
     data["relative_quality"] = _relative_targets(data)
-    return data,advisor_features(data, categorical)
+    return data,advisor_features(data, categorical, task, sweep_labels, ADVISOR_PARAMS)
 
-def _evaluate(data, X, categorical, seed=42):
+def _evaluate(data, X, categorical, selection_labels, seed=42):
     predictions = np.empty(len(data), dtype=np.float32)
     evaluation_group = data.source_group if "source_group" in data else data.dataset.str.removesuffix("_grouped")
     for task in data.task.unique():
@@ -104,6 +104,7 @@ def _evaluate(data, X, categorical, seed=42):
     data["predicted_quality"] = predictions
     selected = []
     for dataset,group in data.groupby("dataset", sort=False):
+        group = group[group.label.isin(selection_labels[data.loc[group.index[0], "task"]])]
         chosen = group.loc[group.predicted_quality.idxmin()]
         oracle = group.loc[group.relative_quality.idxmin()]
         selected.append(dict(dataset=dataset, task=chosen.task, encoding="categorical" if categorical else "continuous",
@@ -121,35 +122,57 @@ def main(
     exclude_csv:str="tools/results/datasets.csv",   # README dataset groups held out from advisor training
     data_home:str=".data",                          # Dataset cache directory
     seed:int=42,                                     # Forest seed
+    trees:int=None,                                  # Advisor trees; defaults to FastForest's rule
     refresh_metadata:bool=False,                     # Rebuild dataset/schema summaries from training rows
+    quick:bool=False,                                # Train continuous advisors without held-out evaluation
 ):
     "Fit and group-evaluate sweep advisors using continuous and categorical hyperparameter representations."
     root = Path(__file__).parents[1]
     def resolve(path):
         path = Path(path)
         return path if path.is_absolute() else root/path
-    rows = pd.read_csv(resolve(results))
+    rows = pd.read_csv(resolve(results), low_memory=False)
     exclusions = pd.read_csv(resolve(exclude_csv)).meta_group.dropna().unique()
     rows = rows[~rows.source_group.isin(exclusions)].reset_index(drop=True)
-    menus = {
-        "regression":{label for label,_,_ in _advisor_configs(FastForest(), "regression")},
-        "classification":{label for label,_,_ in _advisor_configs(FastForestClassifier(), "classification")}}
-    rows = rows[[label in menus[task] for task,label in zip(rows.task,rows.label)]].reset_index(drop=True)
+    sweep_labels = {
+        "regression":["defaults", "split_prior_rows=3", "bootstrap_max=240000", "min_node_size=64",
+            "split_prior_rows=8", "max_features=0.6", "max_node_samples=160", "replacement=false"],
+        "classification":["defaults", "max_node_samples=2560", "replacement=false", "max_features=sqrt",
+            "class_weight_power=0.5", "min_node_size=64", "max_features=1", "random_splitter=true"]}
     meta = None if "n_raw_cols" in rows else metadata(rows, resolve(metadata_csv), resolve(data_home), refresh_metadata)
     output = resolve(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"source_group":sorted(exclusions)}).to_csv(output/"held_out.csv", index=False)
+    if quick:
+        matrices,summaries = [],[]
+        for task in ("regression", "classification"):
+            task_rows = rows[rows.task == task].reset_index(drop=True)
+            data,X = _matrix(task_rows, meta, False, task, None)
+            model = FastForest(seed=seed, n_trees=trees, max_dummy_cardinality=20).fit(X, data.relative_quality)
+            model.save(output/f"{task}_continuous.ffm")
+            matrices.append(pd.concat([data[["dataset", "task", "label", "relative_quality"]].reset_index(drop=True),
+                X.reset_index(drop=True)], axis=1))
+            summaries.append(dict(task=task, encoding="continuous", context_vectors=False, datasets=data.dataset.nunique()))
+        pd.concat(matrices, ignore_index=True).to_csv(output/"features_continuous.csv", index=False)
+        summary = pd.DataFrame(summaries)
+        summary.to_csv(output/"summary.csv", index=False)
+        print(summary.to_string(index=False))
+        print(f"saved advisor artifacts to {output}")
+        return
     summaries = []
     for categorical in (False,True):
         encoding = "categorical" if categorical else "continuous"
-        data,X = _matrix(rows, meta, categorical)
-        matrix = pd.concat([data[["dataset", "task", "label", "relative_quality"]].reset_index(drop=True), X.reset_index(drop=True)], axis=1)
-        matrix.to_csv(output/f"features_{encoding}.csv", index=False)
-        predicted,selected = _evaluate(data, X, categorical, seed)
-        predicted.to_csv(output/f"predictions_{encoding}.csv", index=False)
-        selected.to_csv(output/f"selection_{encoding}.csv", index=False)
-        for task,group in selected.groupby("task"):
-            task_predictions = predicted[predicted.task == task]
+        matrices,predictions,selections = [],[],[]
+        for task in ("regression", "classification"):
+            task_rows = rows[rows.task == task].reset_index(drop=True)
+            data,X = _matrix(task_rows, meta, categorical, task, sweep_labels[task])
+            matrices.append(pd.concat([data[["dataset", "task", "label", "relative_quality"]].reset_index(drop=True),
+                X.reset_index(drop=True)], axis=1))
+            predicted,selected = _evaluate(data, X, categorical, sweep_labels, seed)
+            predictions.append(predicted)
+            selections.append(selected)
+            group = selected
+            task_predictions = predicted
             correlations = [candidate.relative_quality.corr(candidate.predicted_quality, method="spearman")
                 for _,candidate in task_predictions.groupby("dataset")]
             summaries.append(dict(task=task, encoding=encoding, datasets=len(group),
@@ -159,9 +182,11 @@ def main(
                 prediction_mae=np.mean(np.abs(task_predictions.relative_quality-task_predictions.predicted_quality)),
                 mean_rank_correlation=np.nanmean(correlations)))
             model = FastForest(seed=seed, max_dummy_cardinality=20)
-            mask = data.task == task
-            model.fit(X.loc[mask], data.loc[mask, "relative_quality"])
+            model.fit(X, data.relative_quality)
             model.save(output/f"{task}_{encoding}.ffm")
+        pd.concat(matrices, ignore_index=True).to_csv(output/f"features_{encoding}.csv", index=False)
+        pd.concat(predictions, ignore_index=True).to_csv(output/f"predictions_{encoding}.csv", index=False)
+        pd.concat(selections, ignore_index=True).to_csv(output/f"selection_{encoding}.csv", index=False)
     summary = pd.DataFrame(summaries)
     summary.to_csv(output/"summary.csv", index=False)
     print(summary.to_string(index=False, float_format=lambda value:f"{value:.4f}"))

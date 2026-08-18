@@ -9,6 +9,33 @@ description = "Fast approximate-forest models in Rust with Python bindings"
 [lib]
 name = "fastforest"
 crate-type = ["cdylib", "rlib"]
+doctest = false
+test = false
+
+[[bin]]
+name = "fastforest-compile"
+path = "src/bin/fastforest-compile.rs"
+test = false
+
+[[bin]]
+name = "fastforest-fit"
+path = "src/bin/fastforest-fit.rs"
+test = false
+
+[[bin]]
+name = "fastforest-predict"
+path = "src/bin/fastforest-predict.rs"
+test = false
+
+[[bin]]
+name = "fastforest-convert"
+path = "src/bin/fastforest-convert.rs"
+test = false
+
+[[bin]]
+name = "viewcsv"
+path = "src/bin/viewcsv.rs"
+test = false
 
 [profile.release]
 lto = true

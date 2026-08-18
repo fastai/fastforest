@@ -5,6 +5,7 @@ concrete,Concrete Strength,https://archive.ics.uci.edu/dataset/165/concrete+comp
 diamonds,Diamonds,https://www.openml.org/d/42225,53940,9 features · mixed,9 features,diamonds
 allstate,Allstate Claims,https://www.openml.org/d/42571,188318,130 features · mixed,130 features,allstate_claims_severity
 diabetes,Diabetes 130-US Hospitals,https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008,101766,46 features · mixed,46 features,diabetes_130_us
+bluebook,Blue Book for Bulldozers,https://www.kaggle.com/competitions/bluebook-for-bulldozers,412698,52 features · mixed,52 features,
 walmart,Walmart Store Sales,https://www.kaggle.com/competitions/walmart-recruiting-store-sales-forecasting,421570,15 features · mixed,15 features,
 rossmann,Rossmann Store Sales,https://www.kaggle.com/competitions/rossmann-store-sales,844338,16 features · mixed,16 features,rossmann_store_sales
 ashrae,ASHRAE Great Energy Predictor III,https://www.kaggle.com/competitions/ashrae-energy-prediction,20216100,15 features · mixed,15 features,ashrae
@@ -12,3 +13,9 @@ covertype_bin,Covertype,https://archive.ics.uci.edu/dataset/31/covertype,581012,
 covertype_group,Covertype,https://archive.ics.uci.edu/dataset/31/covertype,581012,grouped features,grouped features,covertype
 adult,Adult Census Income,https://www.openml.org/d/1590,48842,14 features · mixed,14 mixed features,amlb_adult
 bank,Bank Marketing,https://www.openml.org/d/1461,45211,16 features · mixed,16 mixed features,bank_marketing
+click,Click Prediction Small,https://www.openml.org/d/42733,39948,11 features · mixed,11 mixed features,
+shuttle,Statlog Shuttle,https://www.openml.org/d/40685,58000,9 features · numeric,9 numeric features,
+airlines,Airlines Delay,https://www.openml.org/d/41672,539383,7 features · mixed,7 mixed features,
+higgs,HIGGS,https://www.openml.org/d/42769,1000000,28 features · numeric,28 numeric features,
+kddcup99,KDD Cup 1999,https://www.openml.org/d/42746,4898431,41 features · mixed,41 mixed features,
+sf_police,San Francisco Police Incidents,https://www.openml.org/d/42732,2215023,9 features · mixed,9 mixed features,

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use clap::{Parser, ValueEnum};
 
 use crate::{
-    FileFitOptions, ForestError, MaxFeatures, SavedModel, SavedValue, Task, compile_model,
-    convert_csv_to_arrow, fit_file, predict_file,
+    CsvSample, CsvViewOptions, FileFitOptions, ForestError, MaxFeatures, SavedModel, SavedValue, Task, compile_model, convert_csv_to_arrow,
+    fit_file, predict_file, view_csv,
 };
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -26,36 +26,32 @@ struct FitCommand {
     output: PathBuf,
     #[arg(long)]
     n_trees: Option<usize>,
-    #[arg(long, default_value_t = 8)]
-    min_node_size: usize,
+    #[arg(long)]
+    min_node_size: Option<usize>,
     #[arg(long)]
     bootstrap_fraction: Option<f32>,
-    #[arg(long, default_value = "40000")]
-    bootstrap_max: String,
+    #[arg(long)]
+    bootstrap_max: Option<String>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     replacement: Option<bool>,
-    #[arg(long, default_value_t = 320)]
-    max_node_samples: usize,
     #[arg(long)]
-    tree_cutoff_samples: Option<usize>,
-    #[arg(long, default_value_t = 0.0)]
-    min_local_gain: f32,
-    #[arg(long, default_value_t = 0.0)]
-    min_global_gain: f32,
-    #[arg(long, default_value_t = 10.0)]
-    cutoff_divisor: f32,
+    max_node_samples: Option<usize>,
+    #[arg(long)]
+    split_prior_rows: Option<f32>,
+    #[arg(long)]
+    class_weight_power: Option<f32>,
+    #[arg(long)]
+    cutoff_divisor: Option<f32>,
     #[arg(long)]
     seed: Option<u64>,
     #[arg(long)]
     oob: bool,
     #[arg(long)]
     random_splitter: bool,
-    #[arg(long, default_value = "0.6")]
-    max_features: String,
-    #[arg(long, default_value_t = 4)]
-    max_dummy_cardinality: usize,
-    #[arg(long, default_value_t = 0.08)]
-    frequent_value_fraction: f32,
+    #[arg(long)]
+    max_features: Option<String>,
+    #[arg(long)]
+    max_dummy_cardinality: Option<usize>,
     #[arg(long)]
     allow_new_missing: bool,
     #[arg(long = "missing-value")]
@@ -90,6 +86,20 @@ struct ConvertCommand {
 }
 
 #[derive(Debug, Parser)]
+#[command(version, about = "Display a CSV compactly with constants separated")]
+struct ViewCommand {
+    input: PathBuf,
+    #[arg(long, value_delimiter = ',')]
+    cols: Vec<String>,
+    #[arg(long, conflicts_with = "sample")]
+    rows: Option<usize>,
+    #[arg(long, conflicts_with = "rows")]
+    sample: Option<CsvSample>,
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
+}
+
+#[derive(Debug, Parser)]
 #[command(version, about = "Build a standalone predictor containing a saved FastForest model")]
 struct CompileCommand {
     model: PathBuf,
@@ -113,9 +123,7 @@ fn parse_bootstrap_max(value: &str) -> Result<Option<usize>, ForestError> {
     if value.eq_ignore_ascii_case("none") {
         return Ok(None);
     }
-    let value = value
-        .parse::<usize>()
-        .map_err(|_| ForestError::new("bootstrap_max must be a positive integer or 'none'"))?;
+    let value = value.parse::<usize>().map_err(|_| ForestError::new("bootstrap_max must be a positive integer or 'none'"))?;
     if value == 0 {
         return Err(ForestError::new("bootstrap_max must be greater than zero"));
     }
@@ -123,9 +131,7 @@ fn parse_bootstrap_max(value: &str) -> Result<Option<usize>, ForestError> {
 }
 
 fn parse_assignment(value: &str, option: &str) -> Result<(String, String), ForestError> {
-    let (name, value) = value
-        .split_once('=')
-        .ok_or_else(|| ForestError::new(format!("{option} must use COLUMN=VALUE")))?;
+    let (name, value) = value.split_once('=').ok_or_else(|| ForestError::new(format!("{option} must use COLUMN=VALUE")))?;
     if name.is_empty() {
         return Err(ForestError::new(format!("{option} column cannot be empty")));
     }
@@ -152,14 +158,10 @@ where
 {
     match C::try_parse_from(args) {
         Ok(command) => Ok(Some(command)),
-        Err(error)
-            if matches!(
-                error.kind(),
-                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
-            ) => {
-                print!("{error}");
-                Ok(None)
-            }
+        Err(error) if matches!(error.kind(), clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion) => {
+            print!("{error}");
+            Ok(None)
+        }
         Err(error) => Err(ForestError::new(error.to_string())),
     }
 }
@@ -168,55 +170,57 @@ fn fit_options(command: FitCommand) -> Result<(PathBuf, PathBuf, FileFitOptions)
     let missing_values = command
         .missing_values
         .iter()
-        .map(|value| {
-            parse_assignment(value, "missing-value")
-                .map(|(name, value)| (name, SavedValue { kind: 5, value }))
-        })
+        .map(|value| parse_assignment(value, "missing-value").map(|(name, value)| (name, SavedValue { kind: 5, value })))
         .collect::<Result<_, _>>()?;
     let one_hot_groups = command
         .one_hot_groups
         .iter()
         .map(|value| {
-            parse_assignment(value, "one-hot-group").map(|(name, columns)| {
-                (
-                    name,
-                    columns.split(',').filter(|column| !column.is_empty()).map(str::to_owned).collect(),
-                )
-            })
+            parse_assignment(value, "one-hot-group")
+                .map(|(name, columns)| (name, columns.split(',').filter(|column| !column.is_empty()).map(str::to_owned).collect()))
         })
         .collect::<Result<_, _>>()?;
-    let date_columns = command
-        .date_columns
-        .iter()
-        .map(|value| parse_assignment(value, "date-column"))
-        .collect::<Result<_, _>>()?;
-    let options = FileFitOptions {
-        task: match command.task {
-            TaskArg::Regression => Task::Regression,
-            TaskArg::Classification => Task::Classification,
-        },
-        target: command.target,
-        n_trees: command.n_trees,
-        min_node_size: command.min_node_size,
-        bootstrap_fraction: command.bootstrap_fraction,
-        bootstrap_max: parse_bootstrap_max(&command.bootstrap_max)?,
-        replacement: command.replacement,
-        max_node_samples: command.max_node_samples,
-        tree_cutoff_samples: command.tree_cutoff_samples,
-        min_local_gain: command.min_local_gain,
-        min_global_gain: command.min_global_gain,
-        cutoff_divisor: command.cutoff_divisor,
-        seed: command.seed,
-        oob: command.oob,
-        random_splitter: command.random_splitter,
-        max_features: parse_max_features(&command.max_features)?,
-        max_dummy_cardinality: command.max_dummy_cardinality,
-        frequent_value_fraction: command.frequent_value_fraction,
-        allow_new_missing: command.allow_new_missing,
-        missing_values,
-        one_hot_groups,
-        date_columns,
+    let date_columns = command.date_columns.iter().map(|value| parse_assignment(value, "date-column")).collect::<Result<_, _>>()?;
+    let task = match command.task {
+        TaskArg::Regression => Task::Regression,
+        TaskArg::Classification => Task::Classification,
     };
+    let mut options = FileFitOptions::for_task(task);
+    options.target = command.target;
+    options.n_trees = command.n_trees;
+    if let Some(value) = command.min_node_size {
+        options.min_node_size = value
+    }
+    options.bootstrap_fraction = command.bootstrap_fraction;
+    if let Some(value) = command.bootstrap_max.as_deref() {
+        options.bootstrap_max = parse_bootstrap_max(value)?
+    }
+    options.replacement = command.replacement;
+    if let Some(value) = command.max_node_samples {
+        options.max_node_samples = value
+    }
+    if let Some(value) = command.split_prior_rows {
+        options.split_prior_rows = value
+    }
+    if let Some(value) = command.class_weight_power {
+        options.class_weight_power = value
+    }
+    if let Some(value) = command.cutoff_divisor {
+        options.cutoff_divisor = value
+    }
+    options.seed = command.seed;
+    options.oob = command.oob;
+    options.random_splitter = command.random_splitter;
+    if let Some(value) = command.max_features.as_deref() {
+        options.max_features = parse_max_features(value)?
+    }
+    if let Some(value) = command.max_dummy_cardinality {
+        options.max_dummy_cardinality = value
+    }
+    options.allow_new_missing = command.allow_new_missing;
+    options.missing_values = missing_values;
+    options.one_hot_groups = one_hot_groups;
+    options.date_columns = date_columns;
     Ok((command.input, command.output, options))
 }
 
@@ -225,7 +229,9 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<FitCommand, _, _>(args)? else { return Ok(()); };
+    let Some(command) = parse_command::<FitCommand, _, _>(args)? else {
+        return Ok(());
+    };
     let (input, output, options) = fit_options(command)?;
     fit_file(input, &options)?.save(output)
 }
@@ -235,7 +241,9 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<PredictCommand, _, _>(args)? else { return Ok(()); };
+    let Some(command) = parse_command::<PredictCommand, _, _>(args)? else {
+        return Ok(());
+    };
     let model = SavedModel::load(command.model)?;
     predict_file(&model, command.input, command.output, command.batch_size, command.proba)
 }
@@ -245,8 +253,25 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<ConvertCommand, _, _>(args)? else { return Ok(()); };
+    let Some(command) = parse_command::<ConvertCommand, _, _>(args)? else {
+        return Ok(());
+    };
     convert_csv_to_arrow(command.input, command.output, command.batch_size)
+}
+
+pub fn run_view<I, T>(args: I) -> Result<(), ForestError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let Some(command) = parse_command::<ViewCommand, _, _>(args)? else {
+        return Ok(());
+    };
+    print!(
+        "{}",
+        view_csv(command.input, &CsvViewOptions { columns: command.cols, rows: command.rows, sample: command.sample, seed: command.seed })?
+    );
+    Ok(())
 }
 
 pub fn run_compile<I, T>(args: I) -> Result<(), ForestError>
@@ -254,7 +279,9 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<CompileCommand, _, _>(args)? else { return Ok(()); };
+    let Some(command) = parse_command::<CompileCommand, _, _>(args)? else {
+        return Ok(());
+    };
     compile_model(&SavedModel::load(command.model)?, command.output)
 }
 
@@ -263,25 +290,8 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<EmbeddedPredictCommand, _, _>(args)? else { return Ok(()); };
-    predict_file(
-        &SavedModel::from_bytes(model)?,
-        command.input,
-        command.output,
-        command.batch_size,
-        command.proba,
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_command_exposes_help() {
-        run_fit(["fastforest-fit", "--help"]).unwrap();
-        run_predict(["fastforest-predict", "--help"]).unwrap();
-        run_convert(["fastforest-convert", "--help"]).unwrap();
-        run_compile(["fastforest-compile", "--help"]).unwrap();
-    }
+    let Some(command) = parse_command::<EmbeddedPredictCommand, _, _>(args)? else {
+        return Ok(());
+    };
+    predict_file(&SavedModel::from_bytes(model)?, command.input, command.output, command.batch_size, command.proba)
 }

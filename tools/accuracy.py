@@ -1,4 +1,4 @@
-import multiprocessing as mp
+import json,multiprocessing as mp
 import os,signal,time,traceback,urllib.request,zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -12,12 +12,22 @@ from sklearn.metrics import f1_score,log_loss,mean_squared_error,r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 
-from fastforest import FastForest,FastForestClassifier,_resolve_replacement,load
+from fastforest import FastForest,FastForestClassifier
+from fastforest.auto import AutoForest,AutoForestClassifier
 from fastforest.sklearn import sklearn_hist_preprocessor,sklearn_preprocessor
-from fastforest.tools import advisor_features,forest_suite,screen
 
 Dataset = str_enum("Dataset", "california", "concrete", "sgemm", "diamonds", "allstate", "diabetes", "covertype", "covertype_grouped",
-    "adult", "bank", "bluebook", "bluebook_raw", "walmart", "walmart_raw", "walmart_nodate", "ashrae", "rossmann")
+    "adult", "bank", "click", "shuttle", "airlines", "higgs", "kddcup99", "sf_police",
+    "bluebook", "bluebook_raw", "walmart", "walmart_raw", "walmart_nodate", "ashrae", "rossmann")
+
+_amlb = {
+    Dataset.click:("click_prediction_small", "Click Prediction Small"),
+    Dataset.shuttle:("shuttle", "Statlog Shuttle"),
+    Dataset.airlines:("airlines", "Airlines Delay"),
+    Dataset.higgs:("higgs", "HIGGS"),
+    Dataset.kddcup99:("kddcup99", "KDD Cup 1999"),
+    Dataset.sf_police:("sf_police_incidents", "San Francisco Police Incidents"),
+}
 
 _sgemm_url = "https://archive.ics.uci.edu/static/public/440/sgemm%2Bgpu%2Bkernel%2Bperformance.zip"
 _diabetes_url = "https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip"
@@ -57,6 +67,13 @@ def load_diabetes(data_home):
     y = data.pop("time_in_hospital").astype(np.float32).to_numpy()
     X = data.drop(columns=["encounter_id", "patient_nbr", "readmitted"])
     return X,y,{name:"?" for name in X.columns}
+
+def load_amlb(dataset, data_home):
+    "Load one locally cached AMLB table with its OpenML target metadata."
+    folder = Path(data_home)/"meta_benchmark"/"amlb"/_amlb[dataset][0]
+    frame = pd.read_parquet(folder/"data.pq")
+    with open(folder/"metadata.json") as handle: target = json.load(handle)["data_set_description"]["default_target_attribute"]
+    return frame.drop(columns=target),frame[target]
 
 def load_ashrae(data_home):
     "Load the supplied meter, building, and weather tables without feature engineering."
@@ -109,6 +126,9 @@ def load_data(dataset, data_home):
     if dataset == Dataset.bank:
         X,y = fetch_openml(data_id=1461, return_X_y=True, as_frame=True, data_home=data_home)
         return "Bank Marketing",X,y,None,"classification",None
+    if dataset in _amlb:
+        X,y = load_amlb(dataset, data_home)
+        return _amlb[dataset][1],X,y,None,"classification",None
     if dataset in (Dataset.bluebook, Dataset.bluebook_raw):
         path = Path(data_home)/"bluebook"/"TrainAndValid.csv"
         if not path.exists(): raise FileNotFoundError(f"download the Kaggle Blue Book TrainAndValid.csv to {path}")
@@ -178,6 +198,7 @@ def _replacement(value):
 def _make_model(name, task, X_train, missing_values, seed, rf_trees, ff_kwargs, max_dummy_cardinality):
     if name == "FastForest":
         params = dict(ff_kwargs, seed=seed, missing_values=missing_values, max_dummy_cardinality=max_dummy_cardinality)
+        params.pop("split_prior_rows" if task == "classification" else "class_weight_power", None)
         return (FastForestClassifier if task == "classification" else FastForest)(**params)
     if name == "RandomForest":
         forest = RandomForestClassifier if task == "classification" else RandomForestRegressor
@@ -192,70 +213,16 @@ def _make_model(name, task, X_train, missing_values, seed, rf_trees, ff_kwargs, 
         target_type="auto" if task == "classification" else "continuous")
     return make_pipeline(preprocessor, hist(random_state=seed, categorical_features=categories))
 
-def _advisor_target_metadata(y, task):
-    y = np.asarray(y)
-    if task == "classification":
-        _,counts = np.unique(y, return_counts=True)
-        probabilities = counts/counts.sum()
-        return dict(n_classes=len(counts), output_dimensions=max(1,len(counts)-1), majority_fraction=float(probabilities.max()),
-            target_entropy=float(-(probabilities*np.log(probabilities)).sum()), target_mean=0., target_std=0.,
-            target_unique_fraction=len(counts)/len(y))
-    values = np.asarray(y, dtype=np.float64)
-    return dict(n_classes=1, output_dimensions=1, majority_fraction=1., target_entropy=0., target_mean=float(values.mean()),
-        target_std=float(values.std()), target_unique_fraction=len(np.unique(values))/len(values))
-
-_ADVISOR_COMPARISONS = {
-    "regression":(("bootstrap_fraction",.5), ("tree_cutoff_samples",16), ("max_features","sqrt"), ("min_node_size",64),
-        ("max_node_samples",160), ("max_features",.9), ("bootstrap_max",160_000)),
-    "classification":(("max_features","sqrt"), ("bootstrap_fraction",.5), ("tree_cutoff_samples",16),
-        ("min_node_size",64), ("max_features",.9), ("max_node_samples",2560), ("min_global_gain",1e-5))}
-
-def _advisor_configs(model, task, compact=False):
-    "Return the task-specific useful-gain-ranked advisor configurations."
-    base = model.get_params()
-    comparisons = _ADVISOR_COMPARISONS[task][:3 if compact else 7]
-    levels = {}
-    for name,value in comparisons: levels.setdefault(name, [base[name]]).append(value)
-    return forest_suite(model, {name:tuple(values) for name,values in levels.items()})
-
-def _advisor_select(model, task, X_train, y_train, total_rows, advisor_dir, seed=42):
-    from fastforest import _estimated_outputs,_fit_plan
-    outputs = _estimated_outputs(y_train, seed) if task == "classification" else 1
-    params = model.get_params()
-    replacement = _resolve_replacement(params["replacement"], len(X_train), task == "classification")
-    final_trees,_,_ = _fit_plan(len(X_train), None, params["bootstrap_fraction"], params["bootstrap_max"],
-        replacement, False, outputs)
-    configs = _advisor_configs(model, task, compact=final_trees == 20)
-    report = screen(model, X_train, y_train, configs, trees=8, seed=seed)
-    rows = []
-    base = dict(dataset="readme", task=task, rows=total_rows, screen_trees=8, **report.feature_metadata,
-        **_advisor_target_metadata(y_train, task))
-    for result,(_,_,params) in zip(report.results, configs):
-        replacement = _resolve_replacement(params["replacement"], len(X_train), task == "classification")
-        trees,_,pool_rows = _fit_plan(len(X_train), None, params["bootstrap_fraction"], params["bootstrap_max"],
-            replacement, False, outputs)
-        rows.append(dict(base, label=result.label, screen_oob_loss=result.oob_loss, screen_train_loss=result.train_loss,
-            screen_coverage=result.coverage, screen_evaluated_rows=result.evaluated_rows, screen_nodes_mean=result.nodes_mean,
-            screen_leaves_mean=result.leaves_mean, screen_depth_mean=result.depth_mean, full_trees=trees,
-            full_pool_rows=pool_rows, **{**params,"replacement":replacement}))
-    summary = pd.read_csv(Path(advisor_dir)/"summary.csv")
-    encoding = summary[summary.task == task].sort_values("mean_selected").iloc[0].encoding
-    features = advisor_features(pd.DataFrame(rows), categorical=encoding == "categorical")
-    advisor = load(Path(advisor_dir)/f"{task}_{encoding}.ffm")
-    prediction = advisor.predict(features)
-    prediction[[result.label == "defaults" for result in report.results]] = 1.
-    selected = int(np.argmin(prediction))
-    return configs[selected],encoding,float(prediction[selected])
-
-def _fit_score_tuned(task, X_train, y_train, X_test, y_test, missing_values, ff_kwargs, max_dummy_cardinality, advisor_dir, total_rows):
+def _fit_score_auto(task, X_train, y_train, X_test, y_test, missing_values, ff_kwargs, max_dummy_cardinality, autogrow):
     start = time.perf_counter()
-    base = (FastForestClassifier if task == "classification" else FastForest)(seed=42, missing_values=missing_values,
-        max_dummy_cardinality=max_dummy_cardinality, **ff_kwargs)
-    (label,_,params),encoding,predicted = _advisor_select(base, task, X_train, y_train, total_rows, advisor_dir)
-    model = (FastForestClassifier if task == "classification" else FastForest)(seed=42, missing_values=missing_values,
-        max_dummy_cardinality=max_dummy_cardinality, **{**ff_kwargs,**params})
+    params = {name:value for name,value in ff_kwargs.items() if name != "n_trees"}
+    params.pop("split_prior_rows" if task == "classification" else "class_weight_power", None)
+    model = (AutoForestClassifier if task == "classification" else AutoForest)(seed=42, autogrow=autogrow, max_trees=192,
+        missing_values=missing_values, max_dummy_cardinality=max_dummy_cardinality, **params)
     model.fit(X_train, y_train)
-    result = dict(fit=time.perf_counter()-start, selected=label, advisor_encoding=encoding, predicted_relative=predicted,
+    result = dict(fit=time.perf_counter()-start, sizing_active=model.sizing_["active"], sizing=model.sizing_,
+        selected=f"bootstrap_max={model.bootstrap_max}, max_node_samples={model.max_node_samples}, trees={model.n_trees_}",
+        selection_method="autogrow" if autogrow else "AutoForest", selection_scores=model.tree_history_,
         n_trees=model.n_trees_, tree_nodes=(float(np.mean(model.tree_node_counts_)),float(np.median(model.tree_node_counts_))),
         tree_leaves=(float(np.mean(model.tree_leaf_counts_)),float(np.median(model.tree_leaf_counts_))),
         tree_depth=(float(np.mean(model.tree_depths_)),float(np.median(model.tree_depths_))))
@@ -270,12 +237,11 @@ def _fit_score_tuned(task, X_train, y_train, X_test, y_test, missing_values, ff_
         result.update(predict=time.perf_counter()-start, rmse=mean_squared_error(y_test, predictions)**.5, r2=r2_score(y_test, predictions))
     return result
 
-def _fit_score(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality,
-    advisor_dir=None, total_rows=None):
+def _fit_score(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality):
     "Fit, time, and score one model."
-    if name == "FastForest tuned":
-        return _fit_score_tuned(task, X_train, y_train, X_test, y_test, missing_values, ff_kwargs,
-            max_dummy_cardinality, advisor_dir, total_rows)
+    if name in ("AutoForest","Autogrow"):
+        return _fit_score_auto(task, X_train, y_train, X_test, y_test, missing_values, ff_kwargs,
+            max_dummy_cardinality, name=="Autogrow")
     result = {}
     start = time.perf_counter()
     model = _make_model(name, task, X_train, missing_values, 42, rf_trees, ff_kwargs, max_dummy_cardinality)
@@ -286,6 +252,15 @@ def _fit_score(name, task, X_train, y_train, X_test, y_test, missing_values, rf_
         result["tree_nodes"] = float(np.mean(model.tree_node_counts_)),float(np.median(model.tree_node_counts_))
         result["tree_leaves"] = float(np.mean(model.tree_leaf_counts_)),float(np.median(model.tree_leaf_counts_))
         result["tree_depth"] = float(np.mean(model.tree_depths_)),float(np.median(model.tree_depths_))
+        result["feature_importances"] = np.asarray(model.feature_importances_)
+        result["feature_names"] = tuple(map(str, model.feature_names_in_))
+        result["split_diagnostics"] = np.zeros((len(model.feature_importances_), 4), dtype=np.int64)
+        if hasattr(model._model, "split_counts_by_depth"):
+            depth_counts = np.asarray(model._model.split_counts_by_depth)
+            encoded_diagnostics = np.column_stack((depth_counts[:,:,0].sum(axis=1), depth_counts[:,:,1].sum(axis=1),
+                depth_counts[:,:4,0].sum(axis=1), depth_counts[:,4:8,0].sum(axis=1)))
+            raw_ids = np.asarray(model._encoder._native.encoded_to_raw)
+            np.add.at(result["split_diagnostics"], raw_ids, encoded_diagnostics)
         if task == "classification": result["prediction_trees_per_batch"] = model.prediction_trees_per_batch_
     if name == "HistGBM": result["iterations"] = model.n_iter_ if hasattr(model, "n_iter_") else model[-1].n_iter_
     start = time.perf_counter()
@@ -302,20 +277,18 @@ def _fit_score(name, task, X_train, y_train, X_test, y_test, missing_values, rf_
         result["r2"] = r2_score(y_test, predictions)
     return result
 
-def _evaluate(send, name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality,
-    advisor_dir, total_rows):
+def _evaluate(send, name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality):
     "Fit and score one model in an isolated process."
     try:
         try: os.setsid()
         except (AttributeError, PermissionError): pass
         send.send(("ready", None))
-        result = _fit_score(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs,
-            max_dummy_cardinality, advisor_dir, total_rows)
+        result = _fit_score(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality)
         send.send((True, result))
     except BaseException: send.send((False, traceback.format_exc()))
     finally: send.close()
 
-def _evaluate_ashrae(send, name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality, advisor_dir):
+def _evaluate_ashrae(send, name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality):
     "Load, chronologically split, and evaluate ASHRAE inside the timed process."
     try:
         try: os.setsid()
@@ -328,7 +301,7 @@ def _evaluate_ashrae(send, name, data_home, max_rows, rf_trees, ff_kwargs, max_d
             X,y = _rows(X, selected),y[selected]
         train_idx,test_idx,_ = split_indices(Dataset.ashrae, X, y)
         result = _fit_score(name, task, _rows(X, train_idx), y[train_idx], _rows(X, test_idx), y[test_idx], missing_values,
-            rf_trees, ff_kwargs, max_dummy_cardinality, advisor_dir, len(X))
+            rf_trees, ff_kwargs, max_dummy_cardinality)
         result["dataset_meta"] = dataset_name,len(X),X.shape[1],"December 2016"
         send.send((True, result))
     except BaseException: send.send((False, traceback.format_exc()))
@@ -344,13 +317,11 @@ def _stop(process):
         except (AttributeError, ProcessLookupError): process.kill()
         process.join()
 
-def _run_timed(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality,
-    timeout, advisor_dir=None, total_rows=None):
+def _run_timed(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality, timeout):
     "Evaluate a model in a fresh process, returning `None` on timeout."
     context = mp.get_context("spawn")
     receive,send = context.Pipe(False)
-    args = (send, name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality,
-        advisor_dir, total_rows)
+    args = (send, name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs, max_dummy_cardinality)
     process = context.Process(target=_evaluate, args=args)
     process.start()
     send.close()
@@ -371,11 +342,11 @@ def _run_timed(name, task, X_train, y_train, X_test, y_test, missing_values, rf_
     if not succeeded: raise RuntimeError(result)
     return result
 
-def _run_ashrae_timed(name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality, timeout, advisor_dir=None):
+def _run_ashrae_timed(name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality, timeout):
     "Load and evaluate ASHRAE in a fresh process, returning `None` on timeout."
     context = mp.get_context("spawn")
     receive,send = context.Pipe(False)
-    args = (send, name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality, advisor_dir)
+    args = (send, name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality)
     process = context.Process(target=_evaluate_ashrae, args=args)
     process.start()
     send.close()
@@ -401,10 +372,12 @@ def _save_results(dataset, task, results):
     dataset_id = ids.get(dataset, str(dataset))
     path = Path(__file__).parent/"results"/("classification.csv" if task == "classification" else "regression.csv")
     table = pd.read_csv(path)
-    names = {"FastForest":"fastforest", "FastForest tuned":"fastforest tuned", "RandomForest":"sklearn RF", "HistGBM":"sklearn HistGBM"}
+    names = {"FastForest":"fastforest", "AutoForest":"AutoForest", "Autogrow":"autogrow",
+        "RandomForest":"sklearn RF", "HistGBM":"sklearn HistGBM"}
     for name,result in results.items():
         model = names[name]
         table = table[~((table.dataset == dataset_id)&(table.model == model))]
+        if name in ("AutoForest","Autogrow") and result is not None and not result["sizing_active"]: continue
         row = dict(dataset=dataset_id, model=model, status="", note="")
         if result is None: row.update(status="timeout", note="timed out")
         elif task == "classification": row.update(f1=result["f1"], log_loss=result["log_loss"], fit=result["fit"], proba=result["predict"])
@@ -417,57 +390,63 @@ def main(
     dataset:Dataset=Dataset.california, # Regression or classification dataset
     rf_trees:int=100,            # sklearn RF trees (its default)
     ff_trees:int=None,           # FastForest trees; defaults to its sampled-row rule
-    min_node_size:int=8,         # FastForest minimum node size
+    min_node_size:int=None,      # FastForest minimum node size; model default when omitted
     bootstrap_fraction:float=None,# Defaults to 1, or 0.8 with OOB
-    bootstrap_max:int=40_000,    # Maximum sampled rows per output; multiplied by classes
+    bootstrap_max:int=None,      # Maximum sampled rows per output; model default when omitted
     replacement:str="none",      # none is adaptive; true or false overrides it
-    max_node_samples:int=320,    # Maximum rows evaluated per node
-    tree_cutoff_samples:int=None, # Random unique cutoff values sampled per tree and feature
-    min_local_gain:float=0.,     # Minimum node-normalized split gain; 0 disables
-    min_global_gain:float=0.,    # Minimum root-normalized row-weighted split gain; 0 disables
-    cutoff_divisor:float=10.,    # No-sort splitter candidate-count divisor
+    max_node_samples:int=None,   # Maximum rows evaluated per node; model default when omitted
+    split_prior_rows:float=None, # Prior rows used by the split score; model default when omitted
+    class_weight_power:float=None,# Classification inverse-frequency weighting; model default when omitted
+    cutoff_divisor:float=None,   # No-sort splitter candidate-count divisor; model default when omitted
     random_splitter:bool=False,   # Use the original random split search
-    max_features:str="0.6",       # sqrt or a feature fraction
-    max_dummy_cardinality:int=4, # Largest cardinality expanded to binary features
-    frequent_value_fraction:float=.08, # Minimum row fraction for an ordered value to also receive a binary feature
+    max_features:str=None,       # sqrt or a feature fraction; task default when omitted
+    max_dummy_cardinality:int=None,# Largest cardinality expanded to binary features; model default when omitted
     dates:bool=True,             # Let fastforest auto-detect dates
+    diagnostics:bool=False,      # Print FastForest feature/depth split diagnostics
     timeout:int=180,             # Maximum seconds for each model/dataset combination
     ff_only:bool=False,          # Run only FastForest
-    tuned_only:bool=False,       # Run only the held-out meta-forest-selected FastForest
+    auto_only:bool=False,        # Run AutoForest with and without autogrow
+    sizer_only:bool=False,       # Run AutoForest sample sizing without autogrow
+    autogrow_only:bool=False,    # Run only AutoForest with autogrow
     rf_only:bool=False,          # Run only sklearn RandomForest
     hist_only:bool=False,        # Run only sklearn HistGradientBoosting
     max_rows:int=None,           # Optional reproducible dataset row limit
     data_home:str=None,          # sklearn dataset cache directory
-    advisor_dir:str="meta/meta_advisor", # Held-out sweep-advisor models
     save:bool=False,              # Update the README benchmark result CSV
 ):
     "Compare accuracy and timing on one fixed dataset split."
     if timeout < 1: raise ValueError("timeout must be positive")
-    if sum((ff_only,tuned_only,rf_only,hist_only)) > 1: raise ValueError("model-only options are mutually exclusive")
+    if sum((ff_only,auto_only,sizer_only,autogrow_only,rf_only,hist_only)) > 1: raise ValueError("model-only options are mutually exclusive")
     if data_home is None: data_home = Path(__file__).parents[1]/".data"
     task = "regression" if dataset == Dataset.ashrae else None
     one_hot_groups = None
-    ff_kwargs = dict(n_trees=ff_trees, min_node_size=min_node_size, bootstrap_fraction=bootstrap_fraction, bootstrap_max=bootstrap_max,
-        replacement=_replacement(replacement), max_node_samples=max_node_samples, tree_cutoff_samples=tree_cutoff_samples,
-        min_local_gain=min_local_gain, min_global_gain=min_global_gain, cutoff_divisor=cutoff_divisor, random_splitter=random_splitter,
-        max_features=_max_features(max_features),
-        frequent_value_fraction=frequent_value_fraction,
-        one_hot_groups=one_hot_groups, date_columns=None if dates else {})
+    ff_kwargs = dict(n_trees=ff_trees, bootstrap_fraction=bootstrap_fraction, replacement=_replacement(replacement),
+        random_splitter=random_splitter, one_hot_groups=one_hot_groups, date_columns=None if dates else {})
+    for name,value in dict(min_node_size=min_node_size, bootstrap_max=bootstrap_max, max_node_samples=max_node_samples,
+        split_prior_rows=split_prior_rows, class_weight_power=class_weight_power, cutoff_divisor=cutoff_divisor).items():
+        if value is not None: ff_kwargs[name] = value
+    if max_dummy_cardinality is None: max_dummy_cardinality = FastForest().max_dummy_cardinality
     models = ["FastForest", "RandomForest", "HistGBM"]
     if ff_only: models = models[:1]
-    if tuned_only: models = ["FastForest tuned"]
+    if auto_only: models = ["AutoForest","Autogrow"]
+    if sizer_only: models = ["AutoForest"]
+    if autogrow_only: models = ["Autogrow"]
     if rf_only: models = models[1:2]
     if hist_only: models = models[2:]
     results = defaultdict(dict)
+    feature_names = ()
     if dataset == Dataset.ashrae:
+        if max_features is not None: ff_kwargs["max_features"] = _max_features(max_features)
         for name in models:
             print(f"Running {name}...", flush=True)
-            results[name] = _run_ashrae_timed(name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality, timeout, advisor_dir)
+            results[name] = _run_ashrae_timed(name, data_home, max_rows, rf_trees, ff_kwargs, max_dummy_cardinality, timeout)
         completed = next((result for result in results.values() if result is not None), None)
         dataset_name,n_rows,n_features,split_name = (completed["dataset_meta"] if completed else
             ("ASHRAE Great Energy Predictor III", 20_216_100, 15, "December 2016"))
     else:
         dataset_name,X,y,missing_values,task,one_hot_groups = load_data(dataset, data_home)
+        feature_names = tuple(map(str, X.columns)) if hasattr(X, "columns") else tuple(f"x{i}" for i in range(X.shape[1]))
+        if max_features is not None: ff_kwargs["max_features"] = _max_features(max_features)
         y = np.asarray(y, dtype=np.float32 if task == "regression" else None)
         if max_rows is not None and max_rows < len(X):
             if max_rows < 2: raise ValueError("max_rows must be at least 2")
@@ -481,20 +460,22 @@ def main(
         for name in models:
             print(f"Running {name}...", flush=True)
             results[name] = _run_timed(name, task, X_train, y_train, X_test, y_test, missing_values, rf_trees, ff_kwargs,
-                max_dummy_cardinality, timeout, advisor_dir, len(X))
+                max_dummy_cardinality, timeout)
         n_rows,n_features = len(X),X.shape[1]
 
     print(f"{dataset_name}: {n_rows:,} rows, {n_features} features, {split_name}")
-    fastforest_name = next((name for name in models if name.startswith("FastForest")), None)
+    fastforest_name = next((name for name in models if name in ("FastForest","AutoForest","Autogrow")), None)
     if fastforest_name:
         resolved_trees = results[fastforest_name]["n_trees"] if results[fastforest_name] is not None else ff_trees
-        print(f"FastForest: trees={resolved_trees}, min_node_size={min_node_size}, bootstrap_fraction={bootstrap_fraction}, "
-            f"bootstrap_max={bootstrap_max}, replacement={replacement}, max_node_samples={max_node_samples}, "
-            f"tree_cutoff_samples={tree_cutoff_samples}, "
-            f"min_local_gain={min_local_gain}, min_global_gain={min_global_gain}, "
-            f"cutoff_divisor={cutoff_divisor}, "
-            f"max_dummy_cardinality={max_dummy_cardinality}, frequent_value_fraction={frequent_value_fraction}, "
-            f"random_splitter={random_splitter}, max_features={max_features}")
+        shown = (FastForestClassifier if task == "classification" else FastForest)(**{
+            name:value for name,value in ff_kwargs.items() if name not in ("one_hot_groups","date_columns") and
+            name != ("split_prior_rows" if task == "classification" else "class_weight_power")})
+        print(f"{fastforest_name}: trees={resolved_trees}, min_node_size={shown.min_node_size}, bootstrap_fraction={shown.bootstrap_fraction}, "
+            f"bootstrap_max={shown.bootstrap_max}, replacement={replacement}, max_node_samples={shown.max_node_samples}, "
+            f"{f'class_weight_power={shown.class_weight_power}' if task == 'classification' else f'split_prior_rows={shown.split_prior_rows}'}, "
+            f"cutoff_divisor={shown.cutoff_divisor}, "
+            f"max_dummy_cardinality={max_dummy_cardinality}, "
+            f"random_splitter={random_splitter}, max_features={shown.max_features}")
     if "RandomForest" in models: print(f"sklearn RF trees={rf_trees}, one-hot through 20 levels then target encoding")
     print(f"Timeout: {timeout}s per model/dataset combination")
     if task == "classification": print(f"{'model':<15} {'F1 acc':>14} {'log loss':>14} {'fit total':>12} {'predict total':>14}")
@@ -506,17 +487,30 @@ def main(
             continue
         if task == "classification": scores = f"{result['f1']:>14.4f} {result['log_loss']:>14.4f}"
         else:
-            r2_digits = 3 if result["r2"] > 0.995 else 2
-            scores = f"{result['rmse']:>14.2f} {result['r2']:>14.{r2_digits}f}"
+            scores = f"{result['rmse']:>14.5f} {result['r2']:>14.5f}"
         print(f"{name:<15} {scores} {result['fit']:>10.3f}s {result['predict']:>12.3f}s")
-        if name.startswith("FastForest"):
+        if name in ("FastForest","AutoForest","Autogrow"):
             print(f"{'trees':<15} nodes mean/median={result['tree_nodes'][0]:.1f}/{result['tree_nodes'][1]:.0f}, "
                 f"leaves={result['tree_leaves'][0]:.1f}/{result['tree_leaves'][1]:.0f}, "
                 f"depth={result['tree_depth'][0]:.1f}/{result['tree_depth'][1]:.0f}")
-        if name.startswith("FastForest") and task == "classification":
+        if diagnostics and name == "FastForest":
+            counts = result["split_diagnostics"]
+            names = result["feature_names"]
+            for index in np.argsort(result["feature_importances"])[::-1]:
+                total,equality,early,middle = map(int, counts[index])
+                late = total-early-middle
+                print(f"{'split detail':<15} {names[index]:<12} importance={result['feature_importances'][index]:.4f}, "
+                    f"splits={total}, equality={equality}, depth 0-3/4-7/8+={early}/{middle}/{late}")
+        if name in ("FastForest","AutoForest","Autogrow") and task == "classification":
             print(f"{'prediction':<15} trees/batch={result['prediction_trees_per_batch']}")
-        if name == "FastForest tuned":
-            print(f"{'advisor':<15} selected={result['selected']}, encoding={result['advisor_encoding']}, "
-                f"predicted relative={result['predicted_relative']:.3f}")
+        if name in ("AutoForest","Autogrow"):
+            if result["selection_scores"]:
+                history = ", ".join(f"{row['trees']}={row['loss']:.3g}" for row in result["selection_scores"])
+                print(f"{'selection':<15} selected={result['selected']}, tracked losses: {history}")
+            sizing = result["sizing"]
+            if sizing["active"]:
+                bootstrap = ", ".join(f"{key}={value/sizing['baseline_loss']:.3f}" for key,value in sizing["bootstrap_losses"].items())
+                nodes = ", ".join(f"{key}={value/sizing['baseline_loss']:.3f}" for key,value in sizing["node_losses"].items())
+                print(f"{'sizing':<15} native={sizing['seconds']:.3f}s; bootstrap: {bootstrap}; nodes: {nodes}")
     if "HistGBM" in models and results["HistGBM"] is not None: print(f"HistGBM iterations: {results['HistGBM']['iterations']}")
     if save: _save_results(dataset, task, results)

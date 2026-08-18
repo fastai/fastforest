@@ -1,0 +1,4 @@
+max_width = 140
+use_small_heuristics = "Max"
+fn_params_layout = "Compressed"
+use_field_init_shorthand = true
