@@ -11,8 +11,6 @@ use crate::prediction::{PredictionTree, predict_outputs};
 use crate::split::{FeatureGroup, SplitScratch, find_split};
 use crate::tree::{Branch, TreeNode, grow_tree, leaf_index, native_node, structure};
 
-pub const DEFAULT_MAX_DUMMY_CARDINALITY: usize = 1;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MaxFeatures {
     Sqrt,

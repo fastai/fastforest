@@ -15,6 +15,7 @@ class ColumnInfo:
     had_missing: bool
     median: object
     encoded_features: tuple
+    members: tuple = ()
 
 def _arrow_batch(X, expected_names=None):
     "Convert a supported table to the single native Arrow boundary."
@@ -85,29 +86,6 @@ def _saved_scalar(value):
     if isinstance(value, str): return 5,value
     raise TypeError(f"model metadata value {value!r} is not a portable scalar")
 
-def _one_hot_layout(spec, names):
-    if spec is None: spec = {}
-    if not isinstance(spec, dict): raise TypeError("one_hot_groups must be a dict")
-    groups,grouped = [],set()
-    for group,selectors in spec.items():
-        if not isinstance(group, str): raise TypeError("one-hot group names must be strings")
-        if isinstance(selectors, (str, bytes)) or not hasattr(selectors, "__iter__"):
-            raise TypeError(f"one-hot group {group!r} must contain a sequence of columns")
-        indices = []
-        for selector in selectors:
-            try: index = names.index(selector) if isinstance(selector, str) else int(selector)
-            except ValueError as error: raise ValueError(f"unknown one-hot column {selector!r}") from error
-            if index < 0 or index >= len(names): raise ValueError(f"one-hot column {selector!r} is out of range")
-            if index in grouped: raise ValueError(f"column {names[index]!r} belongs to more than one one-hot group")
-            grouped.add(index)
-            indices.append(index)
-        if len(indices) < 2: raise ValueError(f"one-hot group {group!r} must contain at least two columns")
-        groups.append((group, indices))
-    direct = [index for index in range(len(names)) if index not in grouped]
-    logical_names = tuple(names[index] for index in direct)+tuple(group for group,_ in groups)
-    if len(set(logical_names)) != len(logical_names): raise ValueError("one-hot group and feature names must be unique")
-    return groups,direct,logical_names
-
 def _date_columns(spec, names, direct):
     if not isinstance(spec, dict): raise TypeError("date_columns must be a dict of columns to formats")
     dates = []
@@ -115,7 +93,7 @@ def _date_columns(spec, names, direct):
         try: index = names.index(selector) if isinstance(selector, str) else int(selector)
         except ValueError as error: raise ValueError(f"unknown date column {selector!r}") from error
         if index < 0 or index >= len(names): raise ValueError(f"date column {selector!r} is out of range")
-        if index not in direct: raise ValueError(f"date column {names[index]!r} is already grouped or configured")
+        if index not in direct: raise ValueError(f"date column {names[index]!r} is already configured")
         if not isinstance(format, str) or not format: raise TypeError(f"date column {names[index]!r} must have a non-empty format")
         direct.remove(index)
         dates.append((index, format))
@@ -156,12 +134,8 @@ class _Column:
         return result
 
 class _Encoder:
-    def __init__(self, missing_values=None, max_dummy_cardinality=1, one_hot_groups=None, date_columns=None,
-        allow_new_missing=False, seed=None):
-        if not isinstance(max_dummy_cardinality, int) or max_dummy_cardinality < 1:
-            raise ValueError("max_dummy_cardinality must be a positive integer")
-        self.missing_values,self.max_dummy_cardinality = missing_values,max_dummy_cardinality
-        self.one_hot_groups,self.date_columns = one_hot_groups,date_columns
+    def __init__(self, missing_values=None, date_columns=None, allow_new_missing=False, seed=None):
+        self.missing_values,self.date_columns = missing_values,date_columns
         self.allow_new_missing,self.seed = allow_new_missing,seed
 
     def fit_transform(self, X, indices=None):
@@ -169,15 +143,17 @@ class _Encoder:
             X = _take_rows(X, indices)
         batch,self.input_names = _arrow_batch(X)
         markers = _markers(self.missing_values, self.input_names)
-        self._groups,self._direct,_ = _one_hot_layout(self.one_hot_groups, self.input_names)
+        self._direct = list(range(len(self.input_names)))
         if self.date_columns is None:
-            detected = _NativeEncoder.detect_dates(batch, [_saved_scalar(marker) for marker in markers], self._groups, self.seed)
+            detected = _NativeEncoder.detect_dates(batch, [_saved_scalar(marker) for marker in markers], self.seed)
             self.date_columns = {self.input_names[index]:format for index,format in detected}
         dates,self._direct = _date_columns(self.date_columns, self.input_names, self._direct)
-        native,ranked = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.max_dummy_cardinality,
-            self.allow_new_missing, self._groups, dates)
+        native,ranked = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.allow_new_missing, dates, self.seed)
         self.names,self._dates = tuple(native.logical_names),tuple((index,format,tuple(parts)) for index,format,parts in native.date_layout)
-        logical_markers = [markers[index] for index in self._direct]+[""]*len(self._groups)+[np.nan]*(16*len(self._dates))
+        self._bundles = tuple((name,tuple(indices),tuple(members)) for name,indices,members in native.bundle_layout)
+        bundled = {index for _,indices,_ in self._bundles for index in indices}
+        self._direct = [index for index in self._direct if index not in bundled]
+        logical_markers = [markers[index] for index in self._direct]+[None]*len(self._bundles)+[np.nan]*(16*len(self._dates))
         self._set_native(native, logical_markers)
         return np.asarray(ranked)
 
@@ -189,11 +165,9 @@ class _Encoder:
             numeric,all_int,had_missing,median_num,median_text,numeric_values,text_values,raw_encoded = self._native.metadata(col)
             values = np.asarray(numeric_values, dtype=np.float32) if numeric else np.asarray(text_values, dtype=str)
             median = median_num if numeric else median_text
-            encoded = tuple(("ordered", None) if kind == 0 else ("dummy", category) if kind == 1 else ("missing", None)
-                for kind,category in raw_encoded)
+            encoded = tuple(("ordered", None) if kind == 0 else ("missing", None) for kind,_ in raw_encoded)
             for kind,category in encoded:
                 if kind == "ordered": encoded_names.append(name)
-                elif kind == "dummy": encoded_names.append(f"{name}={values[category]}")
                 else: encoded_names.append(f"{name}_missing")
             fitted.append(_Column(name, marker, numeric, all_int, values, median, had_missing, encoded))
         self.columns = tuple(fitted)
@@ -202,23 +176,26 @@ class _Encoder:
         self.feature_group_ids = np.asarray(self._native.feature_group_ids)
         self.cutoff_offsets = np.asarray(self._native.cutoff_offsets)
         self.cutoff_values = np.asarray(self._native.cutoff_values)
+        bundle_members = {name:members for name,_,members in self._bundles}
         self.column_info = tuple(ColumnInfo(column.name, "discarded" if not len(column.values) else "numeric" if column.numeric else "lexical",
             len(column.values), column.all_int, column.had_missing, int(column.median) if column.all_int and column.median is not None else column.median,
-            tuple(self.encoded_names[i] for i in np.flatnonzero(self.encoded_to_raw == col)))
+            tuple(self.encoded_names[i] for i in np.flatnonzero(self.encoded_to_raw == col)), bundle_members.get(column.name, ()))
             for col,column in enumerate(self.columns))
 
     @classmethod
-    def from_native(cls, native, markers, one_hot_groups, date_columns):
+    def from_native(cls, native, markers, date_columns):
         "Reconstruct the Python adapter around a loaded native schema."
         names = tuple(native.input_names)
-        group_spec = {group:[names[index] for index in indices] for group,indices in one_hot_groups}
         date_spec = {names[index]:format for index,format in date_columns}
-        result = cls(markers, one_hot_groups=group_spec, date_columns=date_spec)
+        result = cls(markers, date_columns=date_spec)
         result.input_names = names
-        result._groups,result._direct,_ = _one_hot_layout(group_spec, names)
+        result._direct = list(range(len(names)))
         _,result._direct = _date_columns(date_spec, names, result._direct)
         result.names,result._dates = tuple(native.logical_names),tuple((index,format,tuple(parts)) for index,format,parts in native.date_layout)
-        logical_markers = [markers[index] for index in result._direct]+[""]*len(result._groups)+[np.nan]*(16*len(result._dates))
+        result._bundles = tuple((name,tuple(indices),tuple(members)) for name,indices,members in native.bundle_layout)
+        bundled = {index for _,indices,_ in result._bundles for index in indices}
+        result._direct = [index for index in result._direct if index not in bundled]
+        logical_markers = [markers[index] for index in result._direct]+[None]*len(result._bundles)+[np.nan]*(16*len(result._dates))
         result._set_native(native, logical_markers)
         return result
 
@@ -238,10 +215,18 @@ class _Encoder:
         batch,_ = _arrow_batch(X, self.input_names)
         source = batch.to_pandas().to_numpy(dtype=object)
         logical = [source[:,index] for index in self._direct]
-        for _,indices in self._groups:
-            active = np.asarray(source[:,indices], dtype=np.float32).argmax(axis=1)
-            logical.append(np.asarray(self.input_names, dtype=object)[np.asarray(indices)[active]])
         markers = _markers(self.missing_values, self.input_names)
+        for _,indices,members in self._bundles:
+            bundled = np.full(len(source), "(none)", dtype=object)
+            unknown = np.zeros(len(source), dtype=bool)
+            for index,member in reversed(tuple(zip(indices,members))):
+                raw = source[:,index]
+                missing = _missing_mask(raw, markers[index])
+                unknown |= missing
+                active = ~missing & (np.asarray(raw, dtype=object) == 1)
+                bundled[active] = member
+            bundled[(bundled == "(none)") & unknown] = None
+            logical.append(bundled)
         logical.extend(np.asarray(self._native.date_values(batch, [_saved_scalar(marker) for marker in markers])).T)
         values = np.column_stack(logical)
         result = np.empty(values.shape, dtype=object)
@@ -262,5 +247,5 @@ class _Encoder:
     @property
     def analysis_groups(self):
         groups = [(self.names[i], [raw]) for i,raw in enumerate(self._direct)]
-        groups += [(name, indices) for name,indices in self._groups]
+        groups += [(name, indices) for name,indices,_ in self._bundles]
         return dict(groups)

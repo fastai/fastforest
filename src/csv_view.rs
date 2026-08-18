@@ -37,6 +37,8 @@ impl FromStr for CsvSample {
 pub struct CsvViewOptions {
     pub columns: Vec<String>,
     pub rows: Option<usize>,
+    pub start: usize,
+    pub end: Option<usize>,
     pub sample: Option<CsvSample>,
     pub seed: u64,
 }
@@ -109,6 +111,12 @@ pub fn view_csv(input: impl AsRef<Path>, options: &CsvViewOptions) -> Result<Str
     if options.rows.is_some() && options.sample.is_some() {
         return Err(ForestError::new("rows and sample cannot be used together"));
     }
+    if options.sample.is_some() && (options.start > 0 || options.end.is_some()) {
+        return Err(ForestError::new("start and end cannot be used with sample"));
+    }
+    if options.end.is_some_and(|end| end <= options.start) {
+        return Err(ForestError::new("end must be greater than start"));
+    }
     let mut reader = csv::Reader::from_path(input).map_err(|error| file_error("could not open CSV", error))?;
     let headers = reader.headers().map_err(|error| file_error("could not read CSV headers", error))?.clone();
     let selected = if options.columns.is_empty() {
@@ -142,7 +150,12 @@ pub fn view_csv(input: impl AsRef<Path>, options: &CsvViewOptions) -> Result<Str
                     rows.push((index, values()))
                 }
             }
-            None if options.rows.is_none_or(|limit| index < limit) => rows.push((index, values())),
+            None if index >= options.start
+                && options.end.is_none_or(|end| index < end)
+                && options.rows.is_none_or(|limit| index - options.start < limit) =>
+            {
+                rows.push((index, values()))
+            }
             None => {}
         }
         total += 1;
@@ -162,6 +175,9 @@ pub fn view_csv(input: impl AsRef<Path>, options: &CsvViewOptions) -> Result<Str
         Some(CsvSample::Rows(_)) => writeln!(output, "{} randomly sampled rows from {total}", rows.len()).unwrap(),
         Some(CsvSample::Fraction(fraction)) => {
             writeln!(output, "{} rows sampled at {}% from {total}", rows.len(), significant(fraction * 100.0, 4)).unwrap()
+        }
+        None if options.start > 0 || options.end.is_some() => {
+            writeln!(output, "rows {}..{} from {total}", options.start, options.start + rows.len()).unwrap()
         }
         None if options.rows.is_some() => writeln!(output, "first {} rows from {total}", rows.len()).unwrap(),
         None => {}

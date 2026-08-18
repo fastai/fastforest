@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use arrow_array::types::{Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type};
 use arrow_array::{
@@ -83,6 +86,7 @@ pub(crate) enum RawColumn {
     Numeric(Vec<Option<f32>>),
     Text(Vec<Option<String>>),
     Categorical { codes: Vec<i32>, categories: Arc<[Option<String>]>, null_value: Option<String> },
+    Bundle { codes: Vec<Option<u32>>, categories: Arc<[String]> },
 }
 
 impl RawColumn {
@@ -91,6 +95,7 @@ impl RawColumn {
             Self::Numeric(values) => values.len(),
             Self::Text(values) => values.len(),
             Self::Categorical { codes, .. } => codes.len(),
+            Self::Bundle { codes, .. } => codes.len(),
         }
     }
 
@@ -104,6 +109,7 @@ impl RawColumn {
     fn into_simple(self) -> Self {
         match self {
             Self::Categorical { codes, categories, null_value } => Self::Text(Self::expand_categories(codes, categories, null_value)),
+            Self::Bundle { .. } => self,
             simple => simple,
         }
     }
@@ -116,6 +122,7 @@ impl RawColumn {
                 .iter()
                 .map(|code| if *code < 0 { null_value.is_none() } else { categories.get(*code as usize).is_none_or(Option::is_none) })
                 .collect(),
+            Self::Bundle { codes, .. } => codes.iter().map(Option::is_none).collect(),
         }
     }
 }
@@ -123,7 +130,6 @@ impl RawColumn {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Encoding {
     Ordered,
-    Dummy(u32),
     Missing,
 }
 
@@ -131,6 +137,7 @@ pub enum Encoding {
 enum Values {
     Numeric(Vec<f32>),
     Text(Vec<String>),
+    Categorical(Vec<String>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -160,14 +167,14 @@ impl Column {
     pub fn numeric_values(&self) -> &[f32] {
         match &self.values {
             Values::Numeric(values) => values,
-            Values::Text(_) => &[],
+            Values::Text(_) | Values::Categorical(_) => &[],
         }
     }
 
     pub fn text_values(&self) -> &[String] {
         match &self.values {
             Values::Numeric(_) => &[],
-            Values::Text(values) => values,
+            Values::Text(values) | Values::Categorical(values) => values,
         }
     }
 
@@ -224,7 +231,7 @@ pub struct Encoder {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum InputColumn {
     Direct(usize),
-    OneHot { indices: Vec<usize>, categories: Vec<String> },
+    Bundle { indices: Vec<usize>, categories: Vec<String> },
     DatePart { index: usize, format: String, part: u8 },
 }
 
@@ -432,33 +439,145 @@ fn validate_rows(columns: &[RawColumn], names: &[String]) -> Result<usize, Fores
     Ok(rows)
 }
 
-fn input_layout(
-    names: &[String], groups: &[(String, Vec<usize>)], date_parts: &[(usize, String, u8, String)],
-) -> Result<(Vec<InputColumn>, Vec<String>), ForestError> {
-    let mut grouped = vec![false; names.len()];
-    for (group, indices) in groups {
-        if indices.len() < 2 {
-            return Err(invalid(format!("one-hot group {group:?} must contain at least two columns")));
-        }
-        for &index in indices {
-            if index >= names.len() {
-                return Err(invalid(format!("one-hot group {group:?} contains an out-of-range column")));
+fn indicator_bit(value: f32) -> Option<bool> {
+    if value == 0. {
+        Some(false)
+    } else if value == 1. {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn binary_sample(column: &RawColumn, sample: &[usize]) -> Option<Vec<bool>> {
+    let mut seen = [false; 2];
+    let mut record = |active: bool| {
+        seen[usize::from(active)] = true;
+        active
+    };
+    let sampled = match column {
+        RawColumn::Numeric(values) => {
+            for value in values {
+                record(indicator_bit((*value)?)?);
             }
-            if std::mem::replace(&mut grouped[index], true) {
-                return Err(invalid(format!("column {:?} belongs to more than one one-hot group", names[index])));
+            sample.iter().map(|&row| indicator_bit(values[row].unwrap()).unwrap()).collect()
+        }
+        RawColumn::Text(values) => {
+            for value in values {
+                record(indicator_bit(value.as_ref()?.parse().ok()?)?);
+            }
+            sample.iter().map(|&row| indicator_bit(values[row].as_ref().unwrap().parse().unwrap()).unwrap()).collect()
+        }
+        RawColumn::Categorical { codes, categories, null_value } => {
+            let parsed: Option<Vec<_>> =
+                categories.iter().map(|value| value.as_ref().and_then(|value| value.parse().ok()).and_then(indicator_bit)).collect();
+            let parsed = parsed?;
+            let parsed_null = null_value.as_ref().and_then(|value| value.parse().ok()).and_then(indicator_bit);
+            let value = |row: usize| {
+                let code = codes[row];
+                if code < 0 { parsed_null } else { parsed.get(code as usize).copied() }
+            };
+            for row in 0..codes.len() {
+                record(value(row)?);
+            }
+            sample.iter().map(|&row| value(row).unwrap()).collect()
+        }
+        RawColumn::Bundle { .. } => return None,
+    };
+    (seen[0] && seen[1]).then_some(sampled)
+}
+
+fn bundle_prefix(names: &[String]) -> String {
+    let Some(first) = names.first() else { return String::new() };
+    let mut prefix = first.clone();
+    for name in &names[1..] {
+        let bytes = prefix.chars().zip(name.chars()).take_while(|(left, right)| left == right).map(|(value, _)| value.len_utf8()).sum();
+        prefix.truncate(bytes);
+    }
+    prefix.trim_end_matches(|value: char| value.is_ascii_digit() || matches!(value, '_' | '-' | '.' | ' ')).to_owned()
+}
+
+fn automatic_bundles(
+    columns: &[RawColumn], names: &[String], excluded: &[bool], seed: Option<u64>,
+) -> Vec<(String, Vec<usize>, Vec<String>)> {
+    let rows = columns[0].len();
+    let sample = crate::forest::uniform_sample_indices(rows, rows.min(10_000), seed, 0xb3e7_68d1);
+    let candidates: Vec<_> = columns
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !excluded[*index])
+        .filter_map(|(index, column)| binary_sample(column, &sample).map(|values| (index, values)))
+        .collect();
+    let mut conflicts: Vec<HashSet<usize>> = (0..candidates.len()).map(|_| HashSet::new()).collect();
+    for row in 0..sample.len() {
+        let active: Vec<_> = candidates.iter().enumerate().filter_map(|(index, (_, values))| values[row].then_some(index)).collect();
+        for (position, &left) in active.iter().enumerate() {
+            for &right in &active[position + 1..] {
+                conflicts[left].insert(right);
+                conflicts[right].insert(left);
             }
         }
     }
-    let mut date_columns = vec![false; names.len()];
+    let mut order: Vec<_> = (0..candidates.len()).collect();
+    order.sort_unstable_by_key(|&index| (std::cmp::Reverse(conflicts[index].len()), candidates[index].0));
+    let mut colors: Vec<Vec<usize>> = Vec::new();
+    for candidate in order {
+        if let Some(color) = colors.iter_mut().find(|color| color.iter().all(|member| !conflicts[candidate].contains(member))) {
+            color.push(candidate);
+        } else {
+            colors.push(vec![candidate]);
+        }
+    }
+    let mut used: HashSet<_> = names.iter().cloned().collect();
+    let mut fallback = 1;
+    let mut bundles = Vec::new();
+    for mut color in colors {
+        if color.len() < 2 {
+            continue;
+        }
+        let covered = (0..sample.len()).filter(|&row| color.iter().any(|&candidate| candidates[candidate].1[row])).count();
+        if covered * 2 <= sample.len() {
+            continue;
+        }
+        color.sort_unstable_by_key(|&candidate| {
+            let active = candidates[candidate].1.iter().filter(|value| **value).count();
+            (active, candidates[candidate].0)
+        });
+        let indices: Vec<_> = color.iter().map(|&candidate| candidates[candidate].0).collect();
+        let categories: Vec<_> = indices.iter().map(|&index| names[index].clone()).collect();
+        let mut name = bundle_prefix(&categories);
+        if name.is_empty() || used.contains(&name) {
+            loop {
+                name = format!("bundle_{fallback}");
+                fallback += 1;
+                if !used.contains(&name) {
+                    break;
+                }
+            }
+        }
+        used.insert(name.clone());
+        bundles.push((name, indices, categories));
+    }
+    bundles.sort_unstable_by_key(|(_, indices, _)| *indices.iter().min().unwrap());
+    bundles
+}
+
+fn input_layout(
+    names: &[String], bundles: &[(String, Vec<usize>, Vec<String>)], date_parts: &[(usize, String, u8, String)],
+) -> Result<(Vec<InputColumn>, Vec<String>), ForestError> {
+    let mut grouped = vec![false; names.len()];
     for (index, _, _, _) in date_parts {
         if *index >= names.len() {
             return Err(invalid("date column is out of range"));
         }
-        if grouped[*index] && !date_columns[*index] {
-            return Err(invalid(format!("column {:?} cannot be both grouped and expanded as a date", names[*index])));
-        }
         grouped[*index] = true;
-        date_columns[*index] = true;
+    }
+    for (bundle, indices, _) in bundles {
+        for &index in indices {
+            if index >= names.len() || std::mem::replace(&mut grouped[index], true) {
+                return Err(invalid(format!("automatic bundle {bundle:?} contains an unavailable column")));
+            }
+        }
     }
     let mut input_columns = Vec::new();
     let mut logical_names = Vec::new();
@@ -468,12 +587,9 @@ fn input_layout(
             logical_names.push(name.clone());
         }
     }
-    for (group, indices) in groups {
-        input_columns.push(InputColumn::OneHot {
-            indices: indices.clone(),
-            categories: indices.iter().map(|index| names[*index].clone()).collect(),
-        });
-        logical_names.push(group.clone());
+    for (bundle, indices, categories) in bundles {
+        input_columns.push(InputColumn::Bundle { indices: indices.clone(), categories: categories.clone() });
+        logical_names.push(bundle.clone());
     }
     for (index, format, part, name) in date_parts {
         input_columns.push(InputColumn::DatePart { index: *index, format: format.clone(), part: *part });
@@ -483,7 +599,7 @@ fn input_layout(
     unique.sort_unstable();
     unique.dedup();
     if unique.len() != logical_names.len() {
-        return Err(invalid("one-hot group and feature names must be unique"));
+        return Err(invalid("automatic bundle and feature names must be unique"));
     }
     Ok((input_columns, logical_names))
 }
@@ -503,20 +619,9 @@ fn date_layout(names: &[String], date_columns: &[(usize, String)]) -> Result<Vec
 }
 
 #[cfg(feature = "python")]
-pub fn detect_dates(
-    batch: &RecordBatch, markers: &[SavedValue], groups: &[(String, Vec<usize>)], seed: Option<u64>,
-) -> Result<Vec<(usize, String)>, ForestError> {
+pub fn detect_dates(batch: &RecordBatch, markers: &[SavedValue], seed: Option<u64>) -> Result<Vec<(usize, String)>, ForestError> {
     if batch.num_columns() != markers.len() {
         return Err(invalid("missing_values must have one value per column"));
-    }
-    let mut grouped = vec![false; batch.num_columns()];
-    for (name, indices) in groups {
-        for &index in indices {
-            let Some(value) = grouped.get_mut(index) else {
-                return Err(invalid(format!("one-hot group {name:?} contains an out-of-range column")));
-            };
-            *value = true;
-        }
     }
     let sample = crate::forest::uniform_sample_indices(batch.num_rows(), batch.num_rows().min(200), seed, 0x2d4a_7f18);
     let formats = date_formats();
@@ -526,9 +631,6 @@ pub fn detect_dates(
         .zip(markers)
         .enumerate()
         .map(|(column, (array, marker))| {
-            if grouped[column] {
-                return Ok(None);
-            }
             let mut candidates = formats.clone();
             let mut observed = false;
             for &row in &sample {
@@ -570,40 +672,41 @@ fn parse_numeric(values: &[Option<String>], name: &str) -> Result<Option<Vec<Opt
     Ok(Some(parsed))
 }
 
-fn indicator_values(raw: RawColumn, group: &str) -> Result<Vec<Option<f32>>, ForestError> {
+fn indicator_values(raw: RawColumn, name: &str) -> Result<Vec<Option<f32>>, ForestError> {
     match raw.into_simple() {
         RawColumn::Numeric(values) => Ok(values),
-        RawColumn::Text(values) => parse_numeric(&values, group)?
-            .ok_or_else(|| invalid(format!("one-hot group {group:?} must contain only numeric indicator columns"))),
-        RawColumn::Categorical { .. } => unreachable!(),
+        RawColumn::Text(values) => {
+            parse_numeric(&values, name)?.ok_or_else(|| invalid(format!("bundle {name:?} must contain only numeric indicator columns")))
+        }
+        RawColumn::Categorical { .. } | RawColumn::Bundle { .. } => unreachable!(),
     }
 }
 
-fn collapse_one_hot(columns: Vec<RawColumn>, categories: Vec<String>, group: &str) -> Result<RawColumn, ForestError> {
-    let indicators: Result<Vec<_>, _> = columns.into_iter().map(|column| indicator_values(column, group)).collect();
+fn collapse_bundle(columns: Vec<RawColumn>, categories: Vec<String>, name: &str) -> Result<RawColumn, ForestError> {
+    let indicators: Result<Vec<_>, _> = columns.into_iter().map(|column| indicator_values(column, name)).collect();
     let indicators = indicators?;
     let rows = indicators.first().map_or(0, Vec::len);
     let codes: Result<Vec<_>, _> = (0..rows)
         .into_par_iter()
         .map(|row| {
             let mut active = None;
-            for (category, values) in indicators.iter().enumerate() {
-                let Some(value) = values[row] else {
-                    return Err(invalid(format!("one-hot group {group:?} has a missing value at row {row}")));
-                };
-                if value != 0.0 && value != 1.0 {
-                    return Err(invalid(format!("one-hot group {group:?} has a value other than 0 or 1 at row {row}")));
-                }
-                if value == 1.0 && active.replace(category).is_some() {
-                    return Err(invalid(format!("one-hot group {group:?} has multiple active categories at row {row}")));
+            let mut missing = false;
+            for (member, values) in indicators.iter().enumerate() {
+                match values[row] {
+                    None => missing = true,
+                    Some(0.) => {}
+                    Some(1.) if active.is_none() => active = Some(member as u32 + 1),
+                    Some(1.) => {}
+                    Some(_) => return Err(invalid(format!("bundle {name:?} has a value other than 0 or 1 at row {row}"))),
                 }
             }
-            active
-                .map(|category| category as i32)
-                .ok_or_else(|| invalid(format!("one-hot group {group:?} has no active category at row {row}")))
+            Ok(active.or((!missing).then_some(0)))
         })
         .collect();
-    Ok(RawColumn::Categorical { codes: codes?, categories: categories.into_iter().map(Some).collect::<Vec<_>>().into(), null_value: None })
+    let mut values = Vec::with_capacity(categories.len() + 1);
+    values.push("(none)".to_owned());
+    values.extend(categories);
+    Ok(RawColumn::Bundle { codes: codes?, categories: values.into() })
 }
 
 fn parse_date(value: &str, format: &str) -> Option<NaiveDateTime> {
@@ -636,7 +739,7 @@ fn parse_dates(raw: &RawColumn, format: &str, name: &str) -> Result<Vec<Option<N
                 })
                 .collect()
         }
-        RawColumn::Numeric(_) => Err(invalid(format!("date column {name:?} must contain strings"))),
+        RawColumn::Numeric(_) | RawColumn::Bundle { .. } => Err(invalid(format!("date column {name:?} must contain strings"))),
     }
 }
 
@@ -682,8 +785,8 @@ fn arrange_columns(
         .zip(logical_names)
         .map(|(source, name)| match source {
             InputColumn::Direct(index) => Ok(columns[*index].take().unwrap()),
-            InputColumn::OneHot { indices, categories } => {
-                collapse_one_hot(indices.iter().map(|index| columns[*index].take().unwrap()).collect(), categories.clone(), name)
+            InputColumn::Bundle { indices, categories } => {
+                collapse_bundle(indices.iter().map(|index| columns[*index].take().unwrap()).collect(), categories.clone(), name)
             }
             InputColumn::DatePart { index, part, .. } => {
                 Ok(RawColumn::Numeric(dates[index].iter().map(|value| value.map(|value| date_value(value, *part))).collect()))
@@ -740,7 +843,7 @@ fn text_parts(values: Vec<Option<String>>) -> Parts<String> {
     Parts { unique, codes, counts, median }
 }
 
-fn finish_column(name: String, prepared: PreparedColumn, max_dummy_cardinality: usize) -> FittedColumn {
+fn finish_column(name: String, prepared: PreparedColumn) -> FittedColumn {
     let PreparedColumn { values, mut codes, counts, median_code, median_numeric, median_text, missing, all_int } = prepared;
     let had_missing = missing.iter().any(|value| *value);
     if had_missing {
@@ -750,22 +853,14 @@ fn finish_column(name: String, prepared: PreparedColumn, max_dummy_cardinality: 
     let mut encodings = Vec::new();
     let mut ranked = Vec::new();
     let mut bounds = Vec::new();
-    if cardinality == 1 {
-    } else if cardinality <= max_dummy_cardinality {
-        let first = usize::from(cardinality == 2);
-        for category in first as u32..cardinality as u32 {
-            encodings.push(Encoding::Dummy(category));
-            ranked.push(codes.iter().map(|code| u32::from(*code == category)).collect());
-            bounds.push(vec![0.0, 0.0]);
-        }
-    } else {
+    if cardinality > 1 {
         encodings.push(Encoding::Ordered);
         ranked.push(codes);
         let cutoff = match &values {
             Values::Numeric(unique) => {
                 unique.iter().enumerate().map(|(index, value)| if index == 0 { *value } else { unique[index - 1] }).collect()
             }
-            Values::Text(unique) => (0..unique.len()).map(|index| index.saturating_sub(1) as f32).collect(),
+            Values::Text(unique) | Values::Categorical(unique) => (0..unique.len()).map(|index| index.saturating_sub(1) as f32).collect(),
         };
         bounds.push(cutoff);
     }
@@ -777,8 +872,37 @@ fn finish_column(name: String, prepared: PreparedColumn, max_dummy_cardinality: 
     FittedColumn { column: Column { name, values, all_int, median_numeric, median_text, had_missing, encodings }, ranked, bounds }
 }
 
-fn fit_column(raw: RawColumn, name: String, max_dummy_cardinality: usize) -> Result<FittedColumn, ForestError> {
+fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError> {
     let raw = match raw {
+        RawColumn::Bundle { codes, categories } => {
+            let mut counts = vec![0; categories.len()];
+            for code in codes.iter().flatten() {
+                counts[*code as usize] += 1;
+            }
+            let observed = codes.iter().flatten().count();
+            let mut cumulative = 0;
+            let median_code = counts
+                .iter()
+                .position(|count| {
+                    cumulative += count;
+                    cumulative > observed / 2
+                })
+                .unwrap_or(0) as u32;
+            let missing = codes.iter().map(Option::is_none).collect();
+            return Ok(finish_column(
+                name,
+                PreparedColumn {
+                    values: Values::Categorical(categories.to_vec()),
+                    codes: codes.into_iter().map(|code| code.unwrap_or(u32::MAX)).collect(),
+                    counts,
+                    median_code,
+                    median_numeric: None,
+                    median_text: Some(categories[median_code as usize].clone()),
+                    missing,
+                    all_int: false,
+                },
+            ));
+        }
         RawColumn::Categorical { codes, categories, null_value } => {
             let labels: Vec<_> = codes
                 .iter()
@@ -835,7 +959,6 @@ fn fit_column(raw: RawColumn, name: String, max_dummy_cardinality: usize) -> Res
                     missing,
                     all_int: false,
                 },
-                max_dummy_cardinality,
             ));
         }
         raw => raw,
@@ -843,7 +966,7 @@ fn fit_column(raw: RawColumn, name: String, max_dummy_cardinality: usize) -> Res
     let observed = match &raw {
         RawColumn::Numeric(values) => values.iter().flatten().count(),
         RawColumn::Text(values) => values.iter().flatten().count(),
-        RawColumn::Categorical { .. } => unreachable!(),
+        RawColumn::Categorical { .. } | RawColumn::Bundle { .. } => unreachable!(),
     };
     if observed == 0 {
         return Ok(FittedColumn {
@@ -880,11 +1003,10 @@ fn fit_column(raw: RawColumn, name: String, max_dummy_cardinality: usize) -> Res
                         missing,
                         all_int: false,
                     },
-                    max_dummy_cardinality,
                 ));
             }
         },
-        RawColumn::Categorical { .. } => unreachable!(),
+        RawColumn::Categorical { .. } | RawColumn::Bundle { .. } => unreachable!(),
     };
     let values = numeric.unwrap();
     let missing: Vec<_> = values.iter().map(Option::is_none).collect();
@@ -903,7 +1025,6 @@ fn fit_column(raw: RawColumn, name: String, max_dummy_cardinality: usize) -> Res
             missing,
             all_int,
         },
-        max_dummy_cardinality,
     ))
 }
 
@@ -924,13 +1045,12 @@ fn assemble<T: Copy + Default + Send + Sync>(features: &[Vec<T>], rows: usize) -
 
 impl Encoder {
     pub fn fit_arrow(
-        batch: &RecordBatch, markers: &[SavedValue], max_dummy_cardinality: usize, allow_new_missing: bool,
-        one_hot_groups: Vec<(String, Vec<usize>)>, date_columns: Vec<(usize, String)>,
+        batch: &RecordBatch, markers: &[SavedValue], allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
     ) -> Result<(Self, Array2<u32>), ForestError> {
         let names = batch.schema().fields().iter().map(|field| field.name().clone()).collect();
         let date_indices: Vec<_> = date_columns.iter().map(|(index, _)| *index).collect();
         let columns = arrow_columns(batch, markers, &date_indices)?;
-        Self::fit(columns, names, max_dummy_cardinality, allow_new_missing, one_hot_groups, date_columns)
+        Self::fit(columns, names, allow_new_missing, date_columns, seed)
     }
 
     pub fn transform_arrow(&self, batch: &RecordBatch, markers: &[SavedValue]) -> Result<Array2<f32>, ForestError> {
@@ -962,11 +1082,10 @@ impl Encoder {
                     if !value.is_finite() {
                         return Err(invalid(format!("column {:?} contains a non-finite numeric value", column.name)));
                     }
-                    let Values::Numeric(unique) = &column.values else { unreachable!() };
+                    let Values::Numeric(_) = &column.values else { unreachable!() };
                     for encoding in &column.encodings {
                         output[encoded] = match encoding {
                             Encoding::Ordered => value,
-                            Encoding::Dummy(category) => f32::from(value == unique[*category as usize]),
                             Encoding::Missing => unreachable!(),
                         };
                         encoded += 1;
@@ -994,22 +1113,29 @@ impl Encoder {
         {
             return Err(invalid("saved preprocessing feature mappings are invalid"));
         }
+        for source in &self.input_columns {
+            if let InputColumn::Bundle { indices, categories } = source
+                && (indices.len() < 2 || indices.len() != categories.len() || indices.iter().any(|&index| index >= self.input_names.len()))
+            {
+                return Err(invalid("saved automatic bundle is invalid"));
+            }
+        }
         Ok(())
     }
 
     pub(crate) fn fit(
-        columns: Vec<RawColumn>, names: Vec<String>, max_dummy_cardinality: usize, allow_new_missing: bool,
-        one_hot_groups: Vec<(String, Vec<usize>)>, date_columns: Vec<(usize, String)>,
+        columns: Vec<RawColumn>, names: Vec<String>, allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
     ) -> Result<(Self, Array2<u32>), ForestError> {
-        if max_dummy_cardinality == 0 {
-            return Err(invalid("max_dummy_cardinality must be a positive integer"));
-        }
         let rows = validate_rows(&columns, &names)?;
         let date_parts = date_layout(&names, &date_columns)?;
-        let (input_columns, logical_names) = input_layout(&names, &one_hot_groups, &date_parts)?;
+        let mut excluded = vec![false; names.len()];
+        for (index, _, _, _) in &date_parts {
+            excluded[*index] = true;
+        }
+        let bundles = automatic_bundles(&columns, &names, &excluded, seed);
+        let (input_columns, logical_names) = input_layout(&names, &bundles, &date_parts)?;
         let columns = arrange_columns(columns, &input_columns, &logical_names)?;
-        let fitted: Result<Vec<_>, _> =
-            columns.into_par_iter().zip(logical_names).map(|(column, name)| fit_column(column, name, max_dummy_cardinality)).collect();
+        let fitted: Result<Vec<_>, _> = columns.into_par_iter().zip(logical_names).map(|(column, name)| fit_column(column, name)).collect();
         let fitted = fitted?;
         let mut features = Vec::new();
         let mut cutoff_values = Vec::new();
@@ -1107,6 +1233,17 @@ impl Encoder {
         result
     }
 
+    pub fn bundle_layout(&self) -> Vec<(String, Vec<usize>, Vec<String>)> {
+        self.input_columns
+            .iter()
+            .zip(&self.columns)
+            .filter_map(|(source, column)| match source {
+                InputColumn::Bundle { indices, categories } => Some((column.name.clone(), indices.clone(), categories.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn date_values_arrow(&self, batch: &RecordBatch, markers: &[SavedValue]) -> Result<Array2<f32>, ForestError> {
         let dates = self.date_columns();
         if dates.is_empty() {
@@ -1156,7 +1293,7 @@ fn numeric_input(raw: RawColumn, fitted: &Column) -> Result<Vec<Option<f32>>, Fo
         RawColumn::Text(values) => {
             parse_numeric(&values, &fitted.name)?.ok_or_else(|| invalid(format!("column {:?} was numeric during training", fitted.name)))
         }
-        RawColumn::Categorical { .. } => unreachable!(),
+        RawColumn::Categorical { .. } | RawColumn::Bundle { .. } => unreachable!(),
     }
 }
 
@@ -1167,7 +1304,7 @@ fn text_input(raw: RawColumn) -> Vec<Option<String>> {
             .into_iter()
             .map(|value| value.map(|value| if value.fract() == 0.0 { format!("{value:.1}") } else { value.to_string() }))
             .collect(),
-        RawColumn::Categorical { .. } => unreachable!(),
+        RawColumn::Categorical { .. } | RawColumn::Bundle { .. } => unreachable!(),
     }
 }
 
@@ -1183,7 +1320,7 @@ fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) ->
         return Err(invalid(format!("column {:?} has a missing value at row {row}, but had none during training", fitted.name)));
     }
     let result = match &fitted.values {
-        Values::Numeric(unique) => {
+        Values::Numeric(_) => {
             let mut values = numeric_input(raw, fitted)?;
             if let Some(median) = fitted.median_numeric {
                 values.iter_mut().filter(|value| value.is_none()).for_each(|value| *value = Some(median));
@@ -1193,9 +1330,6 @@ fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) ->
                 .iter()
                 .map(|encoding| match encoding {
                     Encoding::Ordered => values.iter().map(|value| value.unwrap()).collect(),
-                    Encoding::Dummy(category) => {
-                        values.iter().map(|value| f32::from(value.is_some_and(|value| value == unique[*category as usize]))).collect()
-                    }
                     Encoding::Missing => missing.iter().map(|missing| f32::from(*missing)).collect(),
                 })
                 .collect()
@@ -1217,10 +1351,21 @@ fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) ->
                 .iter()
                 .map(|encoding| match encoding {
                     Encoding::Ordered => codes.clone(),
-                    Encoding::Dummy(category) => values
-                        .iter()
-                        .map(|value| f32::from(value.as_ref().is_some_and(|value| value == &unique[*category as usize])))
-                        .collect(),
+                    Encoding::Missing => missing.iter().map(|missing| f32::from(*missing)).collect(),
+                })
+                .collect()
+        }
+        Values::Categorical(unique) => {
+            let RawColumn::Bundle { codes, .. } = raw else {
+                return Err(invalid(format!("column {:?} expected bundled input", fitted.name)));
+            };
+            let median = fitted.median_text.as_ref().and_then(|value| unique.iter().position(|candidate| candidate == value)).unwrap_or(0);
+            let codes: Vec<_> = codes.into_iter().map(|code| code.unwrap_or(median as u32)).collect();
+            fitted
+                .encodings
+                .iter()
+                .map(|encoding| match encoding {
+                    Encoding::Ordered => codes.iter().map(|code| *code as f32).collect(),
                     Encoding::Missing => missing.iter().map(|missing| f32::from(*missing)).collect(),
                 })
                 .collect()

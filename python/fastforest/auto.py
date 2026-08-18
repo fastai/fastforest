@@ -157,8 +157,7 @@ class AutoForest(_Auto, FastForest):
         n_rows,pool_indices,X,y = _fit_pool(X, y, trees, self.bootstrap_fraction,
             self.bootstrap_max, replacement, self.autogrow, fit_seed)
         target = _vector(y, indices=pool_indices)
-        encoder = _Encoder(self.missing_values, self.max_dummy_cardinality, self.one_hot_groups,
-            self.date_columns, self.allow_new_missing, fit_seed)
+        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed)
         encoded = encoder.fit_transform(X, pool_indices)
         self.replacement_ = replacement
         fit = self._grow if self.autogrow else self._fit_once
@@ -180,8 +179,7 @@ class AutoForestClassifier(_Auto, FastForestClassifier):
         self.classes_,target = _class_vector(y, pool_indices)
         self.n_classes_ = len(self.classes_)
         outputs = max(1,self.n_classes_-1)
-        encoder = _Encoder(self.missing_values, self.max_dummy_cardinality, self.one_hot_groups,
-            self.date_columns, self.allow_new_missing, fit_seed)
+        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed)
         encoded = encoder.fit_transform(X, pool_indices)
         self.replacement_ = replacement
         fit = self._grow if self.autogrow else self._fit_once

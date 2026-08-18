@@ -51,13 +51,9 @@ struct FitCommand {
     #[arg(long)]
     max_features: Option<String>,
     #[arg(long)]
-    max_dummy_cardinality: Option<usize>,
-    #[arg(long)]
     allow_new_missing: bool,
     #[arg(long = "missing-value")]
     missing_values: Vec<String>,
-    #[arg(long = "one-hot-group")]
-    one_hot_groups: Vec<String>,
     #[arg(long = "date-column")]
     date_columns: Vec<String>,
 }
@@ -93,6 +89,10 @@ struct ViewCommand {
     cols: Vec<String>,
     #[arg(long, conflicts_with = "sample")]
     rows: Option<usize>,
+    #[arg(long, default_value_t = 0, conflicts_with = "sample")]
+    start: usize,
+    #[arg(long, conflicts_with = "sample")]
+    end: Option<usize>,
     #[arg(long, conflicts_with = "rows")]
     sample: Option<CsvSample>,
     #[arg(long, default_value_t = 42)]
@@ -172,14 +172,6 @@ fn fit_options(command: FitCommand) -> Result<(PathBuf, PathBuf, FileFitOptions)
         .iter()
         .map(|value| parse_assignment(value, "missing-value").map(|(name, value)| (name, SavedValue { kind: 5, value })))
         .collect::<Result<_, _>>()?;
-    let one_hot_groups = command
-        .one_hot_groups
-        .iter()
-        .map(|value| {
-            parse_assignment(value, "one-hot-group")
-                .map(|(name, columns)| (name, columns.split(',').filter(|column| !column.is_empty()).map(str::to_owned).collect()))
-        })
-        .collect::<Result<_, _>>()?;
     let date_columns = command.date_columns.iter().map(|value| parse_assignment(value, "date-column")).collect::<Result<_, _>>()?;
     let task = match command.task {
         TaskArg::Regression => Task::Regression,
@@ -214,12 +206,8 @@ fn fit_options(command: FitCommand) -> Result<(PathBuf, PathBuf, FileFitOptions)
     if let Some(value) = command.max_features.as_deref() {
         options.max_features = parse_max_features(value)?
     }
-    if let Some(value) = command.max_dummy_cardinality {
-        options.max_dummy_cardinality = value
-    }
     options.allow_new_missing = command.allow_new_missing;
     options.missing_values = missing_values;
-    options.one_hot_groups = one_hot_groups;
     options.date_columns = date_columns;
     Ok((command.input, command.output, options))
 }
@@ -269,7 +257,17 @@ where
     };
     print!(
         "{}",
-        view_csv(command.input, &CsvViewOptions { columns: command.cols, rows: command.rows, sample: command.sample, seed: command.seed })?
+        view_csv(
+            command.input,
+            &CsvViewOptions {
+                columns: command.cols,
+                rows: command.rows,
+                start: command.start,
+                end: command.end,
+                sample: command.sample,
+                seed: command.seed,
+            }
+        )?
     );
     Ok(())
 }

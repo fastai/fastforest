@@ -18,8 +18,6 @@ def render_readme():
             [DatasetView(name) for name in ("california", "concrete", "diamonds", "allstate", "diabetes", "bluebook", "walmart", "ashrae")], REGRESSION),
         "BENCHMARK_CLASSIFICATION": mk_table(classification,
             [DatasetView(name) for name in ("bank", "click", "shuttle", "airlines", "higgs", "sf_police", "kddcup99")], CLASSIFICATION),
-        "GROUPED_COVERTYPE": mk_table(classification,
-            [DatasetView("covertype_group", comparison="covertype_bin")], CLASSIFICATION),
     }
     readme = (root/"README.tmpl").read_text()
     for name,table in tables.items():

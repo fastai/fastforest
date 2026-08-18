@@ -24,16 +24,16 @@ def _ashrae_sample(data_home, n=40_000):
     X["timestamp"] = pd.Categorical(X.timestamp, ordered=True)
     missing = {name:np.nan for name in ("year_built", "floor_count", "air_temperature", "cloud_coverage", "dew_temperature",
         "precip_depth_1_hr", "sea_level_pressure", "wind_direction", "wind_speed")}
-    return X,y,missing,None
+    return X,y,missing
 
 def _dataset_metadata(dataset, rows, data_home):
     dataset = Dataset(dataset)
-    if dataset == Dataset.ashrae: X,y,missing,groups = _ashrae_sample(data_home)
+    if dataset == Dataset.ashrae: X,y,missing = _ashrae_sample(data_home)
     else:
-        _,X,y,missing,task,groups = load_data(dataset, data_home)
+        _,X,y,missing,task = load_data(dataset, data_home)
         train,_,_ = split_indices(dataset, X, y if task == "classification" else None)
         X,y = _sample(_rows(X, train), np.asarray(y)[train])
-    encoder = _Encoder(missing, one_hot_groups=groups)
+    encoder = _Encoder(missing)
     encoder.fit_transform(X)
     n_dates = len(encoder.date_columns)
     base = encoder.column_info[:-16*n_dates] if n_dates else encoder.column_info
@@ -57,7 +57,7 @@ def _dataset_metadata(dataset, rows, data_home):
         n_binary_cols=int((cardinalities == 2).sum()), n_low_card_cols=int(((cardinalities > 2)&(cardinalities <= 4)).sum()),
         n_high_card_cols=int((cardinalities > 4).sum()), n_constant_cols=int((cardinalities <= 1).sum()),
         n_missing_cols=len(missing or {}), n_observed_missing_cols=sum(col.had_missing for col in base),
-        n_date_cols=n_dates, n_grouped_cols=len(groups or {}), n_classes=n_classes, output_dimensions=max(1,n_classes-1),
+        n_date_cols=n_dates, n_grouped_cols=len(encoder._bundles), n_classes=n_classes, output_dimensions=max(1,n_classes-1),
         majority_fraction=majority_fraction, target_entropy=target_entropy, target_mean=target_mean,
         target_std=target_std, target_unique_fraction=target_unique_fraction)
 
@@ -94,7 +94,7 @@ def _evaluate(data, X, categorical, selection_labels, seed=42):
         for group in evaluation_group[task_rows].unique():
             valid = np.asarray(task_rows & (evaluation_group == group))
             train = np.asarray(task_rows & (evaluation_group != group))
-            model = FastForest(seed=seed, max_dummy_cardinality=20)
+            model = FastForest(seed=seed)
             model.fit(X.loc[train], data.loc[train, "relative_quality"])
             predictions[valid] = model.predict(X.loc[valid])
     columns = ["dataset", "task", "label", "relative_quality"]
@@ -148,7 +148,7 @@ def main(
         for task in ("regression", "classification"):
             task_rows = rows[rows.task == task].reset_index(drop=True)
             data,X = _matrix(task_rows, meta, False, task, None)
-            model = FastForest(seed=seed, n_trees=trees, max_dummy_cardinality=20).fit(X, data.relative_quality)
+            model = FastForest(seed=seed, n_trees=trees).fit(X, data.relative_quality)
             model.save(output/f"{task}_continuous.ffm")
             matrices.append(pd.concat([data[["dataset", "task", "label", "relative_quality"]].reset_index(drop=True),
                 X.reset_index(drop=True)], axis=1))
@@ -181,7 +181,7 @@ def main(
                 mean_regret=group.regret.mean(), improved=int((group.selected_relative < 1).sum()),
                 prediction_mae=np.mean(np.abs(task_predictions.relative_quality-task_predictions.predicted_quality)),
                 mean_rank_correlation=np.nanmean(correlations)))
-            model = FastForest(seed=seed, max_dummy_cardinality=20)
+            model = FastForest(seed=seed)
             model.fit(X, data.relative_quality)
             model.save(output/f"{task}_{encoding}.ffm")
         pd.concat(matrices, ignore_index=True).to_csv(output/f"features_{encoding}.csv", index=False)

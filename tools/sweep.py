@@ -26,20 +26,19 @@ def _boolean(token):
 
 def _feature(token): return "sqrt" if token.lower() == "sqrt" else float(token)
 
-def _setup(task, levels, max_dummy_cardinality):
+def _setup(task, levels):
     cls = FastForestClassifier if task == "classification" else FastForest
     defaults = cls().get_params()
     levels = {name:tuple(defaults[name] if value == "default" else value for value in values) for name,values in levels.items()}
     irrelevant = "split_prior_rows" if task == "classification" else "class_weight_power"
     levels = {name:values for name,values in levels.items() if name != irrelevant}
     baseline = {name:levels[name][0] for name in (*FOREST_PARAMS, "class_weight_power" if task == "classification" else "split_prior_rows")}
-    if max_dummy_cardinality is not None: baseline["max_dummy_cardinality"] = max_dummy_cardinality
     return cls,baseline,levels
 
-def _worker(send, dataset, data_home, max_rows, seed, screen_trees, max_dummy_cardinality, levels):
+def _worker(send, dataset, data_home, max_rows, seed, screen_trees, levels):
     try:
         dataset = Dataset(dataset)
-        _,X,y,missing,task,groups = load_data(dataset, data_home)
+        _,X,y,missing,task = load_data(dataset, data_home)
         y = np.asarray(y, dtype=np.float32 if task == "regression" else None)
         if max_rows is not None and max_rows < len(X):
             selected,_ = train_test_split(np.arange(len(X)), train_size=max_rows, random_state=seed,
@@ -48,8 +47,8 @@ def _worker(send, dataset, data_home, max_rows, seed, screen_trees, max_dummy_ca
         train_idx,valid_idx,split = split_indices(dataset, X, y if task == "classification" else None)
         if dataset == Dataset.walmart_nodate: X = X.drop(columns="Date")
         X_train,X_valid,y_train,y_valid = _rows(X, train_idx),_rows(X, valid_idx),y[train_idx],y[valid_idx]
-        cls,model_args,levels = _setup(task, levels, max_dummy_cardinality)
-        model = cls(**model_args, missing_values=missing, one_hot_groups=groups, seed=seed)
+        cls,model_args,levels = _setup(task, levels)
+        model = cls(**model_args, missing_values=missing, seed=seed)
         suite = forest_suite(model, levels)
         send.send(("ready", (task,len(X),X.shape[1],len(train_idx),len(valid_idx),split,len(suite))))
         send.send(("screen", screen(model, X_train, y_train, suite, screen_trees, seed)))
@@ -65,10 +64,10 @@ def _receive(receive, process, timeout, phase):
     if status == "error": raise RuntimeError(result)
     return status,result
 
-def _run(dataset, data_home, max_rows, seed, screen_trees, load_timeout, screen_timeout, validation_timeout, max_dummy_cardinality, levels):
+def _run(dataset, data_home, max_rows, seed, screen_trees, load_timeout, screen_timeout, validation_timeout, levels):
     context = mp.get_context("spawn")
     receive,send = context.Pipe(False)
-    process = context.Process(target=_worker, args=(send,dataset,data_home,max_rows,seed,screen_trees,max_dummy_cardinality,levels))
+    process = context.Process(target=_worker, args=(send,dataset,data_home,max_rows,seed,screen_trees,levels))
     process.start()
     send.close()
     status,meta = _receive(receive, process, load_timeout, "dataset loading")
@@ -96,7 +95,6 @@ def main(
     cutoff_divisor:str="default", # Model default first; relevant to the random splitter
     random_splitter:str="false",  # Baseline first
     max_features:str="default,0.6,0.75,0.9,1,sqrt", # Task-specific model default first
-    max_dummy_cardinality:int=None,# Largest cardinality expanded to binary features; model default when omitted
     seed:int=42,                   # Sampling and forest seed
     load_timeout:int=180,          # Maximum dataset-loading seconds
     screen_timeout:int=180,        # Maximum eight-tree OOB batch seconds
@@ -122,10 +120,10 @@ def main(
         "max_features":_values(max_features, _feature, "max_features"),
     }
     meta,screen_report,validation_report = _run(str(dataset), data_home, max_rows, seed, screen_trees,
-        load_timeout, screen_timeout, validation_timeout, max_dummy_cardinality, levels)
+        load_timeout, screen_timeout, validation_timeout, levels)
     task,n_rows,n_features,train_rows,valid_rows,split,n_configs = meta
     rows = []
-    cls,model_args,levels = _setup(task, levels, max_dummy_cardinality)
+    cls,model_args,levels = _setup(task, levels)
     suite = forest_suite(cls(**model_args), levels)
     for screened,validated,(label,_,params) in zip(screen_report.results, validation_report.results, suite):
         row = dict(dataset=dataset, task=task, loss="brier" if task == "classification" else "mse", rows=n_rows, features=n_features, train_rows=train_rows,

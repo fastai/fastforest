@@ -18,8 +18,8 @@ use rand::{RngExt, SeedableRng};
 
 use crate::forest::uniform_sample_indices;
 use crate::{
-    ClassifierForest, Config, DEFAULT_MAX_DUMMY_CARDINALITY, Encoder, Forest, ForestError, MaxFeatures, ModelMetadata, SavedModel,
-    SavedValue, plan_fit, resolve_replacement,
+    ClassifierForest, Config, Encoder, Forest, ForestError, MaxFeatures, ModelMetadata, SavedModel, SavedValue, plan_fit,
+    resolve_replacement,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,10 +45,8 @@ pub struct FileFitOptions {
     pub oob: bool,
     pub random_splitter: bool,
     pub max_features: MaxFeatures,
-    pub max_dummy_cardinality: usize,
     pub allow_new_missing: bool,
     pub missing_values: Vec<(String, SavedValue)>,
-    pub one_hot_groups: Vec<(String, Vec<String>)>,
     pub date_columns: Vec<(String, String)>,
 }
 
@@ -77,10 +75,8 @@ impl FileFitOptions {
             oob: config.oob,
             random_splitter: config.random_splitter,
             max_features: config.max_features,
-            max_dummy_cardinality: DEFAULT_MAX_DUMMY_CARDINALITY,
             allow_new_missing: false,
             missing_values: Vec::new(),
-            one_hot_groups: Vec::new(),
             date_columns: Vec::new(),
         }
     }
@@ -106,7 +102,7 @@ fn headers(path: &Path) -> Result<Vec<String>, ForestError> {
 
 fn predictor_layout(
     names: &[String], target: usize, options: &FileFitOptions,
-) -> Result<(Vec<usize>, Vec<String>, ModelMetadata, Vec<(String, Vec<usize>)>, Vec<(usize, String)>), ForestError> {
+) -> Result<(Vec<usize>, Vec<String>, ModelMetadata, Vec<(usize, String)>), ForestError> {
     let sources: Vec<_> = (0..names.len()).filter(|&index| index != target).collect();
     let predictor_names: Vec<_> = sources.iter().map(|&index| names[index].clone()).collect();
     let positions: HashMap<_, _> = predictor_names.iter().enumerate().map(|(index, name)| (name.as_str(), index)).collect();
@@ -117,27 +113,13 @@ fn predictor_layout(
         marker.validate()?;
         markers[index] = marker.clone();
     }
-    let groups: Result<Vec<_>, _> = options
-        .one_hot_groups
-        .iter()
-        .map(|(group, columns)| {
-            let indices: Result<Vec<_>, _> = columns
-                .iter()
-                .map(|name| {
-                    positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("unknown one-hot column {name:?}")))
-                })
-                .collect();
-            Ok((group.clone(), indices?))
-        })
-        .collect();
-    let groups = groups?;
     let mut dates = Vec::new();
     for (name, format) in &options.date_columns {
         let index = positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("unknown date column {name:?}")))?;
         dates.push((index, format.clone()));
     }
-    let metadata = ModelMetadata { markers, one_hot_groups: groups.clone(), date_columns: dates.clone(), parameters: Vec::new() };
-    Ok((sources, predictor_names, metadata, groups, dates))
+    let metadata = ModelMetadata { markers, date_columns: dates.clone(), parameters: Vec::new() };
+    Ok((sources, predictor_names, metadata, dates))
 }
 
 fn target_sample_and_rows(path: &Path, target: usize, seed: Option<u64>) -> Result<(usize, Vec<String>), ForestError> {
@@ -219,10 +201,9 @@ fn fit_config(options: &FileFitOptions, replacement: bool, n_trees: usize, sampl
 
 fn fit_sampled(
     predictors: &RecordBatch, targets: &[Option<SavedValue>], total_rows: usize, options: &FileFitOptions, metadata: ModelMetadata,
-    groups: Vec<(String, Vec<usize>)>, dates: Vec<(usize, String)>,
+    dates: Vec<(usize, String)>,
 ) -> Result<SavedModel, ForestError> {
-    let (encoder, x) =
-        Encoder::fit_arrow(predictors, &metadata.markers, options.max_dummy_cardinality, options.allow_new_missing, groups, dates)?;
+    let (encoder, x) = Encoder::fit_arrow(predictors, &metadata.markers, options.allow_new_missing, dates, options.seed)?;
     let replacement = options.resolved_replacement(total_rows);
     match options.task {
         Task::Regression => {
@@ -306,11 +287,11 @@ pub fn fit_csv(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Saved
         estimated_outputs,
     )?;
     let selected = uniform_sample_indices(n_rows, estimated.pool_rows, options.seed, 2);
-    let (sources, predictor_names, metadata, groups, dates) = predictor_layout(&names, target, options)?;
+    let (sources, predictor_names, metadata, dates) = predictor_layout(&names, target, options)?;
     let (batch, targets) = selected_csv_rows(path, &selected, &sources, target, &predictor_names)?;
     let targets: Vec<_> =
         targets.into_iter().map(|value| if value.is_empty() { None } else { Some(SavedValue { kind: 5, value }) }).collect();
-    fit_sampled(&batch, &targets, n_rows, options, metadata, groups, dates)
+    fit_sampled(&batch, &targets, n_rows, options, metadata, dates)
 }
 
 fn prediction_columns(
@@ -520,7 +501,7 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
     )?;
     let mut selected = uniform_sample_indices(rows, estimated.pool_rows, options.seed, 2);
     selected.sort_unstable();
-    let (sources, _, metadata, groups, dates) = predictor_layout(&names, target, options)?;
+    let (sources, _, metadata, dates) = predictor_layout(&names, target, options)?;
     let mut batches = Vec::new();
     let mut reader = arrow_reader(path)?;
     let mut global_row = 0;
@@ -553,7 +534,7 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
         (0..selected_batch.num_rows()).map(|row| arrow_saved_value(selected_batch.column(target).as_ref(), row)).collect();
     let targets = targets?;
     let predictors = selected_batch.project(&sources).map_err(|error| file_error("could not select predictor columns", error))?;
-    fit_sampled(&predictors, &targets, rows, options, metadata, groups, dates)
+    fit_sampled(&predictors, &targets, rows, options, metadata, dates)
 }
 
 fn arrow_output_writer(path: &Path, schema: Arc<Schema>) -> Result<FileWriter<File>, ForestError> {

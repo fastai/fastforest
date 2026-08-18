@@ -9,8 +9,8 @@ use pyo3::types::PyDict;
 
 use crate::preprocessing::detect_dates;
 use crate::{
-    ClassifierForest, Config, DEFAULT_MAX_DUMMY_CARDINALITY, Encoder, Encoding, Forest, ForestError, MaxFeatures, ModelMetadata,
-    SavedModel, SavedValue, plan_fit, resolve_replacement,
+    ClassifierForest, Config, Encoder, Encoding, Forest, ForestError, MaxFeatures, ModelMetadata, SavedModel, SavedValue, plan_fit,
+    resolve_replacement,
 };
 const PREDICTION_BLOCK_BYTES: usize = 64 << 20;
 
@@ -76,7 +76,6 @@ fn py_defaults(py: Python<'_>, classification: bool) -> PyResult<Py<PyDict>> {
     }
     result.set_item("seed", py.None())?;
     result.set_item("oob", config.oob)?;
-    result.set_item("max_dummy_cardinality", DEFAULT_MAX_DUMMY_CARDINALITY)?;
     result.set_item("allow_new_missing", false)?;
     Ok(result.unbind())
 }
@@ -88,7 +87,7 @@ fn py_resolve_replacement(n_rows: usize, replacement: Option<bool>, classificati
 
 type PyExplanation<'py> = (Bound<'py, PyArray1<f32>>, f32, Bound<'py, PyArray2<f32>>);
 type PyColumnMetadata = (bool, bool, bool, Option<f32>, Option<String>, Vec<f32>, Vec<String>, Vec<(u8, i64)>);
-type PySavedMetadata = (Vec<(u8, String)>, Vec<(String, Vec<usize>)>, Vec<(usize, String)>, Vec<(String, (u8, String))>);
+type PySavedMetadata = (Vec<(u8, String)>, Vec<(usize, String)>, Vec<(String, (u8, String))>);
 type PyLoadedModel = (u8, PyEncoder, Option<PyForest>, Option<PyClassifierForest>, PySavedMetadata, Vec<(u8, String)>);
 
 fn saved_values(values: Vec<(u8, String)>) -> Vec<SavedValue> {
@@ -98,16 +97,14 @@ fn saved_values(values: Vec<(u8, String)>) -> Vec<SavedValue> {
 fn saved_metadata(metadata: PySavedMetadata) -> ModelMetadata {
     ModelMetadata {
         markers: saved_values(metadata.0),
-        one_hot_groups: metadata.1,
-        date_columns: metadata.2,
-        parameters: metadata.3.into_iter().map(|(name, (kind, value))| (name, SavedValue { kind, value })).collect(),
+        date_columns: metadata.1,
+        parameters: metadata.2.into_iter().map(|(name, (kind, value))| (name, SavedValue { kind, value })).collect(),
     }
 }
 
 fn python_metadata(metadata: ModelMetadata) -> PySavedMetadata {
     (
         metadata.markers.into_iter().map(|value| (value.kind, value.value)).collect(),
-        metadata.one_hot_groups,
         metadata.date_columns,
         metadata.parameters.into_iter().map(|(name, value)| (name, (value.kind, value.value))).collect(),
     )
@@ -273,24 +270,22 @@ struct PyEncoder {
 impl PyEncoder {
     #[staticmethod]
     fn fit<'py>(
-        py: Python<'py>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>, max_dummy_cardinality: usize,
-        allow_new_missing: bool, one_hot_groups: Vec<(String, Vec<usize>)>, date_columns: Vec<(usize, String)>,
+        py: Python<'py>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>, allow_new_missing: bool,
+        date_columns: Vec<(usize, String)>, seed: Option<u64>,
     ) -> PyResult<(Self, Bound<'py, PyArray2<u32>>)> {
         let markers = saved_values(markers);
-        let (inner, ranked) = py
-            .detach(|| Encoder::fit_arrow(&batch.0, &markers, max_dummy_cardinality, allow_new_missing, one_hot_groups, date_columns))
-            .map_err(value_error)?;
+        let (inner, ranked) =
+            py.detach(|| Encoder::fit_arrow(&batch.0, &markers, allow_new_missing, date_columns, seed)).map_err(value_error)?;
         Ok((Self { inner }, ranked.into_pyarray(py)))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (batch, markers, one_hot_groups, seed=None))]
+    #[pyo3(signature = (batch, markers, seed=None))]
     fn detect_dates(
-        py: Python<'_>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>, one_hot_groups: Vec<(String, Vec<usize>)>,
-        seed: Option<u64>,
+        py: Python<'_>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>, seed: Option<u64>,
     ) -> PyResult<Vec<(usize, String)>> {
         let markers = saved_values(markers);
-        py.detach(|| detect_dates(&batch.0, &markers, &one_hot_groups, seed)).map_err(value_error)
+        py.detach(|| detect_dates(&batch.0, &markers, seed)).map_err(value_error)
     }
 
     fn transform<'py>(
@@ -308,7 +303,6 @@ impl PyEncoder {
             .iter()
             .map(|encoding| match encoding {
                 Encoding::Ordered => (0, -1),
-                Encoding::Dummy(category) => (1, i64::from(*category)),
                 Encoding::Missing => (2, -1),
             })
             .collect();
@@ -350,6 +344,11 @@ impl PyEncoder {
     #[getter]
     fn date_layout(&self) -> Vec<(usize, String, Vec<String>)> {
         self.inner.date_layout()
+    }
+
+    #[getter]
+    fn bundle_layout(&self) -> Vec<(String, Vec<usize>, Vec<String>)> {
+        self.inner.bundle_layout()
     }
 
     #[getter]

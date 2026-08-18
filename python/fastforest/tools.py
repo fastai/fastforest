@@ -204,7 +204,7 @@ def _feature_metadata(encoder):
         n_low_card_cols=int(((cardinalities > 2)&(cardinalities <= 4)).sum()),
         n_high_card_cols=int((cardinalities > 4).sum()), n_constant_cols=int((cardinalities <= 1).sum()),
         n_observed_missing_cols=sum(column.had_missing for column in columns), n_date_cols=n_dates,
-        n_grouped_cols=len(encoder._groups))
+        n_grouped_cols=len(encoder._bundles))
 
 def _prepare_sweep(model, X, y, configs, seed, trees, oob):
     from .core import FastForest,FastForestClassifier,_estimated_outputs,_fit_plan,_resolve_replacement
@@ -245,8 +245,7 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
             raise ValueError(f"configuration {params} leaves no rows for OOB evaluation")
     pool_rows = max(plan[2] for plan in plans)
     indices = None if pool_rows == len(X) else np.asarray(_sample_indices(len(X), pool_rows, seed, 2))
-    encoder = _Encoder(base["missing_values"], base["max_dummy_cardinality"],
-        base["one_hot_groups"], base["date_columns"], base["allow_new_missing"])
+    encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"])
     encoded = encoder.fit_transform(X, indices)
     training = encoder.transform(_take_rows(X, indices))
     if task == "classification":
@@ -298,8 +297,7 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
     for (trees,rows_per_tree,pool_rows),indices_in_group in grouped.items():
         started = perf_counter()
         indices = None if pool_rows == len(X_train) else np.asarray(_sample_indices(len(X_train), pool_rows, seed, 2))
-        encoder = _Encoder(base["missing_values"], base["max_dummy_cardinality"],
-            base["one_hot_groups"], base["date_columns"], base["allow_new_missing"])
+        encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"])
         encoded = encoder.fit_transform(X_train, indices)
         if task == "classification":
             classes,target = _class_vector(y_train, indices)

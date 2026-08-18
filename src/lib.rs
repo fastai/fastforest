@@ -20,6 +20,6 @@ pub use classification::ClassifierForest;
 pub use compiled::compile_model;
 pub use csv_view::{CsvSample, CsvViewOptions, view_csv};
 pub use file::{FileFitOptions, Task, convert_csv_to_arrow, fit_arrow, fit_csv, fit_file, predict_arrow, predict_csv, predict_file};
-pub use forest::{Config, DEFAULT_MAX_DUMMY_CARDINALITY, FitPlan, Forest, ForestError, MaxFeatures, plan_fit, resolve_replacement};
+pub use forest::{Config, FitPlan, Forest, ForestError, MaxFeatures, plan_fit, resolve_replacement};
 pub use model::{ModelMetadata, SavedModel, SavedValue};
 pub use preprocessing::{Column, Encoder, Encoding};

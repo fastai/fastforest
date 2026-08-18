@@ -118,8 +118,8 @@ The SGEMM target is the log-transformed mean runtime.
       <td><strong>fastforest</strong></td>
       <td align="right"><strong>0.93</strong></td>
       <td align="right"><strong>0.15</strong></td>
-      <td align="right"><strong>0.97</strong></td>
-      <td align="right"><strong>0.060</strong></td>
+      <td align="right"><strong>0.73</strong></td>
+      <td align="right"><strong>0.069</strong></td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -160,7 +160,7 @@ The SGEMM target is the log-transformed mean runtime.
   </tbody>
 </table>
 
-F1 acc is macro-averaged F1, giving every class equal weight. Covertype uses its supplied binary features unchanged.
+F1 acc is macro-averaged F1, giving every class equal weight. Covertype is passed with its supplied binary features; FastForest bundles exclusive indicators automatically.
 
 ## Install
 
@@ -709,14 +709,14 @@ maturin develop --release
 python tools/accuracy.py --dataset california
 ```
 
-Available regression datasets are `sgemm`, `california`, `concrete`, `diamonds`, `allstate`, `diabetes`, `bluebook`, `bluebook_raw`, `walmart`, `walmart_raw`, and `walmart_nodate`. Classification choices are `covertype`, `covertype_grouped`, `adult`, `bank`, `click`, `shuttle`, `airlines`, `higgs`, `sf_police`, and `kddcup99`. Run one forest alone with `--ff_only`, `--auto_only`, or `--rf_only`, or reproduce all displayed results with:
+Available regression datasets are `sgemm`, `california`, `concrete`, `diamonds`, `allstate`, `diabetes`, `bluebook`, `bluebook_raw`, `walmart`, `walmart_raw`, and `walmart_nodate`. Classification choices are `covertype`, `adult`, `bank`, `click`, `shuttle`, `airlines`, `higgs`, `sf_police`, and `kddcup99`. Run one forest alone with `--ff_only`, `--auto_only`, or `--rf_only`, or reproduce all displayed results with:
 
 ```bash
 for dataset in sgemm california concrete diamonds allstate diabetes; do
   python tools/accuracy.py --dataset "$dataset"
 done
 
-for dataset in covertype covertype_grouped adult bank click shuttle airlines higgs sf_police kddcup99; do
+for dataset in covertype adult bank click shuttle airlines higgs sf_police kddcup99; do
   python tools/accuracy.py --dataset "$dataset"
 done
 
@@ -728,7 +728,7 @@ python tools/accuracy.py --dataset walmart --ff_only
 FastForest fits a deterministic schema for every input column:
 
 1. Non-missing values are parsed as `float32` when every value can be parsed and are otherwise treated as strings. Numeric columns sort numerically and other columns sort lexically. Numeric columns whose values are all integral retain that metadata so analysis displays them with no decimal places.
-2. A constant column is discarded and a binary column becomes one boolean feature. Cardinalities from 3 through `max_dummy_cardinality` become one boolean feature per value; the default maximum is 1, so values are ordinarily kept as one ranked feature. Larger cardinalities become one zero-based rank in the sort order.
+2. A constant column is discarded. Every other column becomes one zero-based rank in its sort order; binary columns are therefore ordinary boolean features.
 3. The default missing value is the empty value. Override it per column with `missing_values`, using column names or indexes. When training contains a missing value, FastForest adds `<column>_missing` and fills the value feature with the observed median. By default, a column containing no training missing values rejects missing values during prediction; set `allow_new_missing=True` to fill them with the fitted training median instead. Entirely missing columns are discarded.
 
 ```python
@@ -741,53 +741,7 @@ X = np.array([
 model = FastForest(missing_values={2: ""}).fit(X, [1, 4, 3])
 ```
 
-Columns that are an existing one-hot representation of one categorical predictor can be declared explicitly. Each group is validated as exactly one active `0`/`1` value per row, collapsed natively, and treated as one feature during fitting, importance, and explanations:
-
-```python
-model = FastForestClassifier(one_hot_groups={
-    "wilderness_area": ["Wilderness_Area1", "Wilderness_Area2", "Wilderness_Area3", "Wilderness_Area4"],
-    "soil_type": [f"Soil_Type{i}" for i in range(1, 41)],
-}).fit(X, y)
-```
-
-On Covertype, grouping its supplied wilderness and soil indicator columns gives:
-
-<table>
-  <thead>
-    <tr>
-      <th>Dataset</th>
-      <th>Model</th>
-      <th align="right">F1 acc ↑</th>
-      <th align="right">Log loss ↓</th>
-      <th align="right">Fit (s) ↓</th>
-      <th align="right">Proba (s) ↓</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td rowspan="3"><strong><a href="https://archive.ics.uci.edu/dataset/31/covertype">Covertype</a></strong><br><sub>581,012 rows · grouped features</sub></td>
-      <td><strong>fastforest</strong></td>
-      <td align="right"><strong>0.93</strong></td>
-      <td align="right"><strong>0.15</strong></td>
-      <td align="right"><strong>0.75</strong></td>
-      <td align="right"><strong>0.075</strong></td>
-    </tr>
-    <tr>
-      <td>sklearn RF</td>
-      <td align="right">0.92</td>
-      <td align="right">0.17</td>
-      <td align="right">4.33</td>
-      <td align="right">0.210</td>
-    </tr>
-    <tr>
-      <td>sklearn HistGBM</td>
-      <td align="right">0.74</td>
-      <td align="right">0.57</td>
-      <td align="right">2.38</td>
-      <td align="right">0.076</td>
-    </tr>
-  </tbody>
-</table>
+Binary columns with no missing values are checked for mutual exclusivity on at most 10,000 sampled training-pool rows. Compatible indicators are collapsed into one categorical feature when their bundle is active in more than half the sample. The fitted membership and order are saved with the model; importance, explanations, and partial dependence treat the bundle as one feature and `column_info_` lists its members.
 
 Date and time columns are detected by default from at most 200 random training-pool rows using a conservative list of common formats. Every sampled non-missing value must match; ambiguous day/month forms remain candidates until a value above 12 resolves them, with month-first used if they remain ambiguous. Detected formats are saved with the model and never inferred again during prediction. Date columns are expanded natively using the same parts as fastai's `add_datepart`: year, month, ISO week, day, day-of-week, day-of-year, month/quarter/year boundary flags, hour, minute, second, and Unix elapsed seconds. Constant parts are discarded automatically, while missing or unparsable date values produce ordinary missing date parts.
 
@@ -797,7 +751,7 @@ Set `date_columns={}` to disable detection, or provide explicit `strftime` forma
 model = FastForest(date_columns={"saledate":"%m/%d/%Y %H:%M"}).fit(X, y)
 ```
 
-Ranking is a compact training representation, not a prediction-time requirement for numeric columns. After fitting, rank cutoffs are converted back to native numeric boundaries, so seen and unseen numeric values are compared directly without a rank lookup. Nonnumeric values are mapped through their fitted lexical ordering. An unseen low-cardinality value naturally receives all-zero dummies; an unseen high-cardinality value receives its insertion rank. The fitted median is retained for every nonempty column so optional inference-time missing-value imputation never inspects prediction data.
+Ranking is a compact training representation, not a prediction-time requirement for numeric columns. After fitting, rank cutoffs are converted back to native numeric boundaries, so seen and unseen numeric values are compared directly without a rank lookup. Nonnumeric values are mapped through their fitted lexical ordering, with unseen values receiving their insertion rank. The fitted median is retained for every nonempty column so optional inference-time missing-value imputation never inspects prediction data.
 
 Python accepts pandas data frames, NumPy arrays, and Arrow tables, selects the bounded training pool first, converts only retained rows, and performs the bounded 200-row date-format check. The native CSV path likewise builds Arrow arrays only for retained rows, while Arrow IPC keeps its existing typed buffers. Full-column schema fitting and inference transformation then run in Rust behind the Arrow boundary, including numeric and lexical interpretation, missing values, categories, date expansion, and parallel column processing. The compact ranked training matrix and native-value prediction matrix remain internal implementation details.
 

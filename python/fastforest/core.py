@@ -85,11 +85,10 @@ def _loaded_scalar(value):
 
 def _saved_metadata(model):
     markers = [_saved_scalar(value) for value in _markers(model.missing_values, model._encoder.input_names)]
-    groups = [(name,list(indices)) for name,indices in model._encoder._groups]
     dates = [(index,format) for index,format,_ in model._encoder._dates]
-    excluded = {"missing_values", "one_hot_groups", "date_columns"}
+    excluded = {"missing_values", "date_columns"}
     params = [(name,_saved_scalar(value)) for name,value in model.get_params().items() if name not in excluded]
-    return markers,groups,dates,params
+    return markers,dates,params
 
 def _restore_fitted(model, encoder, native):
     model._encoder,model._model = encoder,native
@@ -107,14 +106,13 @@ def _restore_fitted(model, encoder, native):
 def load(path):
     "Load a portable `.ffm` regression or classification model."
     task,encoder,regression,classifier,metadata,classes = _load_model(str(path))
-    markers,groups,dates,params = metadata
+    markers,dates,params = metadata
     markers = [_loaded_scalar(value) for value in markers]
     params = {name:_loaded_scalar(value) for name,value in params}
     names = tuple(encoder.input_names)
-    group_spec = {name:[names[index] for index in indices] for name,indices in groups}
     date_spec = {names[index]:format for index,format in dates}
-    params.update(missing_values=markers, one_hot_groups=group_spec or None, date_columns=date_spec or None)
-    adapted = _Encoder.from_native(encoder, markers, groups, dates)
+    params.update(missing_values=markers, date_columns=date_spec or None)
+    adapted = _Encoder.from_native(encoder, markers, dates)
     if task == 0:
         model = _restore_fitted(FastForest(**params), adapted, regression)
         model.oob_prediction_ = None
@@ -181,13 +179,14 @@ class _ForestFacade:
         if method != "permutation": raise ValueError("method must be 'permutation' or 'split'")
         if X is None or y is None: raise ValueError("permutation importance requires X and y")
         kwargs.setdefault("feature_names", self._encoder.input_names)
-        if self.one_hot_groups is not None: kwargs.setdefault("features", self._encoder.analysis_groups)
+        kwargs.setdefault("features", self._encoder.analysis_groups)
         if self._analysis_metric is not None: kwargs.setdefault("metric", self._analysis_metric)
         return permutation_importance(self, X, y, **kwargs)
 
     def drop_column_importance(self, X_train, y_train, X_valid=None, y_valid=None, **kwargs):
         "Measure importance by refitting without each feature or feature group."
-        kwargs.setdefault("feature_names", self.feature_names_in_)
+        kwargs.setdefault("feature_names", self._encoder.input_names)
+        kwargs.setdefault("features", self._encoder.analysis_groups)
         if self._analysis_metric is not None: kwargs.setdefault("metric", self._analysis_metric)
         return drop_column_importance(self, X_train, y_train, X_valid, y_valid, **kwargs)
 
@@ -204,23 +203,20 @@ class _ForestFacade:
 class FastForest(_ForestFacade):
     "A fast approximate-forest regressor."
     _param_names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples", "split_prior_rows",
-        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "max_dummy_cardinality", "one_hot_groups",
-        "date_columns", "allow_new_missing")
+        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing")
     def __init__(self, n_trees=_REG_DEFAULTS["n_trees"], min_node_size=_REG_DEFAULTS["min_node_size"],
         bootstrap_fraction=_REG_DEFAULTS["bootstrap_fraction"], bootstrap_max=_REG_DEFAULTS["bootstrap_max"], replacement=None,
         max_node_samples=_REG_DEFAULTS["max_node_samples"], split_prior_rows=_REG_DEFAULTS["split_prior_rows"],
         cutoff_divisor=_REG_DEFAULTS["cutoff_divisor"], random_splitter=_REG_DEFAULTS["random_splitter"],
         max_features=_REG_DEFAULTS["max_features"], seed=_REG_DEFAULTS["seed"], oob=_REG_DEFAULTS["oob"], missing_values=None,
-        max_dummy_cardinality=_REG_DEFAULTS["max_dummy_cardinality"], one_hot_groups=None, date_columns=None,
-        allow_new_missing=_REG_DEFAULTS["allow_new_missing"]):
+        date_columns=None, allow_new_missing=_REG_DEFAULTS["allow_new_missing"]):
         self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
         self.bootstrap_max,self.replacement = bootstrap_max,replacement
         self.max_node_samples,self.split_prior_rows = max_node_samples,split_prior_rows
         self.cutoff_divisor = cutoff_divisor
         self.random_splitter,self.max_features,self.seed,self.oob = random_splitter,max_features,seed,oob
         self.missing_values = missing_values
-        self.max_dummy_cardinality = max_dummy_cardinality
-        self.one_hot_groups,self.date_columns = one_hot_groups,date_columns
+        self.date_columns = date_columns
         self.allow_new_missing = allow_new_missing
         self._model = None
 
@@ -230,8 +226,7 @@ class FastForest(_ForestFacade):
         n_rows,pool_indices,X,y = _fit_pool(X, y, self.n_trees, self.bootstrap_fraction, self.bootstrap_max,
             replacement, self.oob, self.seed)
         y = _vector(y, indices=pool_indices)
-        self._encoder = _Encoder(self.missing_values, self.max_dummy_cardinality,
-            self.one_hot_groups, self.date_columns, self.allow_new_missing, self.seed)
+        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed)
         X = self._encoder.fit_transform(X, pool_indices)
         self.date_columns_ = self._encoder.date_columns
         self.n_trees_,sample_rows,_ = _fit_plan(n_rows, self.n_trees, self.bootstrap_fraction, self.bootstrap_max,
@@ -289,30 +284,27 @@ class FastForest(_ForestFacade):
 
     def partial_dependence(self, X, features, **kwargs):
         "Compute partial dependence and ICE values for one or two features."
-        kwargs.setdefault("feature_names", self.feature_names_in_)
+        kwargs.setdefault("feature_names", self._encoder.input_names)
         return partial_dependence(self, X, features, **kwargs)
 
 class FastForestClassifier(_ForestFacade):
     "A fast multiclass approximate-forest classifier."
     _analysis_metric = "accuracy"
     _param_names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples", "class_weight_power",
-        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "max_dummy_cardinality", "one_hot_groups",
-        "date_columns", "allow_new_missing")
+        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing")
     def __init__(self, n_trees=_CLASS_DEFAULTS["n_trees"], min_node_size=_CLASS_DEFAULTS["min_node_size"],
         bootstrap_fraction=_CLASS_DEFAULTS["bootstrap_fraction"], bootstrap_max=_CLASS_DEFAULTS["bootstrap_max"], replacement=None,
         max_node_samples=_CLASS_DEFAULTS["max_node_samples"], class_weight_power=_CLASS_DEFAULTS["class_weight_power"],
         cutoff_divisor=_CLASS_DEFAULTS["cutoff_divisor"], random_splitter=_CLASS_DEFAULTS["random_splitter"],
         max_features=_CLASS_DEFAULTS["max_features"], seed=_CLASS_DEFAULTS["seed"], oob=_CLASS_DEFAULTS["oob"], missing_values=None,
-        max_dummy_cardinality=_CLASS_DEFAULTS["max_dummy_cardinality"], one_hot_groups=None, date_columns=None,
-        allow_new_missing=_CLASS_DEFAULTS["allow_new_missing"]):
+        date_columns=None, allow_new_missing=_CLASS_DEFAULTS["allow_new_missing"]):
         self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
         self.bootstrap_max,self.replacement = bootstrap_max,replacement
         self.max_node_samples,self.class_weight_power = max_node_samples,class_weight_power
         self.cutoff_divisor = cutoff_divisor
         self.random_splitter,self.max_features,self.seed,self.oob = random_splitter,max_features,seed,oob
         self.missing_values = missing_values
-        self.max_dummy_cardinality = max_dummy_cardinality
-        self.one_hot_groups,self.date_columns = one_hot_groups,date_columns
+        self.date_columns = date_columns
         self.allow_new_missing = allow_new_missing
         self._model = None
 
@@ -323,8 +315,7 @@ class FastForestClassifier(_ForestFacade):
             replacement, self.oob, self.seed, classification=True)
         self.classes_,y = _class_vector(y, pool_indices)
         self.n_classes_ = len(self.classes_)
-        self._encoder = _Encoder(self.missing_values, self.max_dummy_cardinality,
-            self.one_hot_groups, self.date_columns, self.allow_new_missing, self.seed)
+        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed)
         X = self._encoder.fit_transform(X, pool_indices)
         self.date_columns_ = self._encoder.date_columns
         outputs = max(1, self.n_classes_-1)

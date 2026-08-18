@@ -10,7 +10,6 @@ walmart,Walmart Store Sales,https://www.kaggle.com/competitions/walmart-recruiti
 rossmann,Rossmann Store Sales,https://www.kaggle.com/competitions/rossmann-store-sales,844338,16 features · mixed,16 features,rossmann_store_sales
 ashrae,ASHRAE Great Energy Predictor III,https://www.kaggle.com/competitions/ashrae-energy-prediction,20216100,15 features · mixed,15 features,ashrae
 covertype_bin,Covertype,https://archive.ics.uci.edu/dataset/31/covertype,581012,binary features,binary features,covertype
-covertype_group,Covertype,https://archive.ics.uci.edu/dataset/31/covertype,581012,grouped features,grouped features,covertype
 adult,Adult Census Income,https://www.openml.org/d/1590,48842,14 features · mixed,14 mixed features,amlb_adult
 bank,Bank Marketing,https://www.openml.org/d/1461,45211,16 features · mixed,16 mixed features,bank_marketing
 click,Click Prediction Small,https://www.openml.org/d/42733,39948,11 features · mixed,11 mixed features,

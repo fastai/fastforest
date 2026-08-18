@@ -11,7 +11,7 @@ from fastforest import FastForest
 def rmse(y, prediction): return float(np.mean((np.asarray(y)-prediction)**2, dtype=np.float64)**.5)
 
 def main():
-    _,X,y,missing_values,_,_ = load_data(Dataset.walmart, Path(__file__).parents[1]/".data")
+    _,X,y,missing_values,_ = load_data(Dataset.walmart, Path(__file__).parents[1]/".data")
     train_idx,valid_idx,_ = split_indices(Dataset.walmart,X,None)
     X_train,X_valid = _rows(X,train_idx),_rows(X,valid_idx)
     y_train,y_valid = y[train_idx],y[valid_idx]

@@ -7,7 +7,7 @@ use tempfile::NamedTempFile;
 
 use crate::{ClassifierForest, Encoder, Forest, ForestError};
 
-const MAGIC: &[u8; 8] = b"FFM\0\x01\0\0\0";
+const MAGIC: &[u8; 8] = b"FFM\0\x02\0\0\0";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SavedValue {
@@ -32,7 +32,6 @@ impl SavedValue {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ModelMetadata {
     pub markers: Vec<SavedValue>,
-    pub one_hot_groups: Vec<(String, Vec<usize>)>,
     pub date_columns: Vec<(usize, String)>,
     pub parameters: Vec<(String, SavedValue)>,
 }

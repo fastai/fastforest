@@ -160,8 +160,7 @@ def _worker(send, task, data_home, screen_trees, seed, suite_kind, joint_configs
                 full_validation_loss=validation_result.validation_loss, full_train_loss=validation_result.train_loss,
                 full_fit_seconds=validation_result.fit_seconds, full_predict_seconds=validation_result.predict_seconds,
                 full_pool_rows=validation_result.pool_rows, full_nodes_mean=validation_result.nodes_mean,
-                full_leaves_mean=validation_result.leaves_mean, full_depth_mean=validation_result.depth_mean,
-                max_dummy_cardinality=model.max_dummy_cardinality, **score_params, **params))
+                full_leaves_mean=validation_result.leaves_mean, full_depth_mean=validation_result.depth_mean, **score_params, **params))
         send.send((True,rows))
     except Exception: send.send((False,traceback.format_exc()))
     finally: send.close()

@@ -36,6 +36,10 @@ fn mixed_file_and_model_story() {
         view_csv(&summary, &CsvViewOptions::default()).unwrap(),
         "dataset,loss,fit_seconds\na,0.1235,1.23\nb,0.001235,2.35\nConstants:\ntask=classification\n"
     );
+    assert_eq!(
+        view_csv(&summary, &CsvViewOptions { start: 1, end: Some(2), ..CsvViewOptions::default() }).unwrap(),
+        "rows 1..2 from 2\nNo varying columns\nConstants:\ndataset=b\nloss=0.001235\nfit_seconds=2.35\ntask=classification\n"
+    );
     let sampled = view_csv(&data, &CsvViewOptions { sample: Some(CsvSample::Rows(20)), seed: 42, ..CsvViewOptions::default() }).unwrap();
     assert!(sampled.starts_with("20 randomly sampled rows from 240\n"));
 

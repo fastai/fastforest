@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .preprocessing import _missing_mask,_table,_take_rows
+from .preprocessing import _markers,_missing_mask,_table,_take_rows
 
 def _data(X, feature_names=None):
     values,names = _table(X)
@@ -249,7 +249,7 @@ def drop_column_importance(model, X_train, y_train, X_valid=None, y_valid=None, 
     labels,groups = _groups(features, names)
     params = model.get_params() | {"seed":seed}
     if "n_trees" in params: params["oob"] = False
-    markers = [column.marker for column in model._encoder.columns] if hasattr(model, "_encoder") else None
+    markers = _markers(model.missing_values, model._encoder.input_names) if hasattr(model, "_encoder") else None
     if markers is not None: params["missing_values"] = markers
     baseline_model = type(model)(**params).fit(X_train, y_train)
     score = _metric(metric)
@@ -268,8 +268,19 @@ def partial_dependence(model, X, features, grid_points=20, n_samples=500, seed=4
     "Compute one-feature PDP/ICE data or a two-feature partial-dependence surface."
     X = _sample(X, n_samples=n_samples, seed=seed)
     X,names = _data(X, feature_names)
-    if hasattr(model, "_encoder"): X = model._encoder.display(X)
     sample = X
+    if hasattr(model, "_encoder") and isinstance(features, str):
+        bundle = next(((indices,members) for name,indices,members in model._encoder._bundles if name == features), None)
+        if bundle is not None:
+            idx,members = bundle
+            individual = np.empty((len(sample), len(idx)+1))
+            for j in range(len(idx)+1):
+                changed = sample.copy()
+                changed[:,idx] = 0
+                if j: changed[:,idx[j-1]] = 1
+                individual[:,j] = model.predict(changed)
+            grid = np.asarray(("(none)",*members), dtype=object)
+            return PartialDependence((features,), (grid,), individual.mean(axis=0), individual)
     if isinstance(features, dict):
         if len(features) != 1: raise ValueError("categorical partial dependence requires one named feature group")
         label,selectors = next(iter(features.items()))
@@ -290,8 +301,8 @@ def partial_dependence(model, X, features, grid_points=20, n_samples=500, seed=4
     for i in idx:
         column = X[:,i]
         all_int = False
-        if hasattr(model, "_encoder"):
-            schema = model._encoder.columns[i]
+        if hasattr(model, "_encoder") and i in model._encoder._direct:
+            schema = model._encoder.columns[model._encoder._direct.index(i)]
             column = column[~_missing_mask(column, schema.marker)]
             all_int = schema.all_int
         try:

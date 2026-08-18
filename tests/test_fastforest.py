@@ -39,7 +39,6 @@ def test_fit_predict_oob_story(tmp_path):
     assert np.mean((predictions-y)**2) < baseline_mse*0.3
     assert model.n_features_in_ == X.shape[1]
     assert model.get_params()["cutoff_divisor"] == 10
-    assert model.get_params()["max_dummy_cardinality"] == 1
     assert model.get_params()["max_features"] == .9
     assert model.get_params()["split_prior_rows"] == 3
     assert FastForest().max_node_samples == 320
@@ -99,8 +98,8 @@ def test_fit_predict_oob_story(tmp_path):
     with pytest.warns(UserWarning, match="Skipping features"): sklearn_X = sklearn_preprocessor(
         mixed_frame, {0:"NA"}, onehot_max=4).fit_transform(mixed_frame, mixed_y)
     assert sklearn_X.shape == (len(mixed_frame), 6)
-    mixed_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}, max_dummy_cardinality=4).fit(mixed_frame, mixed_y)
-    arrow_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}, max_dummy_cardinality=4).fit(
+    mixed_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}).fit(mixed_frame, mixed_y)
+    arrow_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}).fit(
         pa.Table.from_pandas(mixed_frame, preserve_index=False), mixed_y)
     assert np.array_equal(arrow_model.predict(pa.Table.from_pandas(mixed_frame.iloc[:20], preserve_index=False)), mixed_model.predict(mixed_frame.iloc[:20]))
     assert [info.kind for info in mixed_model.column_info_] == ["numeric", "lexical", "lexical", "numeric", "discarded"]
@@ -109,7 +108,7 @@ def test_fit_predict_oob_story(tmp_path):
     assert mixed_model.column_info_[2].encoded_features == ("x2",)
     assert mixed_model._encoder.feature_group_ids[0] == mixed_model._encoder.feature_group_ids[1]
     assert len(np.unique(mixed_model._encoder.feature_group_ids)) == len(mixed_model._encoder.feature_group_ids)-1
-    assert set(mixed_model.column_info_[1].encoded_features) == {"x1=common", "x1=middle", "x1=rare"}
+    assert mixed_model.column_info_[1].encoded_features == ("x1",)
     assert mixed_model.feature_importances_.shape == (mixed.shape[1],) and np.isclose(mixed_model.feature_importances_.sum(), 1)
     assert np.isfinite(mixed_model.predict(mixed_frame.iloc[:4])).all()
     novel = mixed[:4].copy()
@@ -145,7 +144,7 @@ def test_fit_predict_oob_story(tmp_path):
     with pytest.raises(ValueError, match="was numeric during training"): mixed_model.predict(bad_numeric)
 
     pool = np.asarray(_sample_indices(len(mixed_frame), 117, 42, 2))
-    borrowed,owned = (_Encoder({0:"NA"}, 4),_Encoder({0:"NA"}, 4))
+    borrowed,owned = (_Encoder({0:"NA"}),_Encoder({0:"NA"}))
     borrowed_values = borrowed.fit_transform(mixed_frame, pool)
     owned_values = owned.fit_transform(mixed_frame.iloc[pool])
     assert np.array_equal(borrowed_values, owned_values)
@@ -264,18 +263,28 @@ def test_multiclass_prediction_oob_and_analysis_story(tmp_path):
     category = np.arange(len(X))%3
     grouped_X = np.column_stack([X[:,:2], np.eye(3, dtype=np.float32)[category]])
     grouped_y = np.asarray(["red", "green", "blue"])[category]
-    grouped = FastForestClassifier(n_trees=16, seed=42, max_features=.75,
-        one_hot_groups={"color":["x2", "x3", "x4"]}).fit(grouped_X, grouped_y)
-    assert grouped.feature_names_in_ == ("x0", "x1", "color") and grouped.n_features_in_ == 3
-    assert grouped.column_info_[-1].kind == "lexical" and grouped.column_info_[-1].cardinality == 3
-    assert grouped.feature_importances_.shape == (3,) and np.mean(grouped.predict(grouped_X) == grouped_y) > .99
-    assert grouped._encoder.display(grouped_X[:3])[:,-1].tolist() == ["x2", "x3", "x4"]
-    assert grouped.feature_importance(grouped_X, grouped_y, n_repeats=1, n_samples=100).values.shape == (3,)
-    grouped.save(tmp_path/"grouped.ffm")
-    assert np.array_equal(load(tmp_path/"grouped.ffm").predict(grouped_X[:20]), grouped.predict(grouped_X[:20]))
-    invalid_group = grouped_X[:1].copy()
-    invalid_group[:,2:] = 0
-    with pytest.raises(ValueError, match="has no active category"): grouped.predict(invalid_group)
+    bundled = FastForestClassifier(n_trees=16, seed=42, max_features=.75).fit(grouped_X, grouped_y)
+    assert bundled.feature_names_in_ == ("x0", "x1", "x") and bundled.n_features_in_ == 3
+    assert bundled.column_info_[-1].members == ("x2", "x3", "x4")
+    assert bundled.column_info_[-1].kind == "lexical" and bundled.column_info_[-1].cardinality == 4
+    assert bundled.feature_importances_.shape == (3,) and np.mean(bundled.predict(grouped_X) == grouped_y) > .99
+    assert bundled._encoder.display(grouped_X[:3])[:,-1].tolist() == ["x2", "x3", "x4"]
+    assert bundled.drop_column_importance(grouped_X, grouped_y).values.shape == (3,)
+    bundled_regression = FastForest(n_trees=8, seed=42).fit(grouped_X, category.astype(np.float32))
+    assert bundled_regression.partial_dependence(grouped_X, "x").grids[0].tolist() == ["(none)", "x2", "x3", "x4"]
+    bundled.save(tmp_path/"bundled.ffm")
+    restored_bundle = load(tmp_path/"bundled.ffm")
+    assert restored_bundle.column_info_[-1].members == bundled.column_info_[-1].members
+    assert np.array_equal(restored_bundle.predict(grouped_X[:20]), bundled.predict(grouped_X[:20]))
+    sparse = grouped_X[:2].copy()
+    sparse[:,2:] = 0
+    sparse[1,2:] = 1
+    assert bundled.predict(sparse).shape == (2,)
+
+    sparse_flags = np.zeros((900, 2), dtype=np.float32)
+    sparse_flags[:90,0],sparse_flags[90:180,1] = 1,1
+    sparse_model = FastForestClassifier(n_trees=8, seed=42).fit(sparse_flags, np.arange(900)%2)
+    assert sparse_model.feature_names_in_ == ("x0", "x1")
 
     large_X = rng.random((8_000, 4), dtype=np.float32)
     large_y = np.where(large_X[:,0]+large_X[:,1] > 1, "high", "low")
@@ -304,7 +313,6 @@ def test_validation_errors():
     assert FastForest(bootstrap_fraction=1.1, replacement=True).fit(X, y).predict(X).shape == y.shape
     check(lambda: FastForest(max_features=0).fit(X, y), "max_features must be")
     check(lambda: FastForest(max_features="all").fit(X, y), "max_features must be")
-    check(lambda: FastForest(max_dummy_cardinality=0).fit(X, y), "max_dummy_cardinality must be a positive integer")
     check(lambda: FastForest(cutoff_divisor=np.nan).fit(X, y), "cutoff_divisor must be finite and greater than zero")
     check(lambda: FastForest().predict(X), "must be fitted")
     check(lambda: FastForest().explain(X), "must be fitted")
