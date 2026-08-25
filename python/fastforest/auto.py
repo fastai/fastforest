@@ -3,7 +3,8 @@
 import numpy as np
 
 from .core import (FastForest,FastForestClassifier,_ClassifierForest,_Encoder,_Forest,_class_vector,
-    _estimated_outputs,_finish_classifier,_finish_regression,_fit_plan,_fit_pool,_native_max_features,_resolve_replacement,_sample_indices,_vector)
+    _estimated_outputs,_finish_classifier,_finish_regression,_fit_plan,_fit_pool,_native_config,_original_indices,
+    _resolve_replacement,_sample_indices,_vector)
 from .tools import forest_suite,screen
 
 __all__ = ["AutoForest", "AutoForestClassifier"]
@@ -98,22 +99,12 @@ class _Auto:
             bootstrap_max=self.bootstrap_max, max_node_samples=self.max_node_samples,
             bootstrap_losses=bootstrap_losses, node_losses=node_losses, seconds=report.batch_seconds)
 
-    def _fit_args(self, task, n_rows, target_rows, replacement, outputs, trees, seed, tracking_indices=None):
-        oob = tracking_indices is not None
-        _,sample_rows,_ = _fit_plan(n_rows, trees, self.bootstrap_fraction,
-            self.bootstrap_max, replacement, oob, outputs)
-        tree = (trees, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max,
-            min(sample_rows,target_rows), replacement)
-        split = ((self.max_node_samples, self.class_weight_power) if task=="classification"
-            else (self.max_node_samples, self.split_prior_rows))
-        split += (self.cutoff_divisor,)
-        return (*tree,*split,seed,oob,self.random_splitter,*_native_max_features(self.max_features),tracking_indices)
-
     def _fit_native(self, task, encoded, target, encoder, n_rows, replacement, outputs, classes, trees, seed, tracking_indices=None):
-        args = self._fit_args(task, n_rows, len(target), replacement, outputs, trees, seed, tracking_indices)
-        common = (encoded,target,encoder.cutoff_values,encoder.cutoff_offsets,encoder.missing_ranks)
-        return (_ClassifierForest.fit(encoded,target,len(classes),*common[2:],*args) if task=="classification"
-            else _Forest.fit(*common,*args))
+        oob = tracking_indices is not None
+        _,sample_rows,_ = _fit_plan(n_rows, trees, self.bootstrap_fraction, self.bootstrap_max, replacement, oob, outputs)
+        config = _native_config(self.get_params(), replacement, (trees, sample_rows), len(target), seed, oob)
+        return (_ClassifierForest.fit(encoded, target, len(classes), encoder.fit_layout, config, tracking_indices)
+            if task=="classification" else _Forest.fit(encoded, target, encoder.fit_layout, config, tracking_indices))
 
     def _fit_once(self, task, encoded, target, encoder, n_rows, replacement, outputs, classes, fit_seed):
         trees,_,_ = _fit_plan(n_rows, None, self.bootstrap_fraction, self.bootstrap_max, replacement, False, outputs)
@@ -154,11 +145,11 @@ class AutoForest(_Auto, FastForest):
         self._size_samples(X, y, "regression", 1, fit_seed)
         replacement = _resolve_replacement(self.replacement, len(X))
         trees = self.tree_batch_size if self.autogrow else None
-        n_rows,pool_indices,X,y = _fit_pool(X, y, trees, self.bootstrap_fraction,
+        n_rows,_,sample_rows,pool_indices,X,y = _fit_pool(X, y, trees, self.bootstrap_fraction,
             self.bootstrap_max, replacement, self.autogrow, fit_seed)
         target = _vector(y, indices=pool_indices)
-        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed)
-        encoded = encoder.fit_transform(X, pool_indices)
+        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed, self._stat_options(), self.order, sample_rows)
+        encoded = encoder.fit_transform(X, pool_indices, y=target)
         self.replacement_ = replacement
         fit = self._grow if self.autogrow else self._fit_once
         native = fit("regression", encoded, target, encoder, n_rows, replacement, 1, None, fit_seed)
@@ -174,13 +165,13 @@ class AutoForestClassifier(_Auto, FastForestClassifier):
         self._size_samples(X, y, "classification", outputs, fit_seed)
         replacement = _resolve_replacement(self.replacement, len(X), classification=True)
         trees = self.tree_batch_size if self.autogrow else None
-        n_rows,pool_indices,X,y = _fit_pool(X, y, trees, self.bootstrap_fraction,
+        n_rows,_,sample_rows,pool_indices,X,y = _fit_pool(X, y, trees, self.bootstrap_fraction,
             self.bootstrap_max, replacement, self.autogrow, fit_seed, classification=True)
         self.classes_,target = _class_vector(y, pool_indices)
         self.n_classes_ = len(self.classes_)
         outputs = max(1,self.n_classes_-1)
-        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed)
-        encoded = encoder.fit_transform(X, pool_indices)
+        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed, self._stat_options(), self.order, sample_rows)
+        encoded = encoder.fit_transform(X, pool_indices, y_class=target if self.n_classes_ == 2 else None)
         self.replacement_ = replacement
         fit = self._grow if self.autogrow else self._fit_once
         native = fit("classification", encoded, target, encoder, n_rows, replacement, outputs, self.classes_, fit_seed)

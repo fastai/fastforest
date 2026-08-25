@@ -18,7 +18,7 @@ dependencies = ["numpy>=2.0", "pyarrow>=18"]
 
 [project.optional-dependencies]
 sklearn = ["pandas", "scikit-learn>=1.7.2"]
-dev = ["fastcore", "fastship>=0.0.11", "maturin>=1.0,<2.0", "pandas", "pytest", "scikit-learn>=1.7.2"]
+dev = ["fastcore", "fastship>=0.0.11", "matplotlib", "maturin>=1.0,<2.0", "nbdev>=3.3.13", "pandas", "pytest", "scikit-learn>=1.7.2"]
 
 [project.urls]
 Homepage = "https://github.com/fastai/fastforest"
@@ -33,6 +33,10 @@ data = "target/wheel-data"
 
 [tool.uv]
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
+
+[tool.nbdev]
+lib_path = "python/fastforest"
+put_version_in_init = false
 
 [tool.fastship]
 branch = "main"

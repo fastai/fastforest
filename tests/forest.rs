@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Float32Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
-use fastforest::{ClassifierForest, Config, Encoder, FitPlan, Forest, MaxFeatures, SavedValue, plan_fit};
+use fastforest::{ClassifierForest, Config, Encoder, EncoderOptions, FitPlan, Forest, MaxFeatures, SavedValue, StatContext, plan_fit};
 use ndarray::Array1;
 
 fn numeric_batch(rows: usize, cols: usize) -> RecordBatch {
@@ -20,7 +20,8 @@ fn numeric_batch(rows: usize, cols: usize) -> RecordBatch {
 
 fn encoded(batch: &RecordBatch) -> (Encoder, ndarray::Array2<u32>, ndarray::Array2<f32>, Vec<SavedValue>) {
     let markers = (0..batch.num_columns()).map(|_| SavedValue { kind: 5, value: String::new() }).collect::<Vec<_>>();
-    let (encoder, ranked) = Encoder::fit_arrow(batch, &markers, false, vec![], Some(42)).unwrap();
+    let (encoder, ranked) =
+        Encoder::fit_arrow(batch, &markers, false, vec![], Some(42), &EncoderOptions::default(), StatContext::default()).unwrap();
     let native = encoder.transform_arrow(batch, &markers).unwrap();
     (encoder, ranked, native, markers)
 }
@@ -36,7 +37,16 @@ fn regression_and_classification_behaviour_story() {
     let y = Array1::from_iter((0..x.nrows()).map(|row| 4. * native[[row, 0]] - 2. * native[[row, 1]] + native[[row, 4]]));
     let config = Config { n_trees: 24, min_node_size: 8, max_node_samples: 80, seed: Some(42), oob: true, ..Config::default() };
     let fit = |config: &Config| {
-        Forest::fit(x.view(), y.view(), encoder.cutoff_values(), encoder.cutoff_offsets(), &encoder.missing_ranks(), config).unwrap()
+        Forest::fit(
+            x.view(),
+            encoder.projections(),
+            y.view(),
+            encoder.cutoff_values(),
+            encoder.cutoff_offsets(),
+            &encoder.missing_ranks(),
+            config,
+        )
+        .unwrap()
     };
     let forest = fit(&config);
     let predictions = forest.predict(native.view()).unwrap();
@@ -58,9 +68,17 @@ fn regression_and_classification_behaviour_story() {
 
     let configs = [Config { n_trees: 8, ..config.clone() }, Config { n_trees: 8, min_node_size: 16, ..config.clone() }];
     let standalone = configs.iter().map(|config| fit(config)).collect::<Vec<_>>();
-    let batched =
-        Forest::fit_batch(x.view(), y.view(), encoder.cutoff_values(), encoder.cutoff_offsets(), &encoder.missing_ranks(), &configs, None)
-            .unwrap();
+    let batched = Forest::fit_batch(
+        x.view(),
+        encoder.projections(),
+        y.view(),
+        encoder.cutoff_values(),
+        encoder.cutoff_offsets(),
+        &encoder.missing_ranks(),
+        &configs,
+        None,
+    )
+    .unwrap();
     for (standalone, batched) in standalone.iter().zip(&batched) {
         assert!(same_floats(&standalone.predict(native.view()).unwrap(), &batched.predict(native.view()).unwrap()));
         assert_eq!(standalone.oob_counts(), batched.oob_counts());
@@ -68,6 +86,7 @@ fn regression_and_classification_behaviour_story() {
     }
     let reversed = Forest::fit_batch(
         x.view(),
+        encoder.projections(),
         y.view(),
         encoder.cutoff_values(),
         encoder.cutoff_offsets(),
@@ -81,6 +100,7 @@ fn regression_and_classification_behaviour_story() {
     let classes = Array1::from_iter((0..x.nrows()).map(|row| ((x[[row, 0]] + 2 * x[[row, 1]]) % 3) as u32));
     let classifier = ClassifierForest::fit(
         x.view(),
+        encoder.projections(),
         classes.view(),
         3,
         encoder.cutoff_values(),
@@ -111,6 +131,7 @@ fn regression_and_classification_behaviour_story() {
     let categorical_y = Array1::from_iter((0..120).map(|row| if row % 4 == 2 { 10. } else { 0. }));
     let equality = Forest::fit(
         categorical_x.view(),
+        encoder.projections(),
         categorical_y.view(),
         encoder.cutoff_values(),
         encoder.cutoff_offsets(),

@@ -1,4 +1,4 @@
-use ndarray::ArrayView2;
+use crate::projection::TrainingData;
 use serde::{Deserialize, Serialize};
 
 use crate::split::{NodeRows, partition};
@@ -117,8 +117,8 @@ where
     (left, left + 1)
 }
 
-pub(crate) fn grow_tree<P: Default>(
-    x: ArrayView2<'_, u32>, rows: &mut [u32], nodes: &mut Vec<TreeNode<u32, P>>, importance: &mut [f32], missing_ranks: &[u32],
+pub(crate) fn grow_tree<P: Default + Copy>(
+    x: TrainingData<'_>, rows: &mut [u32], nodes: &mut Vec<TreeNode<u32, P>>, importance: &mut [f32], missing_ranks: &[u32],
     mut visit: impl FnMut(NodeRows<'_>, &mut TreeNode<u32, P>) -> Option<Branch>,
 ) {
     let mut work = vec![(0, 0, rows.len())];

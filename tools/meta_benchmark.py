@@ -1,5 +1,6 @@
 import hashlib,json,multiprocessing as mp
-import os,re,signal,traceback,urllib.request
+import os,re,signal,traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np,pandas as pd
@@ -7,27 +8,8 @@ from fastcore.script import call_parse
 import pyarrow.parquet as pq
 
 from fastforest import FastForest,FastForestClassifier
+from fastforest.datasets import beyond_manifest
 from fastforest.tools import FOREST_PARAMS,forest_suite,screen,validate
-
-BEYOND_METADATA = "https://raw.githubusercontent.com/autogluon/tabarena/main/packages/tabarena/src/tabarena/benchmark/task/metadata/sources/data/BeyondArena_tasks_metadata.csv"
-
-def beyond_manifest(path, include_text=False):
-    "Load one canonical split per BeyondArena dataset."
-    path = Path(path)
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(BEYOND_METADATA, path)
-    source = pd.read_csv(path)
-    tasks = source[(source.repeat == 0)&(source.fold == 0)].copy()
-    if not include_text: tasks = tasks[~tasks.has_text]
-    tasks["dataset"] = tasks.tabarena_task_name
-    tasks["source_group"] = tasks.dataset_name
-    tasks["task"] = np.where(tasks.is_classification, "classification", "regression")
-    tasks["rows"] = tasks.num_instances
-    tasks["features"] = tasks.num_features
-    tasks["uuid"] = tasks.data_foundry_uri.str.rsplit("/", n=1).str[-1]
-    tasks["collection"] = "beyondarena"
-    return tasks.reset_index(drop=True)
 
 def _slug(name): return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
@@ -128,7 +110,7 @@ def _joint_suite(model, count, seed, dataset):
     if count > len(paired): raise ValueError(f"joint_configs cannot exceed {len(paired)}")
     return result
 
-def _worker(send, task, data_home, screen_trees, seed, suite_kind, joint_configs, model_params):
+def _worker(send, task, data_home, screen_trees, seed, suite_kind, joint_configs, model_params, ordered):
     try:
         X,y,train_idx,valid_idx,dates,validation_split = _load_task(task, data_home, seed)
         X_train,X_valid,y_train,y_valid = X.iloc[train_idx],X.iloc[valid_idx],y.iloc[train_idx],y.iloc[valid_idx]
@@ -136,7 +118,9 @@ def _worker(send, task, data_home, screen_trees, seed, suite_kind, joint_configs
         cls = FastForestClassifier if classification else FastForest
         defaults = {name:value for name,value in model_params.items() if value is not None and
             name != ("split_prior_rows" if classification else "class_weight_power")}
-        model = cls(seed=seed, date_columns=dates, allow_new_missing=True, **defaults)
+        order = task.get("time_on") if ordered else None
+        if ordered and (task.get("task_type") != "temporal" or not isinstance(order,str)): raise ValueError("ordered mode requires a temporal task with time_on")
+        model = cls(seed=seed, date_columns=dates, allow_new_missing=True, order=order, **defaults)
         if suite_kind == "marginal": suite = forest_suite(model)
         elif suite_kind == "joint": suite = _joint_suite(model, joint_configs, seed, task["dataset"])
         else:
@@ -146,7 +130,7 @@ def _worker(send, task, data_home, screen_trees, seed, suite_kind, joint_configs
         validated = validate(model, X_train, y_train, X_valid, y_valid, suite, seed, allow_unseen_classes=True)
         target_meta = _target_metadata(y_train, task["task"])
         base = dict(task, rows=len(X), features=X.shape[1], train_rows=len(train_idx), validation_rows=len(valid_idx),
-            validation_split=validation_split, screen_trees=screen_trees,
+            validation_split=validation_split, screen_trees=screen_trees, ordered=ordered, order_column=order,
             **screened.feature_metadata, **target_meta)
         rows = []
         for screen_result,validation_result,(label,_,params) in zip(screened.results, validated.results, suite):
@@ -171,10 +155,10 @@ def _stop(process):
     process.join(5)
     if process.is_alive(): process.kill()
 
-def run_task(task, data_home, screen_trees, seed, timeout, suite_kind="marginal", joint_configs=20, model_params=None):
+def run_task(task, data_home, screen_trees, seed, timeout, suite_kind="marginal", joint_configs=20, model_params=None, ordered=False):
     context = mp.get_context("spawn")
     receive,send = context.Pipe(False)
-    process = context.Process(target=_worker, args=(send,task,data_home,screen_trees,seed,suite_kind,joint_configs,model_params or {}))
+    process = context.Process(target=_worker, args=(send,task,data_home,screen_trees,seed,suite_kind,joint_configs,model_params or {},ordered))
     process.start()
     send.close()
     if not receive.poll(timeout):
@@ -187,6 +171,44 @@ def run_task(task, data_home, screen_trees, seed, timeout, suite_kind="marginal"
     receive.close()
     if not success: raise RuntimeError(result)
     return result
+
+@dataclass(frozen=True)
+class OrderComparison:
+    dataset:str
+    task:str
+    metric:str
+    baseline_score:float
+    ordered_score:float
+    baseline_loss:float
+    ordered_loss:float
+    baseline_fit:float
+    ordered_fit:float
+    train_rows:int
+    validation_rows:int
+    order_column:str
+
+    @property
+    def loss_change(self): return self.ordered_loss/self.baseline_loss-1
+
+    @property
+    def fit_change(self): return self.ordered_fit/self.baseline_fit-1
+
+    def as_dict(self): return vars(self) | {"loss_change":self.loss_change, "fit_change":self.fit_change}
+
+    def __repr__(self):
+        return (f"{self.dataset}: {self.metric} {self.baseline_score:.4g}→{self.ordered_score:.4g} "
+            f"({self.loss_change:+.1%} loss); fit {self.baseline_fit:.3g}→{self.ordered_fit:.3g}s ({self.fit_change:+.0%})")
+
+def compare_order(task, data_home=".data/meta_benchmark", screen_trees=8, seed=42, timeout=60):
+    "Compare the default forest with chronological target statistics on one temporal task."
+    baseline = run_task(task, data_home, screen_trees, seed, timeout, "baseline", model_params={"target_statistics":False})[0]
+    ordered = run_task(task, data_home, screen_trees, seed, timeout, "baseline", model_params={"target_statistics":True}, ordered=True)[0]
+    regression = task["task"] == "regression"
+    score = (lambda loss: loss**.5) if regression else (lambda loss: loss)
+    return OrderComparison(task["dataset_name"], task["task"], "rmse" if regression else "brier",
+        score(baseline["full_validation_loss"]), score(ordered["full_validation_loss"]),
+        baseline["full_validation_loss"], ordered["full_validation_loss"], baseline["full_fit_seconds"], ordered["full_fit_seconds"],
+        baseline["train_rows"], baseline["validation_rows"], ordered["order_column"])
 
 def _combined(results_dir, output):
     files = sorted(Path(results_dir).glob("*.csv"))
@@ -224,6 +246,8 @@ def main(
     split_prior_rows:float=None,                 # Regression split-score prior rows; model default when omitted
     class_weight_power:float=None,               # Classification inverse-frequency weighting; model default when omitted
     max_features:str=None,                       # Optional shared baseline fraction or sqrt
+    target_statistics:bool=True,                 # Add target-statistic representations
+    ordered:bool=False,                          # Run only temporal tasks using their time_on column
 ):
     "Run resumable FastForest sweeps over one canonical split per BeyondArena dataset."
     if suite_kind not in ("marginal", "joint", "baseline"): raise ValueError("suite_kind must be marginal, joint, or baseline")
@@ -231,7 +255,7 @@ def main(
     if replacement.lower() not in replacements: raise ValueError("replacement must be adaptive, true, or false")
     replacement = replacements[replacement.lower()]
     model_params = dict(replacement=replacement, min_node_size=min_node_size,
-        split_prior_rows=split_prior_rows, class_weight_power=class_weight_power)
+        split_prior_rows=split_prior_rows, class_weight_power=class_weight_power, target_statistics=target_statistics)
     if max_features is not None: model_params["max_features"] = max_features if max_features == "sqrt" else float(max_features)
     if joint_configs < 1: raise ValueError("joint_configs must be positive")
     root = Path(__file__).parents[1]
@@ -244,6 +268,7 @@ def main(
     results_dir = output/"results"
     results_dir.mkdir(exist_ok=True)
     tasks = pd.concat([beyond_manifest(resolve(metadata_csv), include_text),amlb_manifest(resolve(amlb_csv), data_home)], ignore_index=True, sort=False)
+    if ordered: tasks = tasks[(tasks.collection == "beyondarena") & (tasks.task_type == "temporal")]
     if task_names:
         selected = {name.strip() for name in task_names.split(",") if name.strip()}
         tasks = tasks[tasks.dataset.isin(selected)]
@@ -258,7 +283,7 @@ def main(
         print(f"[{number}/{len(pending)}] {name} ({row.task}, {int(row.rows)}×{int(row.features)})", flush=True)
         task = row.to_dict()
         try:
-            result = run_task(task, data_home, screen_trees, seed, task_timeout, suite_kind, joint_configs, model_params)
+            result = run_task(task, data_home, screen_trees, seed, task_timeout, suite_kind, joint_configs, model_params, ordered)
             pd.DataFrame(result).to_csv(results_dir/f"{name}.csv", index=False)
             total = _combined(results_dir, output/"all.csv")
             print(f"  complete · {len(list(results_dir.glob('*.csv')))} datasets in combined output", flush=True)

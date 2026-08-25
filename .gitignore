@@ -1,3 +1,5 @@
+catboost_info/
+_proc/
 data/
 __pycache__/
 .pytest_cache/
