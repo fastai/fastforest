@@ -16,101 +16,91 @@ from fastforest import FastForest,FastForestClassifier,feature_dependence,featur
 
 ### Regression
 
-<table style="width:100%;" data-quarto-postprocess="true">
-<colgroup>
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-</colgroup>
-<thead>
-<tr>
-<th data-quarto-table-cell-role="th">Dataset</th>
-<th data-quarto-table-cell-role="th">Model</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">RMSE ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">R² ↑</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Fit (s) ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Predict (s) ↓</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/440/sgemm+gpu+kernel+performance">SGEMM GPU</a></strong><br />
-<sub>241,600 rows · 14 features · numeric</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.06</td>
-<td style="text-align: right;"><strong>1.00</strong></td>
-<td style="text-align: right;"><strong>0.07</strong></td>
-<td style="text-align: right;"><strong>0.014</strong></td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">0.04</td>
-<td style="text-align: right;"><strong>1.00</strong></td>
-<td style="text-align: right;">0.30</td>
-<td style="text-align: right;"><strong>0.014</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;">0.04</td>
-<td style="text-align: right;"><strong>1.00</strong></td>
-<td style="text-align: right;">0.92</td>
-<td style="text-align: right;">0.035</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;"><strong>0.03</strong></td>
-<td style="text-align: right;"><strong>1.00</strong></td>
-<td style="text-align: right;">1.86</td>
-<td style="text-align: right;">0.136</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.20</td>
-<td style="text-align: right;">0.97</td>
-<td style="text-align: right;">1.23</td>
-<td style="text-align: right;">0.022</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/rossmann-store-sales">Rossmann Store Sales</a></strong><br />
-<sub>844,338 rows · 16 features · mixed</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.14</td>
-<td style="text-align: right;">0.89</td>
-<td style="text-align: right;"><strong>0.41</strong></td>
-<td style="text-align: right;">0.021</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">0.13</td>
-<td style="text-align: right;"><strong>0.91</strong></td>
-<td style="text-align: right;">2.56</td>
-<td style="text-align: right;"><strong>0.020</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;"><strong>0.12</strong></td>
-<td style="text-align: right;"><strong>0.91</strong></td>
-<td style="text-align: right;">6.55</td>
-<td style="text-align: right;">0.035</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">0.26</td>
-<td style="text-align: right;">0.61</td>
-<td style="text-align: right;">20.18</td>
-<td style="text-align: right;">0.078</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.30</td>
-<td style="text-align: right;">0.46</td>
-<td style="text-align: right;">2.87</td>
-<td style="text-align: right;">0.051</td>
-</tr>
-</tbody>
+<table>
+  <thead>
+    <tr>
+      <th>Dataset</th>
+      <th>Model</th>
+      <th align="right">RMSE ↓</th>
+      <th align="right">R² ↑</th>
+      <th align="right">Fit (s) ↓</th>
+      <th align="right">Predict (s) ↓</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/440/sgemm+gpu+kernel+performance">SGEMM GPU</a></strong><br><sub>241,600 rows · 14 features · numeric</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.06</td>
+      <td align="right"><strong>1.00</strong></td>
+      <td align="right"><strong>0.07</strong></td>
+      <td align="right"><strong>0.014</strong></td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">0.04</td>
+      <td align="right"><strong>1.00</strong></td>
+      <td align="right">0.30</td>
+      <td align="right"><strong>0.014</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">0.04</td>
+      <td align="right"><strong>1.00</strong></td>
+      <td align="right">0.92</td>
+      <td align="right">0.035</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right"><strong>0.03</strong></td>
+      <td align="right"><strong>1.00</strong></td>
+      <td align="right">1.86</td>
+      <td align="right">0.136</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.20</td>
+      <td align="right">0.97</td>
+      <td align="right">1.23</td>
+      <td align="right">0.022</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/rossmann-store-sales">Rossmann Store Sales</a></strong><br><sub>844,338 rows · 16 features · mixed</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.14</td>
+      <td align="right">0.89</td>
+      <td align="right"><strong>0.41</strong></td>
+      <td align="right">0.021</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">0.13</td>
+      <td align="right"><strong>0.91</strong></td>
+      <td align="right">2.56</td>
+      <td align="right"><strong>0.020</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.12</strong></td>
+      <td align="right"><strong>0.91</strong></td>
+      <td align="right">6.55</td>
+      <td align="right">0.035</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">0.26</td>
+      <td align="right">0.61</td>
+      <td align="right">20.18</td>
+      <td align="right">0.078</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.30</td>
+      <td align="right">0.46</td>
+      <td align="right">2.87</td>
+      <td align="right">0.051</td>
+    </tr>
+  </tbody>
 </table>
 
 <sub>Bold is best for that dataset and metric. AutoForest includes automatic sample sizing; autogrow additionally sizes the forest. FastForest rows were measured on an Apple M5 Max; the other rows on an Apple M4 Pro; fit includes preprocessing.</sub>
@@ -119,73 +109,63 @@ The SGEMM target is the log-transformed mean runtime.
 
 ### Classification
 
-<table style="width:100%;" data-quarto-postprocess="true">
-<colgroup>
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-</colgroup>
-<thead>
-<tr>
-<th data-quarto-table-cell-role="th">Dataset</th>
-<th data-quarto-table-cell-role="th">Model</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">F1 acc ↑</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Log loss ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Fit (s) ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Proba (s) ↓</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td rowspan="3"><strong><a href="https://archive.ics.uci.edu/dataset/31/covertype">Covertype</a></strong><br />
-<sub>581,012 rows · binary features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;"><strong>0.93</strong></td>
-<td style="text-align: right;"><strong>0.15</strong></td>
-<td style="text-align: right;"><strong>0.65</strong></td>
-<td style="text-align: right;"><strong>0.055</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">0.92</td>
-<td style="text-align: right;">0.17</td>
-<td style="text-align: right;">4.33</td>
-<td style="text-align: right;">0.210</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.74</td>
-<td style="text-align: right;">0.57</td>
-<td style="text-align: right;">2.38</td>
-<td style="text-align: right;">0.076</td>
-</tr>
-<tr>
-<td rowspan="3"><strong><a href="https://www.openml.org/d/1590">Adult Census Income</a></strong><br />
-<sub>48,842 rows · 14 features · mixed</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.81</td>
-<td style="text-align: right;">0.32</td>
-<td style="text-align: right;"><strong>0.09</strong></td>
-<td style="text-align: right;"><strong>0.007</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">0.80</td>
-<td style="text-align: right;">0.37</td>
-<td style="text-align: right;">0.96</td>
-<td style="text-align: right;">0.026</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>0.82</strong></td>
-<td style="text-align: right;"><strong>0.27</strong></td>
-<td style="text-align: right;">1.42</td>
-<td style="text-align: right;">0.027</td>
-</tr>
-</tbody>
+<table>
+  <thead>
+    <tr>
+      <th>Dataset</th>
+      <th>Model</th>
+      <th align="right">F1 acc ↑</th>
+      <th align="right">Log loss ↓</th>
+      <th align="right">Fit (s) ↓</th>
+      <th align="right">Proba (s) ↓</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="3"><strong><a href="https://archive.ics.uci.edu/dataset/31/covertype">Covertype</a></strong><br><sub>581,012 rows · binary features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right"><strong>0.93</strong></td>
+      <td align="right"><strong>0.15</strong></td>
+      <td align="right"><strong>0.65</strong></td>
+      <td align="right"><strong>0.055</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">0.92</td>
+      <td align="right">0.17</td>
+      <td align="right">4.33</td>
+      <td align="right">0.210</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.74</td>
+      <td align="right">0.57</td>
+      <td align="right">2.38</td>
+      <td align="right">0.076</td>
+    </tr>
+    <tr>
+      <td rowspan="3"><strong><a href="https://www.openml.org/d/1590">Adult Census Income</a></strong><br><sub>48,842 rows · 14 features · mixed</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.81</td>
+      <td align="right">0.32</td>
+      <td align="right"><strong>0.09</strong></td>
+      <td align="right"><strong>0.007</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">0.80</td>
+      <td align="right">0.37</td>
+      <td align="right">0.96</td>
+      <td align="right">0.026</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>0.82</strong></td>
+      <td align="right"><strong>0.27</strong></td>
+      <td align="right">1.42</td>
+      <td align="right">0.027</td>
+    </tr>
+  </tbody>
 </table>
 
 F1 acc is macro-averaged F1, giving every class equal weight. Covertype is passed with its supplied binary features; FastForest bundles exclusive indicators automatically.
@@ -280,516 +260,485 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
 
 ### Regression
 
-<table style="width:100%;" data-quarto-postprocess="true">
-<colgroup>
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-</colgroup>
-<thead>
-<tr>
-<th data-quarto-table-cell-role="th">Dataset</th>
-<th data-quarto-table-cell-role="th">Model</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">RMSE ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">R² ↑</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Fit (s) ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Predict (s) ↓</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td rowspan="3"><strong><a href="https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset">California Housing</a></strong><br />
-<sub>20,640 rows · 8 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.50</td>
-<td style="text-align: right;">0.81</td>
-<td style="text-align: right;"><strong>0.08</strong></td>
-<td style="text-align: right;"><strong>0.003</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">0.51</td>
-<td style="text-align: right;">0.80</td>
-<td style="text-align: right;">0.44</td>
-<td style="text-align: right;">0.013</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>0.47</strong></td>
-<td style="text-align: right;"><strong>0.83</strong></td>
-<td style="text-align: right;">0.96</td>
-<td style="text-align: right;">0.006</td>
-</tr>
-<tr>
-<td rowspan="3"><strong><a href="https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength">Concrete Strength</a></strong><br />
-<sub>1,030 rows · 8 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">5.80</td>
-<td style="text-align: right;">0.87</td>
-<td style="text-align: right;"><strong>0.01</strong></td>
-<td style="text-align: right;"><strong>0.001</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">5.46</td>
-<td style="text-align: right;">0.88</td>
-<td style="text-align: right;">0.06</td>
-<td style="text-align: right;">0.013</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>4.65</strong></td>
-<td style="text-align: right;"><strong>0.92</strong></td>
-<td style="text-align: right;">0.78</td>
-<td style="text-align: right;">0.005</td>
-</tr>
-<tr>
-<td rowspan="3"><strong><a href="https://www.openml.org/d/42225">Diamonds</a></strong><br />
-<sub>53,940 rows · 9 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">549</td>
-<td style="text-align: right;"><strong>0.98</strong></td>
-<td style="text-align: right;"><strong>0.16</strong></td>
-<td style="text-align: right;"><strong>0.008</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">550</td>
-<td style="text-align: right;"><strong>0.98</strong></td>
-<td style="text-align: right;">0.97</td>
-<td style="text-align: right;">0.032</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>541</strong></td>
-<td style="text-align: right;"><strong>0.98</strong></td>
-<td style="text-align: right;">1.27</td>
-<td style="text-align: right;">0.018</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.openml.org/d/42571">Allstate Claims</a></strong><br />
-<sub>188,318 rows · 130 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">1,920</td>
-<td style="text-align: right;">0.55</td>
-<td style="text-align: right;"><strong>0.87</strong></td>
-<td style="text-align: right;">0.042</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">1,909</td>
-<td style="text-align: right;">0.55</td>
-<td style="text-align: right;">2.83</td>
-<td style="text-align: right;"><strong>0.040</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;">1,911</td>
-<td style="text-align: right;">0.55</td>
-<td style="text-align: right;">4.60</td>
-<td style="text-align: right;">0.048</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td colspan="4" style="text-align: center;">timed out at 180s with 50 trees</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>1,861</strong></td>
-<td style="text-align: right;"><strong>0.58</strong></td>
-<td style="text-align: right;">4.29</td>
-<td style="text-align: right;">0.362</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008">Diabetes 130-US Hospitals</a></strong><br />
-<sub>101,766 rows · 46 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">2.16</td>
-<td style="text-align: right;">0.46</td>
-<td style="text-align: right;"><strong>0.36</strong></td>
-<td style="text-align: right;">0.019</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">2.16</td>
-<td style="text-align: right;">0.46</td>
-<td style="text-align: right;">0.72</td>
-<td style="text-align: right;"><strong>0.017</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;">2.16</td>
-<td style="text-align: right;">0.46</td>
-<td style="text-align: right;">1.43</td>
-<td style="text-align: right;">0.018</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">2.20</td>
-<td style="text-align: right;">0.45</td>
-<td style="text-align: right;">5.17</td>
-<td style="text-align: right;">0.158</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>2.13</strong></td>
-<td style="text-align: right;"><strong>0.48</strong></td>
-<td style="text-align: right;">2.35</td>
-<td style="text-align: right;">0.147</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/bluebook-for-bulldozers">Blue Book for Bulldozers</a></strong><br />
-<sub>412,698 rows · 52 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.25</td>
-<td style="text-align: right;">0.89</td>
-<td style="text-align: right;"><strong>0.68</strong></td>
-<td style="text-align: right;"><strong>0.011</strong></td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;"><strong>0.23</strong></td>
-<td style="text-align: right;"><strong>0.90</strong></td>
-<td style="text-align: right;">3.84</td>
-<td style="text-align: right;"><strong>0.011</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;"><strong>0.23</strong></td>
-<td style="text-align: right;"><strong>0.90</strong></td>
-<td style="text-align: right;">11.20</td>
-<td style="text-align: right;">0.021</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td colspan="4" style="text-align: center;">timed out</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.25</td>
-<td style="text-align: right;">0.89</td>
-<td style="text-align: right;">5.77</td>
-<td style="text-align: right;">0.096</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/walmart-recruiting-store-sales-forecasting">Walmart Store Sales</a></strong><br />
-<sub>421,570 rows · 15 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">3,688</td>
-<td style="text-align: right;">0.97</td>
-<td style="text-align: right;"><strong>0.30</strong></td>
-<td style="text-align: right;">0.021</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">2,802</td>
-<td style="text-align: right;"><strong>0.98</strong></td>
-<td style="text-align: right;">2.06</td>
-<td style="text-align: right;"><strong>0.016</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;"><strong>2,714</strong></td>
-<td style="text-align: right;"><strong>0.98</strong></td>
-<td style="text-align: right;">6.22</td>
-<td style="text-align: right;">0.032</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">5,028</td>
-<td style="text-align: right;">0.95</td>
-<td style="text-align: right;">13.53</td>
-<td style="text-align: right;">0.110</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">6,604</td>
-<td style="text-align: right;">0.91</td>
-<td style="text-align: right;">2.30</td>
-<td style="text-align: right;">0.065</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/ashrae-energy-prediction">ASHRAE Great Energy Predictor III</a></strong><br />
-<sub>20,216,100 rows · 15 features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.98</td>
-<td style="text-align: right;">0.79</td>
-<td style="text-align: right;"><strong>0.84</strong></td>
-<td style="text-align: right;">0.943</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">0.84</td>
-<td style="text-align: right;">0.84</td>
-<td style="text-align: right;">5.09</td>
-<td style="text-align: right;">0.879</td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;"><strong>0.82</strong></td>
-<td style="text-align: right;"><strong>0.85</strong></td>
-<td style="text-align: right;">13.25</td>
-<td style="text-align: right;">1.470</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td colspan="4" style="text-align: center;">timed out</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">1.43</td>
-<td style="text-align: right;">0.55</td>
-<td style="text-align: right;">28.75</td>
-<td style="text-align: right;"><strong>0.856</strong></td>
-</tr>
-</tbody>
+<table>
+  <thead>
+    <tr>
+      <th>Dataset</th>
+      <th>Model</th>
+      <th align="right">RMSE ↓</th>
+      <th align="right">R² ↑</th>
+      <th align="right">Fit (s) ↓</th>
+      <th align="right">Predict (s) ↓</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="3"><strong><a href="https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset">California Housing</a></strong><br><sub>20,640 rows · 8 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.50</td>
+      <td align="right">0.81</td>
+      <td align="right"><strong>0.08</strong></td>
+      <td align="right"><strong>0.003</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">0.51</td>
+      <td align="right">0.80</td>
+      <td align="right">0.44</td>
+      <td align="right">0.013</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>0.47</strong></td>
+      <td align="right"><strong>0.83</strong></td>
+      <td align="right">0.96</td>
+      <td align="right">0.006</td>
+    </tr>
+    <tr>
+      <td rowspan="3"><strong><a href="https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength">Concrete Strength</a></strong><br><sub>1,030 rows · 8 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">5.80</td>
+      <td align="right">0.87</td>
+      <td align="right"><strong>0.01</strong></td>
+      <td align="right"><strong>0.001</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">5.46</td>
+      <td align="right">0.88</td>
+      <td align="right">0.06</td>
+      <td align="right">0.013</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>4.65</strong></td>
+      <td align="right"><strong>0.92</strong></td>
+      <td align="right">0.78</td>
+      <td align="right">0.005</td>
+    </tr>
+    <tr>
+      <td rowspan="3"><strong><a href="https://www.openml.org/d/42225">Diamonds</a></strong><br><sub>53,940 rows · 9 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">549</td>
+      <td align="right"><strong>0.98</strong></td>
+      <td align="right"><strong>0.16</strong></td>
+      <td align="right"><strong>0.008</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">550</td>
+      <td align="right"><strong>0.98</strong></td>
+      <td align="right">0.97</td>
+      <td align="right">0.032</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>541</strong></td>
+      <td align="right"><strong>0.98</strong></td>
+      <td align="right">1.27</td>
+      <td align="right">0.018</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/42571">Allstate Claims</a></strong><br><sub>188,318 rows · 130 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">1,920</td>
+      <td align="right">0.55</td>
+      <td align="right"><strong>0.87</strong></td>
+      <td align="right">0.042</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">1,909</td>
+      <td align="right">0.55</td>
+      <td align="right">2.83</td>
+      <td align="right"><strong>0.040</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">1,911</td>
+      <td align="right">0.55</td>
+      <td align="right">4.60</td>
+      <td align="right">0.048</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td colspan="4" align="center">timed out at 180s with 50 trees</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>1,861</strong></td>
+      <td align="right"><strong>0.58</strong></td>
+      <td align="right">4.29</td>
+      <td align="right">0.362</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008">Diabetes 130-US Hospitals</a></strong><br><sub>101,766 rows · 46 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">2.16</td>
+      <td align="right">0.46</td>
+      <td align="right"><strong>0.36</strong></td>
+      <td align="right">0.019</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">2.16</td>
+      <td align="right">0.46</td>
+      <td align="right">0.72</td>
+      <td align="right"><strong>0.017</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">2.16</td>
+      <td align="right">0.46</td>
+      <td align="right">1.43</td>
+      <td align="right">0.018</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">2.20</td>
+      <td align="right">0.45</td>
+      <td align="right">5.17</td>
+      <td align="right">0.158</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>2.13</strong></td>
+      <td align="right"><strong>0.48</strong></td>
+      <td align="right">2.35</td>
+      <td align="right">0.147</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/bluebook-for-bulldozers">Blue Book for Bulldozers</a></strong><br><sub>412,698 rows · 52 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.25</td>
+      <td align="right">0.89</td>
+      <td align="right"><strong>0.68</strong></td>
+      <td align="right"><strong>0.011</strong></td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right"><strong>0.23</strong></td>
+      <td align="right"><strong>0.90</strong></td>
+      <td align="right">3.84</td>
+      <td align="right"><strong>0.011</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.23</strong></td>
+      <td align="right"><strong>0.90</strong></td>
+      <td align="right">11.20</td>
+      <td align="right">0.021</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td colspan="4" align="center">timed out</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.25</td>
+      <td align="right">0.89</td>
+      <td align="right">5.77</td>
+      <td align="right">0.096</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/walmart-recruiting-store-sales-forecasting">Walmart Store Sales</a></strong><br><sub>421,570 rows · 15 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">3,688</td>
+      <td align="right">0.97</td>
+      <td align="right"><strong>0.30</strong></td>
+      <td align="right">0.021</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">2,802</td>
+      <td align="right"><strong>0.98</strong></td>
+      <td align="right">2.06</td>
+      <td align="right"><strong>0.016</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>2,714</strong></td>
+      <td align="right"><strong>0.98</strong></td>
+      <td align="right">6.22</td>
+      <td align="right">0.032</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">5,028</td>
+      <td align="right">0.95</td>
+      <td align="right">13.53</td>
+      <td align="right">0.110</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">6,604</td>
+      <td align="right">0.91</td>
+      <td align="right">2.30</td>
+      <td align="right">0.065</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/ashrae-energy-prediction">ASHRAE Great Energy Predictor III</a></strong><br><sub>20,216,100 rows · 15 features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.98</td>
+      <td align="right">0.79</td>
+      <td align="right"><strong>0.84</strong></td>
+      <td align="right">0.943</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">0.84</td>
+      <td align="right">0.84</td>
+      <td align="right">5.09</td>
+      <td align="right">0.879</td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.82</strong></td>
+      <td align="right"><strong>0.85</strong></td>
+      <td align="right">13.25</td>
+      <td align="right">1.470</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td colspan="4" align="center">timed out</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">1.43</td>
+      <td align="right">0.55</td>
+      <td align="right">28.75</td>
+      <td align="right"><strong>0.856</strong></td>
+    </tr>
+  </tbody>
 </table>
 
 For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-learn’s official preprocessing guidance and examples](https://scikit-learn.org/stable/auto_examples/compose/plot_column_transformer_mixed_types.html): wholly numeric columns are parsed and median-imputed, categorical columns use one-hot encoding through 20 levels and target encoding above that, and HistGBM uses native categoricals through its 255-level limit. This numeric parsing is needed for sensible handling of raw CSV-like tables; otherwise the pipeline uses the documented sklearn behavior. fastforest requires no custom preprocessing and takes the original datasets directly. sklearn RF timed out on a smaller Allstate run, so its default configuration was not run. For validation, Blue Book uses its final 12,000 rows, Walmart uses a 12-week chronological holdout to match the competition’s future-period forecasting setup, Rossmann uses its final six weeks, and ASHRAE uses December 2016. On those four datasets the FastForest models set `order=` to the split column. The Target statistics section under Data preparation describes what the declared order changes.
 
 ### Classification
 
-<table style="width:100%;" data-quarto-postprocess="true">
-<colgroup>
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-<col style="width: 16%" />
-</colgroup>
-<thead>
-<tr>
-<th data-quarto-table-cell-role="th">Dataset</th>
-<th data-quarto-table-cell-role="th">Model</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">F1 acc ↑</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Log loss ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Fit (s) ↓</th>
-<th style="text-align: right;" data-quarto-table-cell-role="th">Proba (s) ↓</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td rowspan="3"><strong><a href="https://www.openml.org/d/1461">Bank Marketing</a></strong><br />
-<sub>45,211 rows · 16 mixed features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;"><strong>0.76</strong></td>
-<td style="text-align: right;"><strong>0.20</strong></td>
-<td style="text-align: right;"><strong>0.07</strong></td>
-<td style="text-align: right;"><strong>0.006</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">0.72</td>
-<td style="text-align: right;">0.23</td>
-<td style="text-align: right;">0.29</td>
-<td style="text-align: right;">0.025</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>0.76</strong></td>
-<td style="text-align: right;"><strong>0.20</strong></td>
-<td style="text-align: right;">1.37</td>
-<td style="text-align: right;">0.026</td>
-</tr>
-<tr>
-<td rowspan="3"><strong><a href="https://www.openml.org/d/42733">Click Prediction Small</a></strong><br />
-<sub>39,948 rows · 11 mixed features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;"><strong>0.54</strong></td>
-<td style="text-align: right;">0.44</td>
-<td style="text-align: right;"><strong>0.16</strong></td>
-<td style="text-align: right;"><strong>0.010</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;"><strong>0.54</strong></td>
-<td style="text-align: right;">0.44</td>
-<td style="text-align: right;">0.47</td>
-<td style="text-align: right;">0.027</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.52</td>
-<td style="text-align: right;"><strong>0.41</strong></td>
-<td style="text-align: right;">0.72</td>
-<td style="text-align: right;">0.017</td>
-</tr>
-<tr>
-<td rowspan="3"><strong><a href="https://www.openml.org/d/40685">Statlog Shuttle</a></strong><br />
-<sub>58,000 rows · 9 numeric features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.76</td>
-<td style="text-align: right;"><strong>0.00</strong></td>
-<td style="text-align: right;"><strong>0.02</strong></td>
-<td style="text-align: right;"><strong>0.002</strong></td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;"><strong>0.85</strong></td>
-<td style="text-align: right;"><strong>0.00</strong></td>
-<td style="text-align: right;">0.21</td>
-<td style="text-align: right;">0.014</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.58</td>
-<td style="text-align: right;">0.24</td>
-<td style="text-align: right;">0.71</td>
-<td style="text-align: right;">0.012</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.openml.org/d/41672">Airlines Delay</a></strong><br />
-<sub>539,383 rows · 7 mixed features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;"><strong>0.66</strong></td>
-<td style="text-align: right;"><strong>0.61</strong></td>
-<td style="text-align: right;"><strong>0.31</strong></td>
-<td style="text-align: right;">0.070</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;"><strong>0.66</strong></td>
-<td style="text-align: right;"><strong>0.61</strong></td>
-<td style="text-align: right;">1.56</td>
-<td style="text-align: right;"><strong>0.069</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;"><strong>0.66</strong></td>
-<td style="text-align: right;"><strong>0.61</strong></td>
-<td style="text-align: right;">2.83</td>
-<td style="text-align: right;">0.083</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;">0.63</td>
-<td style="text-align: right;">0.70</td>
-<td style="text-align: right;">139.53</td>
-<td style="text-align: right;">0.409</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.64</td>
-<td style="text-align: right;">0.62</td>
-<td style="text-align: right;">2.18</td>
-<td style="text-align: right;">0.095</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.openml.org/d/42769">HIGGS</a></strong><br />
-<sub>1,000,000 rows · 28 numeric features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.72</td>
-<td style="text-align: right;">0.54</td>
-<td style="text-align: right;"><strong>0.80</strong></td>
-<td style="text-align: right;">0.074</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">0.72</td>
-<td style="text-align: right;">0.54</td>
-<td style="text-align: right;">3.58</td>
-<td style="text-align: right;"><strong>0.065</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;"><strong>0.73</strong></td>
-<td style="text-align: right;"><strong>0.53</strong></td>
-<td style="text-align: right;">6.25</td>
-<td style="text-align: right;">0.095</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;"><strong>0.73</strong></td>
-<td style="text-align: right;"><strong>0.53</strong></td>
-<td style="text-align: right;">27.68</td>
-<td style="text-align: right;">0.672</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;"><strong>0.73</strong></td>
-<td style="text-align: right;"><strong>0.53</strong></td>
-<td style="text-align: right;">2.91</td>
-<td style="text-align: right;">0.103</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.openml.org/d/42732">San Francisco Police Incidents</a></strong><br />
-<sub>2,215,023 rows · 9 mixed features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.47</td>
-<td style="text-align: right;">0.36</td>
-<td style="text-align: right;"><strong>1.34</strong></td>
-<td style="text-align: right;">0.291</td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">0.47</td>
-<td style="text-align: right;">0.36</td>
-<td style="text-align: right;">4.30</td>
-<td style="text-align: right;"><strong>0.247</strong></td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;">0.47</td>
-<td style="text-align: right;">0.35</td>
-<td style="text-align: right;">7.49</td>
-<td style="text-align: right;">0.393</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;"><strong>0.55</strong></td>
-<td style="text-align: right;">0.37</td>
-<td style="text-align: right;">24.16</td>
-<td style="text-align: right;">1.894</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.47</td>
-<td style="text-align: right;"><strong>0.34</strong></td>
-<td style="text-align: right;">7.18</td>
-<td style="text-align: right;">0.525</td>
-</tr>
-<tr>
-<td rowspan="5"><strong><a href="https://www.openml.org/d/42746">KDD Cup 1999</a></strong><br />
-<sub>4,898,431 rows · 41 mixed features</sub></td>
-<td><strong>fastforest</strong></td>
-<td style="text-align: right;">0.48</td>
-<td style="text-align: right;"><strong>0.00</strong></td>
-<td style="text-align: right;"><strong>3.63</strong></td>
-<td style="text-align: right;"><strong>0.186</strong></td>
-</tr>
-<tr>
-<td>AutoForest</td>
-<td style="text-align: right;">0.61</td>
-<td style="text-align: right;"><strong>0.00</strong></td>
-<td style="text-align: right;">11.18</td>
-<td style="text-align: right;">0.216</td>
-</tr>
-<tr>
-<td>autogrow</td>
-<td style="text-align: right;">0.61</td>
-<td style="text-align: right;"><strong>0.00</strong></td>
-<td style="text-align: right;">18.62</td>
-<td style="text-align: right;">0.252</td>
-</tr>
-<tr>
-<td>sklearn RF</td>
-<td style="text-align: right;"><strong>0.67</strong></td>
-<td style="text-align: right;"><strong>0.00</strong></td>
-<td style="text-align: right;">51.65</td>
-<td style="text-align: right;">1.976</td>
-</tr>
-<tr>
-<td>sklearn HistGBM</td>
-<td style="text-align: right;">0.37</td>
-<td style="text-align: right;">0.68</td>
-<td style="text-align: right;">29.93</td>
-<td style="text-align: right;">2.259</td>
-</tr>
-</tbody>
+<table>
+  <thead>
+    <tr>
+      <th>Dataset</th>
+      <th>Model</th>
+      <th align="right">F1 acc ↑</th>
+      <th align="right">Log loss ↓</th>
+      <th align="right">Fit (s) ↓</th>
+      <th align="right">Proba (s) ↓</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="3"><strong><a href="https://www.openml.org/d/1461">Bank Marketing</a></strong><br><sub>45,211 rows · 16 mixed features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right"><strong>0.76</strong></td>
+      <td align="right"><strong>0.20</strong></td>
+      <td align="right"><strong>0.07</strong></td>
+      <td align="right"><strong>0.006</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">0.72</td>
+      <td align="right">0.23</td>
+      <td align="right">0.29</td>
+      <td align="right">0.025</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>0.76</strong></td>
+      <td align="right"><strong>0.20</strong></td>
+      <td align="right">1.37</td>
+      <td align="right">0.026</td>
+    </tr>
+    <tr>
+      <td rowspan="3"><strong><a href="https://www.openml.org/d/42733">Click Prediction Small</a></strong><br><sub>39,948 rows · 11 mixed features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right"><strong>0.54</strong></td>
+      <td align="right">0.44</td>
+      <td align="right"><strong>0.16</strong></td>
+      <td align="right"><strong>0.010</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right"><strong>0.54</strong></td>
+      <td align="right">0.44</td>
+      <td align="right">0.47</td>
+      <td align="right">0.027</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.52</td>
+      <td align="right"><strong>0.41</strong></td>
+      <td align="right">0.72</td>
+      <td align="right">0.017</td>
+    </tr>
+    <tr>
+      <td rowspan="3"><strong><a href="https://www.openml.org/d/40685">Statlog Shuttle</a></strong><br><sub>58,000 rows · 9 numeric features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.76</td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right"><strong>0.02</strong></td>
+      <td align="right"><strong>0.002</strong></td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right"><strong>0.85</strong></td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right">0.21</td>
+      <td align="right">0.014</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.58</td>
+      <td align="right">0.24</td>
+      <td align="right">0.71</td>
+      <td align="right">0.012</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/41672">Airlines Delay</a></strong><br><sub>539,383 rows · 7 mixed features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right"><strong>0.66</strong></td>
+      <td align="right"><strong>0.61</strong></td>
+      <td align="right"><strong>0.31</strong></td>
+      <td align="right">0.070</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right"><strong>0.66</strong></td>
+      <td align="right"><strong>0.61</strong></td>
+      <td align="right">1.56</td>
+      <td align="right"><strong>0.069</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.66</strong></td>
+      <td align="right"><strong>0.61</strong></td>
+      <td align="right">2.83</td>
+      <td align="right">0.083</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right">0.63</td>
+      <td align="right">0.70</td>
+      <td align="right">139.53</td>
+      <td align="right">0.409</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.64</td>
+      <td align="right">0.62</td>
+      <td align="right">2.18</td>
+      <td align="right">0.095</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/42769">HIGGS</a></strong><br><sub>1,000,000 rows · 28 numeric features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.72</td>
+      <td align="right">0.54</td>
+      <td align="right"><strong>0.80</strong></td>
+      <td align="right">0.074</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">0.72</td>
+      <td align="right">0.54</td>
+      <td align="right">3.58</td>
+      <td align="right"><strong>0.065</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.73</strong></td>
+      <td align="right"><strong>0.53</strong></td>
+      <td align="right">6.25</td>
+      <td align="right">0.095</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right"><strong>0.73</strong></td>
+      <td align="right"><strong>0.53</strong></td>
+      <td align="right">27.68</td>
+      <td align="right">0.672</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right"><strong>0.73</strong></td>
+      <td align="right"><strong>0.53</strong></td>
+      <td align="right">2.91</td>
+      <td align="right">0.103</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/42732">San Francisco Police Incidents</a></strong><br><sub>2,215,023 rows · 9 mixed features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.47</td>
+      <td align="right">0.36</td>
+      <td align="right"><strong>1.34</strong></td>
+      <td align="right">0.291</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">0.47</td>
+      <td align="right">0.36</td>
+      <td align="right">4.30</td>
+      <td align="right"><strong>0.247</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">0.47</td>
+      <td align="right">0.35</td>
+      <td align="right">7.49</td>
+      <td align="right">0.393</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right"><strong>0.55</strong></td>
+      <td align="right">0.37</td>
+      <td align="right">24.16</td>
+      <td align="right">1.894</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.47</td>
+      <td align="right"><strong>0.34</strong></td>
+      <td align="right">7.18</td>
+      <td align="right">0.525</td>
+    </tr>
+    <tr>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/42746">KDD Cup 1999</a></strong><br><sub>4,898,431 rows · 41 mixed features</sub></td>
+      <td><strong>fastforest</strong></td>
+      <td align="right">0.48</td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right"><strong>3.63</strong></td>
+      <td align="right"><strong>0.186</strong></td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">0.61</td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right">11.18</td>
+      <td align="right">0.216</td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">0.61</td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right">18.62</td>
+      <td align="right">0.252</td>
+    </tr>
+    <tr>
+      <td>sklearn RF</td>
+      <td align="right"><strong>0.67</strong></td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right">51.65</td>
+      <td align="right">1.976</td>
+    </tr>
+    <tr>
+      <td>sklearn HistGBM</td>
+      <td align="right">0.37</td>
+      <td align="right">0.68</td>
+      <td align="right">29.93</td>
+      <td align="right">2.259</td>
+    </tr>
+  </tbody>
 </table>
 
 ### Reproducing the benchmarks
