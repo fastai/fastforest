@@ -194,6 +194,10 @@ class _ForestFacade:
         "Return constructor parameters."
         return {name:getattr(self, name) for name in self._param_names}
 
+    def _stat_options(self):
+        return (self.target_statistics, self.min_stat_cardinality, self.min_rows_per_level, self.stat_prior_rows,
+            self.stat_permutations, self.frequency, self.keep_rank, self.order_buckets, self.natural_sort)
+
     def __repr__(self):
         args = f"n_trees={self.n_trees}, min_node_size={self.min_node_size}"
         if self.seed is not None: args += f", seed={self.seed}"
@@ -203,13 +207,20 @@ class _ForestFacade:
 class FastForest(_ForestFacade):
     "A fast approximate-forest regressor."
     _param_names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples", "split_prior_rows",
-        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing")
+        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing",
+        "target_statistics", "min_stat_cardinality", "min_rows_per_level", "stat_prior_rows", "stat_permutations",
+        "frequency", "keep_rank", "order_buckets", "natural_sort")
     def __init__(self, n_trees=_REG_DEFAULTS["n_trees"], min_node_size=_REG_DEFAULTS["min_node_size"],
         bootstrap_fraction=_REG_DEFAULTS["bootstrap_fraction"], bootstrap_max=_REG_DEFAULTS["bootstrap_max"], replacement=None,
         max_node_samples=_REG_DEFAULTS["max_node_samples"], split_prior_rows=_REG_DEFAULTS["split_prior_rows"],
         cutoff_divisor=_REG_DEFAULTS["cutoff_divisor"], random_splitter=_REG_DEFAULTS["random_splitter"],
         max_features=_REG_DEFAULTS["max_features"], seed=_REG_DEFAULTS["seed"], oob=_REG_DEFAULTS["oob"], missing_values=None,
-        date_columns=None, allow_new_missing=_REG_DEFAULTS["allow_new_missing"]):
+        date_columns=None, allow_new_missing=_REG_DEFAULTS["allow_new_missing"],
+        target_statistics=_REG_DEFAULTS["target_statistics"], min_stat_cardinality=_REG_DEFAULTS["min_stat_cardinality"],
+        min_rows_per_level=_REG_DEFAULTS["min_rows_per_level"], stat_prior_rows=_REG_DEFAULTS["stat_prior_rows"],
+        stat_permutations=_REG_DEFAULTS["stat_permutations"], frequency=_REG_DEFAULTS["frequency"],
+        keep_rank=_REG_DEFAULTS["keep_rank"], natural_sort=_REG_DEFAULTS["natural_sort"],
+        order_buckets=_REG_DEFAULTS["order_buckets"]):
         self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
         self.bootstrap_max,self.replacement = bootstrap_max,replacement
         self.max_node_samples,self.split_prior_rows = max_node_samples,split_prior_rows
@@ -218,6 +229,9 @@ class FastForest(_ForestFacade):
         self.missing_values = missing_values
         self.date_columns = date_columns
         self.allow_new_missing = allow_new_missing
+        self.target_statistics,self.min_stat_cardinality,self.min_rows_per_level = target_statistics,min_stat_cardinality,min_rows_per_level
+        self.stat_prior_rows,self.stat_permutations = stat_prior_rows,stat_permutations
+        self.frequency,self.keep_rank,self.order_buckets,self.natural_sort = frequency,keep_rank,order_buckets,natural_sort
         self._model = None
 
     def fit(self, X, y):
@@ -226,8 +240,8 @@ class FastForest(_ForestFacade):
         n_rows,pool_indices,X,y = _fit_pool(X, y, self.n_trees, self.bootstrap_fraction, self.bootstrap_max,
             replacement, self.oob, self.seed)
         y = _vector(y, indices=pool_indices)
-        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed)
-        X = self._encoder.fit_transform(X, pool_indices)
+        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed, self._stat_options())
+        X = self._encoder.fit_transform(X, pool_indices, y=y)
         self.date_columns_ = self._encoder.date_columns
         self.n_trees_,sample_rows,_ = _fit_plan(n_rows, self.n_trees, self.bootstrap_fraction, self.bootstrap_max,
             replacement, self.oob, 1)
@@ -236,7 +250,7 @@ class FastForest(_ForestFacade):
         tree_args = (self.n_trees_, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max, sample_rows, replacement)
         split_args = (self.max_node_samples, self.split_prior_rows, self.cutoff_divisor)
         max_features = _native_max_features(self.max_features)
-        native = _Forest.fit(X, y, self._encoder.cutoff_values, self._encoder.cutoff_offsets, self._encoder.missing_ranks,
+        native = _Forest.fit(X, y, *self._encoder.fit_layout, self._encoder.fit_alias,
             *tree_args, *split_args, self.seed, self.oob, self.random_splitter, *max_features, None)
         return _finish_regression(self, self._encoder, native, pool_indices)
 
@@ -290,13 +304,20 @@ class FastForestClassifier(_ForestFacade):
     "A fast multiclass approximate-forest classifier."
     _analysis_metric = "accuracy"
     _param_names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples", "class_weight_power",
-        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing")
+        "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing",
+        "target_statistics", "min_stat_cardinality", "min_rows_per_level", "stat_prior_rows", "stat_permutations",
+        "frequency", "keep_rank", "order_buckets", "natural_sort")
     def __init__(self, n_trees=_CLASS_DEFAULTS["n_trees"], min_node_size=_CLASS_DEFAULTS["min_node_size"],
         bootstrap_fraction=_CLASS_DEFAULTS["bootstrap_fraction"], bootstrap_max=_CLASS_DEFAULTS["bootstrap_max"], replacement=None,
         max_node_samples=_CLASS_DEFAULTS["max_node_samples"], class_weight_power=_CLASS_DEFAULTS["class_weight_power"],
         cutoff_divisor=_CLASS_DEFAULTS["cutoff_divisor"], random_splitter=_CLASS_DEFAULTS["random_splitter"],
         max_features=_CLASS_DEFAULTS["max_features"], seed=_CLASS_DEFAULTS["seed"], oob=_CLASS_DEFAULTS["oob"], missing_values=None,
-        date_columns=None, allow_new_missing=_CLASS_DEFAULTS["allow_new_missing"]):
+        date_columns=None, allow_new_missing=_CLASS_DEFAULTS["allow_new_missing"],
+        target_statistics=_CLASS_DEFAULTS["target_statistics"], min_stat_cardinality=_CLASS_DEFAULTS["min_stat_cardinality"],
+        min_rows_per_level=_CLASS_DEFAULTS["min_rows_per_level"], stat_prior_rows=_CLASS_DEFAULTS["stat_prior_rows"],
+        stat_permutations=_CLASS_DEFAULTS["stat_permutations"], frequency=_CLASS_DEFAULTS["frequency"],
+        keep_rank=_CLASS_DEFAULTS["keep_rank"], natural_sort=_CLASS_DEFAULTS["natural_sort"],
+        order_buckets=_CLASS_DEFAULTS["order_buckets"]):
         self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
         self.bootstrap_max,self.replacement = bootstrap_max,replacement
         self.max_node_samples,self.class_weight_power = max_node_samples,class_weight_power
@@ -305,6 +326,9 @@ class FastForestClassifier(_ForestFacade):
         self.missing_values = missing_values
         self.date_columns = date_columns
         self.allow_new_missing = allow_new_missing
+        self.target_statistics,self.min_stat_cardinality,self.min_rows_per_level = target_statistics,min_stat_cardinality,min_rows_per_level
+        self.stat_prior_rows,self.stat_permutations = stat_prior_rows,stat_permutations
+        self.frequency,self.keep_rank,self.order_buckets,self.natural_sort = frequency,keep_rank,order_buckets,natural_sort
         self._model = None
 
     def fit(self, X, y):
@@ -314,8 +338,8 @@ class FastForestClassifier(_ForestFacade):
             replacement, self.oob, self.seed, classification=True)
         self.classes_,y = _class_vector(y, pool_indices)
         self.n_classes_ = len(self.classes_)
-        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed)
-        X = self._encoder.fit_transform(X, pool_indices)
+        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed, self._stat_options())
+        X = self._encoder.fit_transform(X, pool_indices, y_class=y if self.n_classes_ == 2 else None)
         self.date_columns_ = self._encoder.date_columns
         outputs = max(1, self.n_classes_-1)
         self.n_trees_,sample_rows,_ = _fit_plan(n_rows, self.n_trees, self.bootstrap_fraction, self.bootstrap_max,
@@ -325,8 +349,7 @@ class FastForestClassifier(_ForestFacade):
         tree_args = (self.n_trees_, self.min_node_size, self.bootstrap_fraction, self.bootstrap_max, sample_rows, replacement)
         split_args = (self.max_node_samples, self.class_weight_power, self.cutoff_divisor)
         max_features = _native_max_features(self.max_features)
-        native = _ClassifierForest.fit(X, y, self.n_classes_, self._encoder.cutoff_values, self._encoder.cutoff_offsets,
-            self._encoder.missing_ranks,
+        native = _ClassifierForest.fit(X, y, self.n_classes_, *self._encoder.fit_layout, self._encoder.fit_alias,
             *tree_args, *split_args, self.seed, self.oob, self.random_splitter, *max_features, None)
         return _finish_classifier(self, self._encoder, native, pool_indices, y)
 

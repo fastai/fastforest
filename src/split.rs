@@ -1,4 +1,6 @@
-use ndarray::{ArrayView1, ArrayView2};
+use ndarray::ArrayView1;
+
+use crate::projection::TrainingData;
 use rand::RngExt;
 use rand::rngs::StdRng;
 use std::collections::HashSet;
@@ -38,9 +40,10 @@ struct Candidate {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DenseFeature {
-    pub(crate) cut_col: usize,
     pub(crate) cardinality: usize,
     pub(crate) offset: usize,
+    pub(crate) column: usize,
+    pub(crate) table: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,17 +72,17 @@ struct EvaluationWindow {
 }
 
 pub(crate) fn find_split(
-    x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
-    rng: &mut StdRng, scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, universe: &[usize], config: &Config, cutoff_offsets: &[usize],
+    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut SplitScratch,
 ) -> Split {
     let max_samples = evaluation_rows(node.n_rows, config);
-    if x.ncols() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) {
+    if universe.is_empty() || node.n_rows < config.min_node_size || all_same(y, node, max_samples) {
         return leaf(y, node);
     }
     if config.random_splitter {
-        random_split(x, y, node, config, missing_ranks, rng, scratch)
+        random_split(x, y, node, universe, config, missing_ranks, rng, scratch)
     } else {
-        histogram_split(x, y, node, config, cutoff_offsets, missing_ranks, rng, scratch)
+        histogram_split(x, y, node, universe, config, cutoff_offsets, missing_ranks, rng, scratch)
     }
 }
 
@@ -122,7 +125,7 @@ pub(crate) fn evaluation_start(node: NodeRows<'_>, n_rows: usize, rng: &mut StdR
 }
 
 pub(crate) fn propose_cutoffs(
-    x: ArrayView2<'_, u32>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, keys: &mut HashSet<u64>,
+    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, keys: &mut HashSet<u64>,
     mut add: impl FnMut(usize, u32),
 ) {
     keys.clear();
@@ -134,7 +137,7 @@ pub(crate) fn propose_cutoffs(
     for _ in 0..attempts {
         let cut_col = features[rng.random_range(0..features.len())];
         let position = rng.random_range(node.start..node.start + node.n_rows);
-        let cut_val = x[[node.rows[position] as usize, cut_col]];
+        let cut_val = x.value(node.rows[position] as usize, cut_col);
         let key = (cut_col as u64) << 32 | cut_val as u64;
         if keys.insert(key) {
             add(cut_col, cut_val)
@@ -143,18 +146,20 @@ pub(crate) fn propose_cutoffs(
 }
 
 pub(crate) fn dense_layout(
-    features: &[usize], n_features: usize, cutoff_offsets: &[usize], dense: &mut Vec<DenseFeature>, lookup: &mut Vec<usize>,
+    x: TrainingData<'_>, features: &[usize], cutoff_offsets: &[usize], dense: &mut Vec<DenseFeature>, lookup: &mut Vec<usize>,
     mut supported: impl FnMut(usize) -> bool,
 ) -> usize {
     dense.clear();
     lookup.clear();
-    lookup.resize(n_features, usize::MAX);
+    lookup.resize(x.n_features(), usize::MAX);
     let mut total_bins = 0;
     for &cut_col in features {
         let cardinality = cutoff_offsets[cut_col + 1] - cutoff_offsets[cut_col];
         if supported(cardinality) {
+            let (column, table) = x.source(cut_col);
+            let table = if table.is_empty() { usize::MAX } else { x.projections.offsets[cut_col] };
             lookup[cut_col] = dense.len();
-            dense.push(DenseFeature { cut_col, cardinality, offset: total_bins });
+            dense.push(DenseFeature { cardinality, offset: total_bins, column, table });
             total_bins += cardinality;
         }
     }
@@ -162,33 +167,39 @@ pub(crate) fn dense_layout(
 }
 
 pub(crate) fn fill_dense_bins(
-    x: ArrayView2<'_, u32>, node: NodeRows<'_>, start: usize, n_rows: usize, features: &[DenseFeature], mut add: impl FnMut(usize, usize),
+    x: TrainingData<'_>, node: NodeRows<'_>, start: usize, n_rows: usize, features: &[DenseFeature], mut add: impl FnMut(usize, usize),
 ) {
-    if let Some(data) = x.as_slice() {
+    let tables = &x.projections.tables;
+    if let Some(data) = x.matrix.as_slice() {
+        let cols = x.matrix.ncols();
         for &row in &node.rows[start..start + n_rows] {
             let row = row as usize;
-            let row_offset = row * x.ncols();
+            let row_offset = row * cols;
             for feature in features {
-                add(feature.offset + data[row_offset + feature.cut_col] as usize, row);
+                let raw = data[row_offset + feature.column];
+                let value = if feature.table == usize::MAX { raw } else { tables[feature.table + raw as usize] };
+                add(feature.offset + value as usize, row);
             }
         }
     } else {
         for &row in &node.rows[start..start + n_rows] {
             let row = row as usize;
             for feature in features {
-                add(feature.offset + x[[row, feature.cut_col]] as usize, row);
+                let raw = x.matrix[[row, feature.column]];
+                let value = if feature.table == usize::MAX { raw } else { tables[feature.table + raw as usize] };
+                add(feature.offset + value as usize, row);
             }
         }
     }
 }
 
-pub(crate) fn ranked_rows(
-    x: ArrayView2<'_, u32>, node: NodeRows<'_>, start: usize, n_rows: usize, cut_col: usize, rows: &mut Vec<RankedRow>,
-) {
+pub(crate) fn ranked_rows(x: TrainingData<'_>, node: NodeRows<'_>, start: usize, n_rows: usize, cut_col: usize, rows: &mut Vec<RankedRow>) {
+    let (column, table) = x.source(cut_col);
     rows.clear();
     rows.extend(node.rows[start..start + n_rows].iter().map(|&row| {
         let row = row as usize;
-        RankedRow { value: x[[row, cut_col]], row }
+        let raw = x.matrix[[row, column]];
+        RankedRow { value: if table.is_empty() { raw } else { table[raw as usize] }, row }
     }));
     rows.sort_unstable_by_key(|row| row.value);
 }
@@ -203,46 +214,26 @@ pub(crate) fn supported_equality(value: u32, cardinality: usize, equal: usize, t
 
 #[allow(clippy::too_many_arguments)]
 fn random_split(
-    x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, missing_ranks: &[u32], rng: &mut StdRng,
-    scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, universe: &[usize], config: &Config, missing_ranks: &[u32],
+    rng: &mut StdRng, scratch: &mut SplitScratch,
 ) -> Split {
     let used_n = evaluation_rows(node.n_rows, config);
-    let features = sample_features(x.ncols(), config, rng);
+    let features = sample_features(universe, config, rng);
     propose_candidates(x, node, used_n, &features, config.cutoff_divisor, rng, scratch);
     let window = evaluation_window(y, node, used_n, rng);
-    if let Some(data) = x.as_slice() {
-        for &row in &node.rows[window.start..window.start + window.n_rows] {
-            let row = row as usize;
-            let target = y[row];
-            let offset = row * x.ncols();
-            for candidate in &mut scratch.candidates {
-                let value = data[offset + candidate.cut_col];
-                if value == missing_ranks[candidate.cut_col] {
-                    candidate.missing_target += target;
-                    candidate.missing_sqr_target += target * target;
-                    candidate.missing_count += 1;
-                } else if value < candidate.cut_val {
-                    candidate.left_target += target;
-                    candidate.left_sqr_target += target * target;
-                    candidate.left_count += 1;
-                }
-            }
-        }
-    } else {
-        for &row in &node.rows[window.start..window.start + window.n_rows] {
-            let row = row as usize;
-            let target = y[row];
-            for candidate in &mut scratch.candidates {
-                let value = x[[row, candidate.cut_col]];
-                if value == missing_ranks[candidate.cut_col] {
-                    candidate.missing_target += target;
-                    candidate.missing_sqr_target += target * target;
-                    candidate.missing_count += 1;
-                } else if value < candidate.cut_val {
-                    candidate.left_target += target;
-                    candidate.left_sqr_target += target * target;
-                    candidate.left_count += 1;
-                }
+    for &row in &node.rows[window.start..window.start + window.n_rows] {
+        let row = row as usize;
+        let target = y[row];
+        for candidate in &mut scratch.candidates {
+            let value = x.value(row, candidate.cut_col);
+            if value == missing_ranks[candidate.cut_col] {
+                candidate.missing_target += target;
+                candidate.missing_sqr_target += target * target;
+                candidate.missing_count += 1;
+            } else if value < candidate.cut_val {
+                candidate.left_target += target;
+                candidate.left_sqr_target += target * target;
+                candidate.left_count += 1;
             }
         }
     }
@@ -251,8 +242,7 @@ fn random_split(
 }
 
 fn propose_candidates(
-    x: ArrayView2<'_, u32>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng,
-    scratch: &mut SplitScratch,
+    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, scratch: &mut SplitScratch,
 ) {
     scratch.candidates.clear();
     let (keys, candidates) = (&mut scratch.keys, &mut scratch.candidates);
@@ -262,18 +252,17 @@ fn propose_candidates(
 }
 
 fn histogram_split(
-    x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
-    rng: &mut StdRng, scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, universe: &[usize], config: &Config, cutoff_offsets: &[usize],
+    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut SplitScratch,
 ) -> Split {
-    let features = sample_features(x.ncols(), config, rng);
+    let features = sample_features(universe, config, rng);
     let window = evaluation_window(y, node, evaluation_rows(node.n_rows, config), rng);
     let impurity = weighted_loss(0.0, 0.0, 0, window.sum_target, window.sum_sqr_target, window.n_rows, config.split_prior_rows);
     let mut criterion = impurity;
     let mut best = None;
-    let total_bins =
-        dense_layout(&features, x.ncols(), cutoff_offsets, &mut scratch.dense_features, &mut scratch.dense_lookup, |cardinality| {
-            cardinality <= window.n_rows
-        });
+    let total_bins = dense_layout(x, &features, cutoff_offsets, &mut scratch.dense_features, &mut scratch.dense_lookup, |cardinality| {
+        cardinality <= window.n_rows
+    });
     scratch.bin_counts.clear();
     scratch.bin_targets.clear();
     scratch.bin_squares.clear();
@@ -483,9 +472,9 @@ fn histogram_split(
     finish_split(y, node, &window, best, criterion, impurity)
 }
 
-pub(crate) fn sample_features(n_features: usize, config: &Config, rng: &mut StdRng) -> Vec<usize> {
-    let selected = config.max_features.resolve(n_features).min(n_features);
-    rand::seq::index::sample(rng, n_features, selected).into_vec()
+pub(crate) fn sample_features(universe: &[usize], config: &Config, rng: &mut StdRng) -> Vec<usize> {
+    let selected = config.max_features.resolve(universe.len()).min(universe.len());
+    rand::seq::index::sample(rng, universe.len(), selected).into_iter().map(|index| universe[index]).collect()
 }
 
 #[inline(always)]
@@ -580,40 +569,17 @@ fn all_same(y: ArrayView1<'_, f32>, node: NodeRows<'_>, max_samples: usize) -> b
 }
 
 pub(crate) fn partition(
-    x: ArrayView2<'_, u32>, rows: &mut [u32], start: usize, n_rows: usize, cut_col: usize, cut_val: u32, equality: bool, missing_rank: u32,
+    x: TrainingData<'_>, rows: &mut [u32], start: usize, n_rows: usize, cut_col: usize, cut_val: u32, equality: bool, missing_rank: u32,
     missing_right: bool,
 ) -> usize {
-    let mut left = start;
-    let mut right = start + n_rows;
-    if missing_rank == u32::MAX {
-        if let Some(data) = x.as_slice() {
-            let cols = x.ncols();
-            while left < right {
-                let value = data[rows[left] as usize * cols + cut_col];
-                if if equality { value == cut_val } else { value < cut_val } {
-                    left += 1;
-                } else {
-                    right -= 1;
-                    rows.swap(left, right);
-                }
-            }
-            return left - start;
-        }
+    fn split_rows(
+        rows: &mut [u32], start: usize, n_rows: usize, cut_val: u32, equality: bool, missing_rank: u32, missing_right: bool,
+        value_at: impl Fn(u32) -> u32,
+    ) -> usize {
+        let mut left = start;
+        let mut right = start + n_rows;
         while left < right {
-            let value = x[[rows[left] as usize, cut_col]];
-            if if equality { value == cut_val } else { value < cut_val } {
-                left += 1;
-            } else {
-                right -= 1;
-                rows.swap(left, right);
-            }
-        }
-        return left - start;
-    }
-    if let Some(data) = x.as_slice() {
-        let cols = x.ncols();
-        while left < right {
-            let value = data[rows[left] as usize * cols + cut_col];
+            let value = value_at(rows[left]);
             if if value == missing_rank {
                 !missing_right
             } else if equality {
@@ -627,24 +593,25 @@ pub(crate) fn partition(
                 rows.swap(left, right);
             }
         }
-        return left - start;
+        left - start
     }
-    while left < right {
-        let value = x[[rows[left] as usize, cut_col]];
-        if if value == missing_rank {
-            !missing_right
-        } else if equality {
-            value == cut_val
+    let (column, table) = x.source(cut_col);
+    if let Some(data) = x.matrix.as_slice() {
+        let cols = x.matrix.ncols();
+        if table.is_empty() {
+            split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| data[row as usize * cols + column])
         } else {
-            value < cut_val
-        } {
-            left += 1;
-        } else {
-            right -= 1;
-            rows.swap(left, right);
+            split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| {
+                table[data[row as usize * cols + column] as usize]
+            })
         }
+    } else if table.is_empty() {
+        split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| x.matrix[[row as usize, column]])
+    } else {
+        split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| {
+            table[x.matrix[[row as usize, column]] as usize]
+        })
     }
-    left - start
 }
 
 fn weighted_loss(

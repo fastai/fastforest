@@ -1,0 +1,9 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "fastforest"
+  site-url: "https://fastai.github.io/fastforest"
+  description: "Fast approximate-forest models in Rust with Python bindings"
+  repo-branch: main
+  repo-url: "https://github.com/fastai/fastforest"

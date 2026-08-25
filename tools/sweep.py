@@ -5,7 +5,8 @@ import numpy as np
 from fastcore.script import call_parse
 from sklearn.model_selection import train_test_split
 
-from accuracy import Dataset,_rows,_stop,load_data,split_indices
+from accuracy import _stop
+from fastforest.datasets import Dataset,_rows,load_data,split_indices
 from fastforest import FastForest,FastForestClassifier
 from fastforest.tools import FOREST_PARAMS,forest_suite,screen,validate
 

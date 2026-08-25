@@ -19,6 +19,8 @@ def test_signed_zero_and_new_missing_preprocessing(tmp_path):
         FastForest(n_trees=2, seed=42).fit(train, X[:,0]).predict(missing)
     permissive = FastForest(n_trees=2, seed=42, allow_new_missing=True).fit(train, X[:,0])
     assert np.isfinite(permissive.predict(missing)).all()
+    numeric_permissive = FastForest(n_trees=2, seed=42, allow_new_missing=True).fit(X, X[:,0])
+    assert np.isfinite(numeric_permissive.predict(pd.DataFrame({"x0":[np.nan]}))).all() # the all-numeric fast path accepts new missing too
     config = [("defaults", {}, permissive.get_params())]
     assert np.isfinite(validate(permissive, train, X[:,0], missing, X[:2,0], config).results[0].validation_loss)
     permissive.save(tmp_path/"permissive.ffm")
@@ -50,6 +52,8 @@ def test_fit_predict_oob_story(tmp_path):
     assert np.mean(model.oob_counts_ > 0) >= 0.99
     assert np.array_equal(predictions, FastForest(n_trees=24, min_node_size=8,
         replacement=False, max_node_samples=80, seed=99, oob=True).fit(X, y).predict(X))
+    assert np.array_equal(predictions, FastForest(n_trees=24, min_node_size=8, replacement=False, max_node_samples=80,
+        seed=99, oob=True, target_statistics=True, frequency=True).fit(X, y).predict(X)) # continuous columns qualify nowhere, so statistics change nothing
 
     alternate = FastForest(n_trees=12, min_node_size=8, max_node_samples=80, seed=99,
         random_splitter=True, max_features="sqrt").fit(X, y)
@@ -105,11 +109,43 @@ def test_fit_predict_oob_story(tmp_path):
     assert [info.kind for info in mixed_model.column_info_] == ["numeric", "lexical", "lexical", "numeric", "discarded"]
     assert mixed_model.column_info_[3].all_int and mixed_model.column_info_[3].encoded_features == ("x3",)
     assert mixed_model.column_info_[4].encoded_features == ()
-    assert mixed_model.column_info_[2].encoded_features == ("x2",)
+    assert mixed_model.column_info_[2].encoded_features == ("x2",) # defaults add no derived features: the baseline forest
     assert len(mixed_model._encoder.missing_ranks) == len(mixed_model._encoder.encoded_names)
     assert mixed_model.column_info_[0].encoded_features == ("x0",) and not any(name.endswith("_missing") for name in mixed_model._encoder.encoded_names)
     assert mixed_model._encoder.missing_ranks[0] != np.iinfo(np.uint32).max
     assert mixed_model.column_info_[1].encoded_features == ("x1",)
+    stat_model = FastForest(n_trees=20, seed=42, missing_values={0:"NA"}, target_statistics=True, frequency=True).fit(mixed_frame, mixed_y)
+    assert stat_model.column_info_[2].encoded_features == ("x2", "x2_stat", "x2_count")
+    assert stat_model.column_info_[3].encoded_features == ("x3", "x3_stat", "x3_count")
+    stat_model.save(tmp_path/"statistics.ffm")
+    restored_stats = load(tmp_path/"statistics.ffm")
+    assert restored_stats._encoder.encoded_names == stat_model._encoder.encoded_names
+    assert np.array_equal(restored_stats.predict(mixed_frame[:20]), stat_model.predict(mixed_frame[:20]))
+    repeated_continuous = pd.DataFrame({"continuous":np.tile([.1,.2,.3,.4,.5,.6], 50)})
+    continuous_model = FastForest(n_trees=4, seed=42, target_statistics=True, frequency=True).fit(repeated_continuous, np.arange(300.))
+    assert continuous_model.column_info_[0].encoded_features == ("continuous", "continuous_stat", "continuous_count")
+    stat_encoder = _Encoder(missing_values={0:"NA"}, seed=42, stats=(True, 6, 4, 1.0, 1, True, True, 64, False))
+    train_stats = stat_encoder.fit_transform(mixed_frame, y=np.asarray(mixed_y, dtype=np.float32))
+    stat_column = list(stat_encoder.encoded_names).index("x2_stat")
+    inference_stats = stat_encoder.transform(mixed_frame)[:,stat_column]
+    groups = mixed_frame["x2"].to_numpy()
+    assert all(len(set(inference_stats[groups == level])) == 1 for level in set(groups)) # inference: one table value per level
+    assert any(len(set(train_stats[groups == level, stat_column])) > 1 for level in set(groups)) # training: ordered values vary within a level
+    count_column = list(stat_encoder.encoded_names).index("x2_count")
+    level_counts = mixed_frame["x2"].map(mixed_frame["x2"].value_counts()).to_numpy()
+    assert (stat_encoder.transform(mixed_frame)[:,count_column] == level_counts).all() # counts are exact, not bucketed
+    plain_encoder = _Encoder(missing_values={0:"NA"}, seed=42, stats=(True, 6, 4, 1.0, 0, True, True, 64, False))
+    plain_stats = plain_encoder.fit_transform(mixed_frame, y=np.asarray(mixed_y, dtype=np.float32))
+    assert all(len(set(plain_stats[groups == level, stat_column])) == 1 for level in set(groups)) # stat_permutations=0 is plain means: one encoding for both paths
+    items = pd.DataFrame({"item":["item2","item10","item3"]*20})
+    assert FastForest(n_trees=2, seed=42).fit(items, np.arange(60.))._encoder.columns[0].values.tolist() == ["item10", "item2", "item3"] # the default order is lexical
+    natural = FastForest(n_trees=2, seed=42, natural_sort=True).fit(items, np.arange(60.))
+    assert natural._encoder.columns[0].values.tolist() == ["item2", "item3", "item10"] # natural_sort compares digit runs numerically
+    binary_model = FastForestClassifier(n_trees=8, seed=42, missing_values={0:"NA"}, target_statistics=True).fit(mixed_frame, mixed[:,1] == "common")
+    assert "x2_stat" in binary_model._encoder.encoded_names # binary classification uses the positive rate
+    multiclass_model = FastForestClassifier(n_trees=8, seed=42, missing_values={0:"NA"}, target_statistics=True, frequency=True).fit(mixed_frame, mixed[:,3])
+    assert not any(name.endswith("_stat") for name in multiclass_model._encoder.encoded_names) # multiclass statistics are deferred
+    assert "x2_count" in multiclass_model._encoder.encoded_names # frequency needs no target, so multiclass carries it
     assert mixed_model.feature_importances_.shape == (mixed.shape[1],) and np.isclose(mixed_model.feature_importances_.sum(), 1)
     assert np.isfinite(mixed_model.predict(mixed_frame.iloc[:4])).all()
     missing_signal = np.arange(600, dtype=np.float32).reshape(-1, 1)
@@ -165,6 +201,9 @@ def test_fit_predict_oob_story(tmp_path):
     assert dated_model.feature_names_in_[:3] == ("signal", "eventYear", "eventMonth")
     assert dated_model.feature_names_in_[-4:] == ("eventHour", "eventMinute", "eventSecond", "eventElapsed")
     assert len(dated_model.feature_names_in_) == 17 and np.isfinite(dated_model.predict(dated.iloc[:4])).all()
+    dated_derived = FastForest(n_trees=4, seed=42, target_statistics=True, frequency=True,
+        min_stat_cardinality=3).fit(dated, dated_y)
+    assert {"eventMonth_stat", "eventMonth_count"}.issubset(dated_derived._encoder.encoded_names)
     displayed = dated_model._encoder.display(dated.iloc[:1])
     assert displayed[0,1:5].tolist() == [2023, 12, 52, 31]
     malformed = dated.iloc[:2].copy()
@@ -201,6 +240,12 @@ def test_bounded_pool_defaults_story():
     assert report.task == "regression" and report.trees == 8 and len(report.results) == len(suite)
     assert report.results[0].label == "defaults" and report.results[0].oob_loss > report.results[0].train_loss > 0
     assert all(0 < result.coverage <= 1 and result.nodes_mean >= result.leaves_mean for result in report.results)
+    categorical = np.column_stack([np.arange(600)%10, X[:600,1]])
+    statistic = FastForest(seed=42, target_statistics=True)
+    stat_suite = forest_suite(statistic)[:1]
+    first = screen(statistic, categorical, y[:600], stat_suite, trees=8, seed=123).results[0]
+    again = screen(statistic, categorical, y[:600], stat_suite, trees=8, seed=123).results[0]
+    assert first.oob_loss == again.oob_loss and first.train_loss == again.train_loss
     calibrated = validate(FastForest(seed=42), X[:500], y[:500], X[500:600], y[500:600], suite[:2])
     assert len(calibrated.results) == 2 and all(result.trees >= 32 for result in calibrated.results)
     assert all(result.validation_loss > 0 and result.train_loss > 0 for result in calibrated.results)
@@ -334,5 +379,11 @@ def test_validation_errors():
     check(lambda: FastForest(max_features=0).fit(X, y), "max_features must be")
     check(lambda: FastForest(max_features="all").fit(X, y), "max_features must be")
     check(lambda: FastForest(cutoff_divisor=np.nan).fit(X, y), "cutoff_divisor must be finite and greater than zero")
+    for kwargs,name in [
+        ({"min_stat_cardinality":1}, "min_stat_cardinality"),
+        ({"min_rows_per_level":0}, "min_rows_per_level"),
+        ({"stat_prior_rows":-1}, "stat_prior_rows"),
+        ({"order_buckets":1}, "order_buckets"),
+    ]: check(lambda kwargs=kwargs: FastForest(target_statistics=True, **kwargs).fit(X, y), name)
     check(lambda: FastForest().predict(X), "must be fitted")
     check(lambda: FastForest().explain(X), "must be fitted")

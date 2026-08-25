@@ -40,6 +40,24 @@ test = false
 [profile.release]
 lto = true
 codegen-units = 1
+strip = true
+
+[profile.play]
+inherits = "release"
+lto = false
+incremental = true
+codegen-units = 16
+
+[profile.dev]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
+[profile.debugging]
+inherits = "dev"
+opt-level = 0
+debug-assertions = true
+overflow-checks = true
 
 [dependencies]
 arrow-array = ">=59.2.0"

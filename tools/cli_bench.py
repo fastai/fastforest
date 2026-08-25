@@ -22,7 +22,7 @@ def _bench(command, repeats):
 @call_parse
 def main(
     repeats:int=20, # Timed CLI invocations; the median is reported
-    data_home:str="data", # sklearn download/cache directory
+    data_home:str=".data", # sklearn download/cache directory
 ):
     "Benchmark end-to-end one-row Arrow CLI prediction on Concrete Strength."
     X,y = fetch_openml(data_id=44959, return_X_y=True, as_frame=False, data_home=data_home)

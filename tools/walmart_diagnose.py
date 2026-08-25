@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.inspection import permutation_importance
 
-from accuracy import Dataset,_rows,load_data,split_indices
+from fastforest.datasets import Dataset,_rows,load_data,split_indices
 from fastforest import FastForest
 
 

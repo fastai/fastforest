@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
-from accuracy import Dataset,_rows,load_data,split_indices
+from fastforest.datasets import Dataset,_rows,load_data,split_indices
 from fastforest import FastForest
 
 

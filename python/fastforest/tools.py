@@ -26,6 +26,13 @@ CLASSIFICATION = (Metric("f1", "F1 acc ↑", True), Metric("log_loss", "Log loss
     Metric("fit", "Fit (s) ↓", False), Metric("proba", "Proba (s) ↓", False))
 MODEL_ORDER = ("fastforest", "AutoForest", "autogrow", "sklearn RF", "sklearn HistGBM")
 
+def _num(value): return f"{value:#.4g}" if isinstance(value, float) else str(value)
+
+def _md_table(headers, rows):
+    head = "| " + " | ".join(headers) + " |"
+    rule = "|---"*len(headers) + "|"
+    return "\n".join((head, rule, *("| " + " | ".join(row) + " |" for row in rows)))
+
 @dataclass(frozen=True)
 class ScreenResult:
     label: str
@@ -38,6 +45,8 @@ class ScreenResult:
     leaves_mean: float
     depth_mean: float
 
+    def __repr__(self): return f"{self.label}: oob {_num(self.oob_loss)}, train {_num(self.train_loss)}, coverage {self.coverage:.0%}"
+
 @dataclass(frozen=True)
 class ScreenReport:
     task: str
@@ -46,6 +55,15 @@ class ScreenReport:
     batch_seconds: float
     results: tuple
     feature_metadata: dict
+
+    def __repr__(self):
+        head = f"screen: {self.task}, {self.trees} trees, {self.pool_rows:,} pool rows, {_num(self.batch_seconds)}s"
+        return "\n".join((head, *map(repr, self.results)))
+
+    def _repr_markdown_(self):
+        rows = ([r.label, _num(r.oob_loss), _num(r.train_loss), f"{r.coverage:.0%}", f"{r.evaluated_rows:,}",
+            _num(r.nodes_mean), _num(r.leaves_mean), _num(r.depth_mean)] for r in self.results)
+        return _md_table(("config", "oob loss", "train loss", "coverage", "rows", "nodes", "leaves", "depth"), rows)
 
 @dataclass(frozen=True)
 class ValidationResult:
@@ -61,11 +79,23 @@ class ValidationResult:
     leaves_mean: float
     depth_mean: float
 
+    def __repr__(self):
+        return f"{self.label}: validation {_num(self.validation_loss)}, train {_num(self.train_loss)}, fit {_num(self.fit_seconds)}s, trees {self.trees}"
+
 @dataclass(frozen=True)
 class ValidationReport:
     task: str
     batch_seconds: float
     results: tuple
+
+    def __repr__(self):
+        head = f"validate: {self.task}, {_num(self.batch_seconds)}s total fit"
+        return "\n".join((head, *map(repr, self.results)))
+
+    def _repr_markdown_(self):
+        rows = ([r.label, _num(r.validation_loss), _num(r.train_loss), _num(r.fit_seconds), _num(r.predict_seconds),
+            str(r.trees), _num(r.nodes_mean), _num(r.leaves_mean), _num(r.depth_mean)] for r in self.results)
+        return _md_table(("config", "validation loss", "train loss", "fit (s)", "predict (s)", "trees", "nodes", "leaves", "depth"), rows)
 
 @dataclass(frozen=True)
 class _PreparedSweep:
@@ -245,15 +275,18 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
             raise ValueError(f"configuration {params} leaves no rows for OOB evaluation")
     pool_rows = max(plan[2] for plan in plans)
     indices = None if pool_rows == len(X) else np.asarray(_sample_indices(len(X), pool_rows, seed, 2))
-    encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"])
-    encoded = encoder.fit_transform(X, indices)
-    training = encoder.transform(_take_rows(X, indices))
     if task == "classification":
         classes,target = _class_vector(y_array, indices)
         fitted_outputs = max(1,len(classes)-1)
     else:
         target = _vector(y_array, indices=indices)
         fitted_outputs = 1
+    stats = tuple(base[name] for name in ("target_statistics", "min_stat_cardinality", "min_rows_per_level", "stat_prior_rows",
+        "stat_permutations", "frequency", "keep_rank", "order_buckets", "natural_sort"))
+    encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats)
+    encoded = (encoder.fit_transform(X, indices, y=target) if task == "regression"
+        else encoder.fit_transform(X, indices, y_class=target if len(classes) == 2 else None))
+    training = encoder.transform(_take_rows(X, indices))
     native_configs = []
     oob_rows = min(len(target), 40_000*fitted_outputs)
     for (_,_,params),replacement,plan in zip(configs, replacements, plans):
@@ -261,7 +294,7 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
             replacement, True, fitted_outputs)
         native_configs.append(_native_config(params, replacement, fitted_plan, len(target), seed, True))
     started = perf_counter()
-    args = (encoded, target, encoder.cutoff_values, encoder.cutoff_offsets, encoder.missing_ranks)
+    args = (encoded, target, *encoder.fit_layout, encoder.fit_alias)
     if task == "classification": forests = _ClassifierForest.fit_batch(encoded, target, len(classes), *args[2:], native_configs, oob_rows)
     else: forests = _Forest.fit_batch(*args, native_configs, oob_rows)
     batch_seconds = perf_counter()-started
@@ -297,8 +330,6 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
     for (trees,rows_per_tree,pool_rows),indices_in_group in grouped.items():
         started = perf_counter()
         indices = None if pool_rows == len(X_train) else np.asarray(_sample_indices(len(X_train), pool_rows, seed, 2))
-        encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"])
-        encoded = encoder.fit_transform(X_train, indices)
         if task == "classification":
             classes,target = _class_vector(y_train, indices)
             fitted_outputs = max(1,len(classes)-1)
@@ -311,12 +342,17 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
             classes = None
             fitted_outputs = 1
             target,valid_target = _vector(y_train, indices=indices),_vector(y_valid)
+        stats = tuple(base[name] for name in ("target_statistics", "min_stat_cardinality", "min_rows_per_level", "stat_prior_rows",
+            "stat_permutations", "frequency", "keep_rank", "order_buckets", "natural_sort"))
+        encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats)
+        encoded = (encoder.fit_transform(X_train, indices, y=target) if task == "regression"
+            else encoder.fit_transform(X_train, indices, y_class=target if len(classes) == 2 else None))
         fit_preprocess_seconds = perf_counter()-started
         training = encoder.transform(_take_rows(X_train, indices))
         started = perf_counter()
         validation = encoder.transform(X_valid)
         predict_preprocess_seconds = perf_counter()-started
-        args = (encoded, target, encoder.cutoff_values, encoder.cutoff_offsets, encoder.missing_ranks)
+        args = (encoded, target, *encoder.fit_layout, encoder.fit_alias)
         for index in indices_in_group:
             params = configs[index][2]
             replacement = replacements[index]

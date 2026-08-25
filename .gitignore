@@ -1,3 +1,4 @@
+_proc/
 data/
 __pycache__/
 .pytest_cache/

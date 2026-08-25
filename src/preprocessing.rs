@@ -12,9 +12,13 @@ use arrow_cast::display::array_value_to_string;
 use arrow_schema::DataType;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use ndarray::Array2;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::projection::Projections;
 use crate::{ForestError, SavedValue};
 
 const DATE_PARTS: [&str; 16] = [
@@ -130,6 +134,8 @@ impl RawColumn {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Encoding {
     Ordered,
+    Statistic,
+    Counter,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -148,6 +154,7 @@ pub struct Column {
     median_text: Option<String>,
     had_missing: bool,
     encodings: Vec<Encoding>,
+    stats: Option<LevelStats>,
 }
 
 impl Column {
@@ -202,6 +209,7 @@ struct FittedColumn {
     column: Column,
     ranked: Vec<Vec<u32>>,
     bounds: Vec<Vec<f32>>,
+    extra: Vec<Vec<u32>>,
 }
 
 struct Parts<T> {
@@ -230,6 +238,9 @@ pub struct Encoder {
     cutoff_values: Vec<f32>,
     cutoff_offsets: Vec<usize>,
     encoded_to_raw: Vec<usize>,
+    natural_sort: bool,
+    #[serde(skip)]
+    projections: Projections,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -774,7 +785,7 @@ fn date_value(value: NaiveDateTime, part: u8) -> f32 {
 
 fn arrange_columns(
     columns: Vec<RawColumn>, input_columns: &[InputColumn], logical_names: &[String],
-) -> Result<Vec<RawColumn>, ForestError> {
+) -> Result<(Vec<RawColumn>, HashMap<usize, (Vec<u32>, Vec<NaiveDateTime>)>), ForestError> {
     let mut dates = HashMap::new();
     for (position, source) in input_columns.iter().enumerate() {
         if let InputColumn::DatePart { index, format, .. } = source {
@@ -784,7 +795,7 @@ fn arrange_columns(
         }
     }
     let mut columns: Vec<_> = columns.into_iter().map(Some).collect();
-    input_columns
+    let arranged: Result<Vec<_>, _> = input_columns
         .iter()
         .zip(logical_names)
         .map(|(source, name)| match source {
@@ -796,7 +807,39 @@ fn arrange_columns(
                 Ok(RawColumn::Numeric(dates[index].iter().map(|value| value.map(|value| date_value(value, *part))).collect()))
             }
         })
-        .collect()
+        .collect();
+    let bases = dates.into_iter().map(|(index, values)| (index, date_base_codes(&values))).collect();
+    Ok((arranged?, bases))
+}
+
+fn date_base_codes(values: &[Option<NaiveDateTime>]) -> (Vec<u32>, Vec<NaiveDateTime>) {
+    let mut distinct: Vec<NaiveDateTime> = values.iter().flatten().copied().collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let missing = distinct.len() as u32;
+    let codes = values.iter().map(|value| value.map_or(missing, |value| distinct.binary_search(&value).unwrap() as u32)).collect();
+    (codes, distinct)
+}
+
+fn date_part_table(distinct: &[NaiveDateTime], part: u8, fitted: &FittedColumn) -> Vec<u32> {
+    let Values::Numeric(unique) = &fitted.column.values else { unreachable!() };
+    let mut table: Vec<u32> = distinct
+        .iter()
+        .map(|&value| unique.binary_search_by(|candidate| candidate.total_cmp(&date_value(value, part))).unwrap() as u32)
+        .collect();
+    if fitted.column.had_missing {
+        table.push(unique.len() as u32);
+    }
+    table
+}
+
+fn projection_table(base: &[u32], values: &[u32]) -> Vec<u32> {
+    let size = base.iter().max().map_or(0, |&max| max as usize + 1);
+    let mut table = vec![0u32; size];
+    for (&code, &value) in base.iter().zip(values) {
+        table[code as usize] = value;
+    }
+    table
 }
 
 fn numeric_parts(values: Vec<Option<f32>>, name: &str) -> Result<Parts<f32>, ForestError> {
@@ -825,16 +868,85 @@ fn numeric_parts(values: Vec<Option<f32>>, name: &str) -> Result<Parts<f32>, For
     Ok(Parts { unique, codes, counts, median })
 }
 
-fn text_parts(values: Vec<Option<String>>) -> Parts<String> {
+fn digit_run(bytes: &[u8]) -> usize {
+    bytes.iter().take_while(|byte| byte.is_ascii_digit()).count()
+}
+
+pub(crate) fn common_prefix_len(left: &[u8], right: &[u8]) -> usize {
+    let limit = left.len().min(right.len());
+    let mut shared = 0;
+    while shared + 8 <= limit && left[shared..shared + 8] == right[shared..shared + 8] {
+        shared += 8;
+    }
+    while shared < limit && left[shared] == right[shared] {
+        shared += 1;
+    }
+    shared
+}
+
+pub(crate) fn natural_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    let shared = common_prefix_len(left, right);
+    if shared == left.len() && shared == right.len() {
+        return std::cmp::Ordering::Equal;
+    }
+    let start = left[..shared].iter().rposition(|byte| !byte.is_ascii_digit()).map_or(0, |position| position + 1);
+    natural_cmp_suffix(&left[start..], &right[start..])
+}
+
+fn natural_cmp_suffix(mut l: &[u8], mut r: &[u8]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    loop {
+        match (l.first(), r.first()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(&a), Some(&b)) => {
+                if a.is_ascii_digit() && b.is_ascii_digit() {
+                    let (run_l, run_r) = (digit_run(l), digit_run(r));
+                    let (digits_l, rest_l) = l.split_at(run_l);
+                    let (digits_r, rest_r) = r.split_at(run_r);
+                    let trimmed_l = &digits_l[digits_l.iter().take_while(|byte| **byte == b'0').count()..];
+                    let trimmed_r = &digits_r[digits_r.iter().take_while(|byte| **byte == b'0').count()..];
+                    let ordering = trimmed_l.len().cmp(&trimmed_r.len()).then_with(|| trimmed_l.cmp(trimmed_r)).then(run_l.cmp(&run_r));
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                    (l, r) = (rest_l, rest_r);
+                } else {
+                    let ordering = a.cmp(&b);
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                    (l, r) = (&l[1..], &r[1..]);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn level_cmp(natural: bool, left: &str, right: &str) -> std::cmp::Ordering {
+    if natural { natural_cmp(left, right) } else { left.cmp(right) }
+}
+
+fn sorted_levels(mut values: Vec<String>, natural: bool) -> Vec<String> {
+    values.sort_unstable_by(|left, right| level_cmp(natural, left, right));
+    values.dedup();
+    values
+}
+
+fn level_code(levels: &[String], value: &str, natural: bool) -> Result<usize, usize> {
+    levels.binary_search_by(|candidate| level_cmp(natural, candidate, value))
+}
+
+fn text_parts(values: Vec<Option<String>>, natural: bool) -> Parts<String> {
     let mut observed: Vec<_> = values.iter().flatten().cloned().collect();
-    let mut unique = observed.clone();
-    unique.sort_unstable();
-    unique.dedup();
+    let unique = sorted_levels(observed.clone(), natural);
     let mut counts = vec![0; unique.len()];
     let mut codes = Vec::with_capacity(values.len());
     for value in &values {
         if let Some(value) = value {
-            let code = unique.binary_search(value).unwrap();
+            let code = level_code(&unique, value, natural).unwrap();
             counts[code] += 1;
             codes.push(code as u32);
         } else {
@@ -842,7 +954,7 @@ fn text_parts(values: Vec<Option<String>>) -> Parts<String> {
         }
     }
     let middle = observed.len() / 2;
-    observed.select_nth_unstable(middle);
+    observed.select_nth_unstable_by(middle, |left, right| level_cmp(natural, left, right));
     let median = observed[middle].clone();
     Parts { unique, codes, counts, median }
 }
@@ -872,10 +984,209 @@ fn finish_column(name: String, prepared: PreparedColumn) -> FittedColumn {
         }
         bounds.push(cutoff);
     }
-    FittedColumn { column: Column { name, values, all_int, median_numeric, median_text, had_missing, encodings }, ranked, bounds }
+    FittedColumn {
+        column: Column { name, values, all_int, median_numeric, median_text, had_missing, encodings, stats: None },
+        ranked,
+        bounds,
+        extra: Vec::new(),
+    }
 }
 
-fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError> {
+#[derive(Clone, Copy, Debug)]
+pub struct EncoderOptions {
+    pub target_statistics: bool,
+    pub min_stat_cardinality: usize,
+    pub min_rows_per_level: usize,
+    pub stat_prior_rows: f32,
+    pub stat_permutations: usize,
+    pub frequency: bool,
+    pub keep_rank: bool,
+    pub order_buckets: usize,
+    pub natural_sort: bool,
+}
+
+impl Default for EncoderOptions {
+    fn default() -> Self {
+        Self {
+            target_statistics: false,
+            min_stat_cardinality: 6,
+            min_rows_per_level: 4,
+            stat_prior_rows: 1.0,
+            stat_permutations: 4,
+            frequency: false,
+            keep_rank: true,
+            order_buckets: 64,
+            natural_sort: false,
+        }
+    }
+}
+
+impl EncoderOptions {
+    fn validate(&self) -> Result<(), ForestError> {
+        if self.min_stat_cardinality < 2 {
+            return Err(invalid("min_stat_cardinality must be at least 2"));
+        }
+        if self.min_rows_per_level == 0 {
+            return Err(invalid("min_rows_per_level must be positive"));
+        }
+        if !self.stat_prior_rows.is_finite() || self.stat_prior_rows < 0.0 {
+            return Err(invalid("stat_prior_rows must be finite and nonnegative"));
+        }
+        if self.order_buckets < 2 {
+            return Err(invalid("order_buckets must be at least 2"));
+        }
+        Ok(())
+    }
+}
+
+pub enum StatTarget<'a> {
+    Regression(&'a [f32]),
+    Binary(&'a [u32]),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct LevelStats {
+    counts: Vec<u32>,
+    sums: Vec<f64>,
+    prior: f32,
+    prior_rows: f32,
+    min_rows: u32,
+    stat_borders: Vec<f32>,
+}
+
+impl LevelStats {
+    fn statistic(&self, code: Option<usize>) -> f32 {
+        let value = match code {
+            Some(code) if self.counts[code] >= self.min_rows => {
+                ((self.sums[code] + self.prior_rows as f64 * self.prior as f64) / (self.counts[code] as f64 + self.prior_rows as f64))
+                    as f32
+            }
+            _ => self.prior,
+        };
+        bucket_of(value, &self.stat_borders)
+    }
+
+    fn count(&self, code: Option<usize>) -> f32 {
+        code.map_or(0.0, |code| self.counts[code] as f32)
+    }
+}
+
+fn bucket_of(value: f32, borders: &[f32]) -> f32 {
+    borders.partition_point(|border| *border < value) as f32
+}
+
+fn quantile_borders(values: &[f32], buckets: usize, seed: Option<u64>, stream: u64) -> Vec<f32> {
+    let indices = crate::forest::uniform_sample_indices(values.len(), values.len().min(10_000), seed, stream);
+    let mut sample: Vec<f32> = indices.iter().map(|&index| values[index]).collect();
+    sample.sort_unstable_by(f32::total_cmp);
+    let mut borders: Vec<f32> =
+        (1..buckets).map(|bucket| sample[bucket * sample.len() / buckets]).filter(|border| *border > sample[0]).collect();
+    borders.dedup_by(|left, right| left.total_cmp(right).is_eq());
+    borders
+}
+
+fn bucket_bounds(cardinality: usize) -> Vec<f32> {
+    (0..cardinality).map(|index| index.saturating_sub(1) as f32).collect()
+}
+
+fn derived_features(fitted: &mut FittedColumn, y: Option<&[f32]>, prior: f32, options: &EncoderOptions, seed: Option<u64>, column: usize) {
+    let cardinality = fitted.column.cardinality();
+    if fitted.ranked.is_empty() || cardinality < options.min_stat_cardinality {
+        return;
+    }
+    let codes = &fitted.ranked[0];
+    let mut counts = vec![0u32; cardinality];
+    for &code in codes {
+        if (code as usize) < cardinality {
+            counts[code as usize] += 1;
+        }
+    }
+    let floor = options.min_rows_per_level as u32;
+    if counts.iter().filter(|&&count| count >= floor).count() < options.min_stat_cardinality {
+        return;
+    }
+    let prior_rows = options.stat_prior_rows;
+    let mut sums = if y.is_some() { vec![0f64; cardinality] } else { Vec::new() };
+    let mut stat_borders = Vec::new();
+    let mut stat_columns: Vec<Vec<u32>> = Vec::new();
+    if let Some(y) = y {
+        for (&code, &target) in codes.iter().zip(y) {
+            if (code as usize) < cardinality {
+                sums[code as usize] += target as f64;
+            }
+        }
+        let shrunk = |sum: f64, count: u32| ((sum + prior_rows as f64 * prior as f64) / (count as f64 + prior_rows as f64)) as f32;
+        let ordered = options.stat_permutations > 0;
+        let variants = options.stat_permutations.max(1);
+        let values_for = |variant| {
+            let mut values = vec![prior; codes.len()];
+            if ordered {
+                let stream = 0x5b0a_1157 ^ (column as u64) << 8 ^ (variant as u64) << 40;
+                let mut order: Vec<u32> = (0..codes.len() as u32).collect();
+                let mut rng = StdRng::seed_from_u64(seed.unwrap_or_else(rand::random) ^ stream.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+                order.shuffle(&mut rng);
+                let mut seen_counts = vec![0u32; cardinality];
+                let mut seen_sums = vec![0f64; cardinality];
+                for &row in &order {
+                    let code = codes[row as usize] as usize;
+                    if code < cardinality && counts[code] >= floor {
+                        values[row as usize] = shrunk(seen_sums[code], seen_counts[code]);
+                        seen_counts[code] += 1;
+                        seen_sums[code] += y[row as usize] as f64;
+                    }
+                }
+            } else {
+                for (row, &code) in codes.iter().enumerate() {
+                    let code = code as usize;
+                    if code < cardinality && counts[code] >= floor {
+                        values[row] = shrunk(sums[code], counts[code]);
+                    }
+                }
+            }
+            values
+        };
+        let first = values_for(0);
+        stat_borders = quantile_borders(&first, options.order_buckets, seed, 0x51a7 ^ (column as u64) << 8);
+        stat_columns.push(first.into_iter().map(|value| bucket_of(value, &stat_borders) as u32).collect());
+        for variant in 1..variants {
+            stat_columns.push(values_for(variant).into_iter().map(|value| bucket_of(value, &stat_borders) as u32).collect());
+        }
+    }
+    let counter = options.frequency.then(|| {
+        let mut distinct = counts.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        let ranked: Vec<u32> = codes
+            .iter()
+            .map(|&code| {
+                let count = if (code as usize) < cardinality { counts[code as usize] } else { 0 };
+                distinct.partition_point(|&level| level < count) as u32
+            })
+            .collect();
+        let bounds: Vec<f32> =
+            distinct.iter().enumerate().map(|(index, &count)| if index == 0 { count } else { distinct[index - 1] } as f32).collect();
+        (ranked, bounds)
+    });
+    let mut stat_columns = stat_columns.into_iter();
+    if let Some(stat_codes) = stat_columns.next() {
+        fitted.ranked.push(stat_codes);
+        fitted.bounds.push(bucket_bounds(stat_borders.len() + 1));
+        fitted.column.encodings.push(Encoding::Statistic);
+        fitted.extra = stat_columns.collect();
+    }
+    if let Some((ranked, bounds)) = counter {
+        fitted.ranked.push(ranked);
+        fitted.bounds.push(bounds);
+        fitted.column.encodings.push(Encoding::Counter);
+    }
+    if !options.keep_rank && fitted.column.encodings.len() > 1 {
+        fitted.ranked.remove(0);
+        fitted.bounds.remove(0);
+        fitted.column.encodings.remove(0);
+    }
+    fitted.column.stats = Some(LevelStats { counts, sums, prior, prior_rows, min_rows: floor, stat_borders });
+}
+fn fit_column(raw: RawColumn, name: String, natural: bool) -> Result<FittedColumn, ForestError> {
     let raw = match raw {
         RawColumn::Bundle { codes, categories } => {
             let mut counts = vec![0; categories.len()];
@@ -910,9 +1221,7 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
                 .iter()
                 .map(|code| if *code < 0 { null_value.as_ref() } else { categories.get(*code as usize).and_then(Option::as_ref) })
                 .collect();
-            let mut unique: Vec<_> = labels.iter().filter_map(|value| (*value).cloned()).collect();
-            unique.sort_unstable();
-            unique.dedup();
+            let unique = sorted_levels(labels.iter().filter_map(|value| (*value).cloned()).collect(), natural);
             if unique.is_empty() {
                 return Ok(FittedColumn {
                     column: Column {
@@ -923,9 +1232,11 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
                         median_text: None,
                         had_missing: true,
                         encodings: Vec::new(),
+                        stats: None,
                     },
                     ranked: Vec::new(),
                     bounds: Vec::new(),
+                    extra: Vec::new(),
                 });
             }
             let mut counts = vec![0; unique.len()];
@@ -933,7 +1244,7 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
                 .iter()
                 .map(|value| {
                     value.map_or(u32::MAX, |value| {
-                        let code = unique.binary_search(value).unwrap();
+                        let code = level_code(&unique, value, natural).unwrap();
                         counts[code] += 1;
                         code as u32
                     })
@@ -979,9 +1290,11 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
                 median_text: None,
                 had_missing: true,
                 encodings: Vec::new(),
+                stats: None,
             },
             ranked: Vec::new(),
             bounds: Vec::new(),
+            extra: Vec::new(),
         });
     }
     let numeric = match raw {
@@ -990,7 +1303,7 @@ fn fit_column(raw: RawColumn, name: String) -> Result<FittedColumn, ForestError>
             Some(parsed) => Some(parsed),
             None => {
                 let missing: Vec<_> = values.iter().map(Option::is_none).collect();
-                let parts = text_parts(values);
+                let parts = text_parts(values, natural);
                 return Ok(finish_column(
                     name,
                     PreparedColumn {
@@ -1043,11 +1356,12 @@ fn assemble<T: Copy + Default + Send + Sync>(features: &[Vec<T>], rows: usize) -
 impl Encoder {
     pub fn fit_arrow(
         batch: &RecordBatch, markers: &[SavedValue], allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
-    ) -> Result<(Self, Array2<u32>), ForestError> {
+        target: Option<StatTarget<'_>>, stats: &EncoderOptions,
+    ) -> Result<(Self, Array2<u32>, Vec<u32>), ForestError> {
         let names = batch.schema().fields().iter().map(|field| field.name().clone()).collect();
         let date_indices: Vec<_> = date_columns.iter().map(|(index, _)| *index).collect();
         let columns = arrow_columns(batch, markers, &date_indices)?;
-        Self::fit(columns, names, allow_new_missing, date_columns, seed)
+        Self::fit(columns, names, allow_new_missing, date_columns, seed, target, stats)
     }
 
     pub fn transform_arrow(&self, batch: &RecordBatch, markers: &[SavedValue]) -> Result<Array2<f32>, ForestError> {
@@ -1067,6 +1381,9 @@ impl Encoder {
                 let mut encoded = 0;
                 for (array, column) in batch.columns().iter().zip(&self.columns) {
                     let value = match numeric_arrow_value(array.as_ref(), row) {
+                        Some(value) if !value.is_finite() => {
+                            return Err(invalid(format!("column {:?} contains a non-finite numeric value", column.name)));
+                        }
                         Some(value) => value,
                         None if self.allow_new_missing => f32::NAN,
                         None => {
@@ -1076,13 +1393,14 @@ impl Encoder {
                             )));
                         }
                     };
-                    if !value.is_finite() {
-                        return Err(invalid(format!("column {:?} contains a non-finite numeric value", column.name)));
-                    }
-                    let Values::Numeric(_) = &column.values else { unreachable!() };
+                    let Values::Numeric(unique) = &column.values else { unreachable!() };
+                    let code =
+                        column.stats.is_some().then(|| unique.binary_search_by(|candidate| candidate.total_cmp(&value)).ok()).flatten();
                     for encoding in &column.encodings {
                         output[encoded] = match encoding {
                             Encoding::Ordered => value,
+                            Encoding::Statistic => column.stats.as_ref().unwrap().statistic(code),
+                            Encoding::Counter => column.stats.as_ref().unwrap().count(code),
                         };
                         encoded += 1;
                     }
@@ -1115,12 +1433,29 @@ impl Encoder {
                 return Err(invalid("saved automatic bundle is invalid"));
             }
         }
+        for column in &self.columns {
+            let has_statistic = column.encodings.iter().any(|encoding| matches!(encoding, Encoding::Statistic));
+            let needs_stats = has_statistic || column.encodings.iter().any(|encoding| matches!(encoding, Encoding::Counter));
+            match &column.stats {
+                None if needs_stats => return Err(invalid("saved statistic encoding has no level table")),
+                Some(stats)
+                    if stats.counts.len() != column.cardinality()
+                        || (has_statistic && stats.sums.len() != stats.counts.len())
+                        || stats.stat_borders.windows(2).any(|pair| pair[0] >= pair[1]) =>
+                {
+                    return Err(invalid("saved level table is invalid"));
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 
     pub(crate) fn fit(
         columns: Vec<RawColumn>, names: Vec<String>, allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
-    ) -> Result<(Self, Array2<u32>), ForestError> {
+        target: Option<StatTarget<'_>>, stats: &EncoderOptions,
+    ) -> Result<(Self, Array2<u32>, Vec<u32>), ForestError> {
+        stats.validate()?;
         let rows = validate_rows(&columns, &names)?;
         let date_parts = date_layout(&names, &date_columns)?;
         let mut excluded = vec![false; names.len()];
@@ -1129,44 +1464,117 @@ impl Encoder {
         }
         let bundles = automatic_bundles(&columns, &names, &excluded, seed);
         let (input_columns, logical_names) = input_layout(&names, &bundles, &date_parts)?;
-        let columns = arrange_columns(columns, &input_columns, &logical_names)?;
-        let fitted: Result<Vec<_>, _> = columns.into_par_iter().zip(logical_names).map(|(column, name)| fit_column(column, name)).collect();
-        let fitted = fitted?;
-        let mut features = Vec::new();
+        let (columns, date_codes) = arrange_columns(columns, &input_columns, &logical_names)?;
+        let natural = stats.natural_sort;
+        let fitted: Result<Vec<_>, _> =
+            columns.into_par_iter().zip(logical_names).map(|(column, name)| fit_column(column, name, natural)).collect();
+        let mut fitted = fitted?;
+        let owned;
+        let y: Option<&[f32]> = match target {
+            Some(StatTarget::Regression(y)) => Some(y),
+            Some(StatTarget::Binary(y)) => {
+                owned = y.iter().map(|&value| value as f32).collect::<Vec<_>>();
+                Some(&owned)
+            }
+            None => None,
+        };
+        if let Some(y) = y
+            && y.len() != rows
+        {
+            return Err(invalid("target length must match the training rows"));
+        }
+        let stat_y = if stats.target_statistics { y } else { None };
+        if stat_y.is_some() || stats.frequency {
+            let prior = stat_y.map_or(0.0f32, |y| y.iter().sum::<f32>() / y.len().max(1) as f32);
+            fitted.par_iter_mut().enumerate().for_each(|(column, fitted)| derived_features(fitted, stat_y, prior, stats, seed, column));
+        }
+        let mut physical: Vec<Vec<u32>> = Vec::new();
+        let mut projections = Projections { phys: Vec::new(), base: Vec::new(), tables: Vec::new(), offsets: vec![0] };
         let mut cutoff_values = Vec::new();
         let mut cutoff_offsets = vec![0];
         let mut encoded_to_raw = Vec::new();
+        let mut stat_index = vec![u32::MAX; fitted.len()];
+        let mut date_base_phys: HashMap<usize, u32> = HashMap::new();
         for (raw, column) in fitted.iter().enumerate() {
-            for (ranked, bounds) in column.ranked.iter().zip(&column.bounds) {
-                features.push(ranked.clone());
+            let mut rank_phys = u32::MAX;
+            for ((ranked, bounds), encoding) in column.ranked.iter().zip(&column.bounds).zip(&column.column.encodings) {
+                if matches!(encoding, Encoding::Statistic) {
+                    stat_index[raw] = projections.phys.len() as u32;
+                }
                 cutoff_values.extend(bounds);
                 cutoff_offsets.push(cutoff_values.len());
                 encoded_to_raw.push(raw);
+                let projected = match (&input_columns[raw], encoding) {
+                    (InputColumn::DatePart { index, part, .. }, Encoding::Ordered) => {
+                        Some((*index, Some(date_part_table(&date_codes[index].1, *part, column))))
+                    }
+                    (InputColumn::DatePart { index, .. }, Encoding::Counter) => Some((*index, None)),
+                    (_, Encoding::Counter) if rank_phys != u32::MAX => {
+                        projections.phys.push(u32::MAX);
+                        projections.base.push(rank_phys);
+                        projections.tables.extend(projection_table(&physical[rank_phys as usize], ranked));
+                        projections.offsets.push(projections.tables.len());
+                        continue;
+                    }
+                    _ => None,
+                };
+                match projected {
+                    Some((index, table)) => {
+                        let base_column = *date_base_phys.entry(index).or_insert_with(|| {
+                            physical.push(date_codes[&index].0.clone());
+                            physical.len() as u32 - 1
+                        });
+                        projections.phys.push(u32::MAX);
+                        projections.base.push(base_column);
+                        projections.tables.extend(table.unwrap_or_else(|| projection_table(&physical[base_column as usize], ranked)));
+                    }
+                    None => {
+                        if matches!(encoding, Encoding::Ordered) {
+                            rank_phys = physical.len() as u32;
+                        }
+                        projections.phys.push(physical.len() as u32);
+                        projections.base.push(0);
+                        physical.push(ranked.clone());
+                    }
+                }
+                projections.offsets.push(projections.tables.len());
             }
         }
-        let matrix = assemble(&features, rows);
+        let mut alias: Vec<u32> = (0..projections.phys.len() as u32).collect();
+        for (raw, column) in fitted.iter().enumerate() {
+            for extra in &column.extra {
+                alias.push(stat_index[raw]);
+                projections.phys.push(physical.len() as u32);
+                projections.base.push(0);
+                projections.offsets.push(projections.tables.len());
+                physical.push(extra.clone());
+            }
+        }
+        let matrix = assemble(&physical, rows);
         let encoder = Self {
             columns: fitted.into_iter().map(|column| column.column).collect(),
             input_names: names,
             input_columns,
             allow_new_missing,
+            natural_sort: natural,
             cutoff_values,
             cutoff_offsets,
             encoded_to_raw,
+            projections,
         };
-        Ok((encoder, matrix))
+        Ok((encoder, matrix, alias))
     }
 
     fn transform_features(&self, columns: Vec<RawColumn>) -> Result<(Vec<Vec<f32>>, usize), ForestError> {
         let rows = validate_rows(&columns, &self.input_names)?;
         let names: Vec<_> = self.columns.iter().map(|column| column.name.clone()).collect();
-        let columns = arrange_columns(columns, &self.input_columns, &names)?;
+        let (columns, _) = arrange_columns(columns, &self.input_columns, &names)?;
         let encoded: Result<Vec<_>, _> = columns
             .into_par_iter()
             .zip(&self.columns)
             .zip(&self.input_columns)
             .map(|((raw, fitted), source)| {
-                transform_column(raw, fitted, self.allow_new_missing || matches!(source, InputColumn::DatePart { .. }))
+                transform_column(raw, fitted, self.allow_new_missing || matches!(source, InputColumn::DatePart { .. }), self.natural_sort)
             })
             .collect();
         let features: Vec<_> = encoded?.into_iter().flatten().collect();
@@ -1248,6 +1656,33 @@ impl Encoder {
         Ok(Array2::from_shape_vec((batch.num_rows(), dates.len() * DATE_PARTS.len()), data).unwrap())
     }
 
+    pub fn training_layout(&self, alias: &[u32]) -> (Vec<f32>, Vec<usize>, Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>, Vec<usize>) {
+        let missing = self.missing_ranks();
+        let mut values = Vec::new();
+        let mut offsets = vec![0];
+        let mut ranks = Vec::with_capacity(alias.len());
+        for &target in alias {
+            let target = target as usize;
+            values.extend_from_slice(&self.cutoff_values[self.cutoff_offsets[target]..self.cutoff_offsets[target + 1]]);
+            offsets.push(values.len());
+            ranks.push(missing[target]);
+        }
+        let projections = &self.projections;
+        (
+            values,
+            offsets,
+            ranks,
+            projections.phys.clone(),
+            projections.base.clone(),
+            projections.tables.clone(),
+            projections.offsets.clone(),
+        )
+    }
+
+    pub fn projections(&self) -> &Projections {
+        &self.projections
+    }
+
     pub fn cutoff_values(&self) -> &[f32] {
         &self.cutoff_values
     }
@@ -1263,8 +1698,13 @@ impl Encoder {
     pub fn missing_ranks(&self) -> Vec<u32> {
         self.columns
             .iter()
-            .filter(|column| !column.encodings.is_empty())
-            .map(|column| if column.had_missing { column.cardinality() as u32 } else { u32::MAX })
+            .flat_map(|column| {
+                let rank = if column.had_missing { column.cardinality() as u32 } else { u32::MAX };
+                column.encodings.iter().map(move |encoding| match encoding {
+                    Encoding::Ordered => rank,
+                    Encoding::Statistic | Encoding::Counter => u32::MAX,
+                })
+            })
             .collect()
     }
 }
@@ -1295,7 +1735,7 @@ fn text_input(raw: RawColumn) -> Vec<Option<String>> {
     }
 }
 
-fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) -> Result<Vec<Vec<f32>>, ForestError> {
+fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool, natural: bool) -> Result<Vec<Vec<f32>>, ForestError> {
     if fitted.encodings.is_empty() {
         return Ok(Vec::new());
     }
@@ -1306,50 +1746,63 @@ fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool) ->
     {
         return Err(invalid(format!("column {:?} has a missing value at row {row}, but had none during training", fitted.name)));
     }
-    let result = match &fitted.values {
-        Values::Numeric(_) => {
+    let (ordered, codes): (Vec<f32>, Vec<Option<usize>>) = match &fitted.values {
+        Values::Numeric(unique) => {
             let values = numeric_input(raw, fitted)?;
-            fitted
-                .encodings
+            let codes = values
                 .iter()
-                .map(|encoding| match encoding {
-                    Encoding::Ordered => values.iter().map(|value| value.unwrap_or(f32::NAN)).collect(),
-                })
-                .collect()
+                .map(|value| value.and_then(|value| unique.binary_search_by(|candidate| candidate.total_cmp(&value)).ok()))
+                .collect();
+            (values.iter().map(|value| value.unwrap_or(f32::NAN)).collect(), codes)
         }
         Values::Text(unique) => {
             let values = text_input(raw);
-            let codes: Vec<_> = values
+            let mut ordered = Vec::with_capacity(values.len());
+            let codes = values
                 .iter()
                 .map(|value| match value {
-                    None => f32::NAN,
-                    Some(value) => match unique.binary_search(value) {
-                        Ok(index) => index as f32,
-                        Err(index) => index as f32 - 0.5,
+                    None => {
+                        ordered.push(f32::NAN);
+                        None
+                    }
+                    Some(value) => match level_code(unique, value, natural) {
+                        Ok(index) => {
+                            ordered.push(index as f32);
+                            Some(index)
+                        }
+                        Err(index) => {
+                            ordered.push(index as f32 - 0.5);
+                            None
+                        }
                     },
                 })
                 .collect();
-            fitted
-                .encodings
-                .iter()
-                .map(|encoding| match encoding {
-                    Encoding::Ordered => codes.clone(),
-                })
-                .collect()
+            (ordered, codes)
         }
         Values::Categorical(_) => {
             let RawColumn::Bundle { codes, .. } = raw else {
                 return Err(invalid(format!("column {:?} expected bundled input", fitted.name)));
             };
-            let codes: Vec<_> = codes.into_iter().map(|code| code.map_or(f32::NAN, |code| code as f32)).collect();
-            fitted
-                .encodings
-                .iter()
-                .map(|encoding| match encoding {
-                    Encoding::Ordered => codes.clone(),
-                })
-                .collect()
+            (
+                codes.iter().map(|code| code.map_or(f32::NAN, |code| code as f32)).collect(),
+                codes.into_iter().map(|code| code.map(|code| code as usize)).collect(),
+            )
         }
     };
+    let result = fitted
+        .encodings
+        .iter()
+        .map(|encoding| match encoding {
+            Encoding::Ordered => ordered.clone(),
+            Encoding::Statistic => {
+                let stats = fitted.stats.as_ref().unwrap();
+                codes.iter().map(|&code| stats.statistic(code)).collect()
+            }
+            Encoding::Counter => {
+                let stats = fitted.stats.as_ref().unwrap();
+                codes.iter().map(|&code| stats.count(code)).collect()
+            }
+        })
+        .collect();
     Ok(result)
 }

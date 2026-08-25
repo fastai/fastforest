@@ -5,10 +5,13 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::ensemble::{assemble_forest, combined_importance, combined_oob, tree_seeds};
+use crate::ensemble::{
+    assemble_forest, combined_importance, combined_oob, fold_variant_importance, tree_seeds, tree_universe, variant_groups,
+};
 use crate::prediction::{PredictionTree, predict_outputs};
+use crate::projection::{Projections, TrainingData};
 use crate::split::{SplitScratch, find_split};
-use crate::tree::{Branch, TreeNode, grow_tree, leaf_index, native_node, structure};
+use crate::tree::{Branch, TreeNode, grow_tree, leaf_index, native_node, remap_features, structure};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MaxFeatures {
@@ -258,17 +261,18 @@ impl TrainingTree {
     }
 
     fn build(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, seed: u64,
-        track_in_bag: bool,
+        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_offsets: &[usize], missing_ranks: &[u32], canonical: usize,
+        groups: &[Vec<u32>], config: &Config, seed: u64, track_in_bag: bool,
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
-        let (mut rows, in_bag) = sampled_rows_with_mask(x.nrows(), config, &mut rng, track_in_bag);
+        let universe = tree_universe(canonical, groups, &mut rng);
+        let (mut rows, in_bag) = sampled_rows_with_mask(x.n_rows(), config, &mut rng, track_in_bag);
 
         let mut nodes = vec![TrainingNode::new()];
-        let mut importance = vec![0.0; x.ncols()];
+        let mut importance = vec![0.0; x.n_features()];
         let mut split_scratch = SplitScratch::default();
         grow_tree(x, &mut rows, &mut nodes, &mut importance, missing_ranks, |node, tree_node| {
-            let split = find_split(x, y, node, config, cutoff_offsets, missing_ranks, &mut rng, &mut split_scratch);
+            let split = find_split(x, y, node, &universe, config, cutoff_offsets, missing_ranks, &mut rng, &mut split_scratch);
             tree_node.value = split.value;
             split.cut_col.map(|cut_col| Branch {
                 cut_col,
@@ -279,6 +283,7 @@ impl TrainingTree {
             })
         });
 
+        fold_variant_importance(&mut importance, canonical, groups);
         (Self { nodes }, in_bag, importance)
     }
 }
@@ -321,68 +326,66 @@ impl Forest {
     }
 
     pub fn fit(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
-        config: &Config,
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], feature_alias: &[u32], config: &Config,
     ) -> Result<Self, ForestError> {
-        validate_training_data(x, y, cutoff_values, cutoff_offsets)?;
+        let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         config.validate()?;
-        validate_missing_ranks(x.ncols(), missing_ranks)?;
-        Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, missing_ranks, config, None, None)
+        validate_missing_ranks(data.n_features(), missing_ranks)?;
+        Self::fit_fixed(data, y, cutoff_values, cutoff_offsets, missing_ranks, feature_alias, config, None, None)
     }
 
     pub fn fit_on_tracking(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
-        config: &Config, tracking_indices: &[usize],
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], feature_alias: &[u32], config: &Config, tracking_indices: &[usize],
     ) -> Result<Self, ForestError> {
-        validate_training_data(x, y, cutoff_values, cutoff_offsets)?;
+        let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         config.validate()?;
-        validate_missing_ranks(x.ncols(), missing_ranks)?;
-        validate_tracking(config, tracking_indices, x.nrows())?;
-        Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, missing_ranks, config, None, Some(tracking_indices))
+        validate_missing_ranks(data.n_features(), missing_ranks)?;
+        validate_tracking(config, tracking_indices, data.n_rows())?;
+        Self::fit_fixed(data, y, cutoff_values, cutoff_offsets, missing_ranks, feature_alias, config, None, Some(tracking_indices))
     }
 
     pub fn fit_batch(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
-        configs: &[Config], oob_rows: Option<usize>,
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], feature_alias: &[u32], configs: &[Config], oob_rows: Option<usize>,
     ) -> Result<Vec<Self>, ForestError> {
-        validate_training_data(x, y, cutoff_values, cutoff_offsets)?;
+        let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         validate_batch(configs, oob_rows)?;
-        validate_missing_ranks(x.ncols(), missing_ranks)?;
+        validate_missing_ranks(data.n_features(), missing_ranks)?;
         configs
             .par_iter()
-            .map(|config| Self::fit_fixed(x, y, cutoff_values, cutoff_offsets, missing_ranks, config, oob_rows, None))
+            .map(|config| Self::fit_fixed(data, y, cutoff_values, cutoff_offsets, missing_ranks, feature_alias, config, oob_rows, None))
             .collect()
     }
 
     fn fit_fixed(
-        x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
-        config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
+        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        feature_alias: &[u32], config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
     ) -> Result<Self, ForestError> {
+        let (canonical, groups) = variant_groups(feature_alias, x.n_features())?;
         let built: Vec<_> = tree_seeds(config)
             .into_par_iter()
-            .map(|seed| TrainingTree::build(x, y, cutoff_offsets, missing_ranks, config, seed, config.oob))
+            .map(|seed| TrainingTree::build(x, y, cutoff_offsets, missing_ranks, canonical, &groups, config, seed, config.oob))
             .collect();
 
-        let oob_indices = tracking_rows.map(<[usize]>::to_vec).or_else(|| oob_rows(x.nrows(), config, oob_row_override));
-        let data = x.as_slice();
+        let oob_indices = tracking_rows.map(<[usize]>::to_vec).or_else(|| oob_rows(x.n_rows(), config, oob_row_override));
         let (trees, feature_importances, oob_prediction, oob_counts, oob_indices) = assemble_forest(
             built,
-            x.ncols(),
+            canonical,
             1,
             oob_indices,
             config.oob,
             |tree, row, output| {
-                output[0] += if let Some(data) = data {
-                    let start = row * x.ncols();
-                    tree.predict_by(|col| data[start + col], missing_ranks)
-                } else {
-                    tree.predict_by(|col| x[[row, col]], missing_ranks)
-                };
+                output[0] += tree.predict_by(|col| x.value(row, col), missing_ranks);
             },
-            |tree| tree.into_native(cutoff_values, cutoff_offsets),
+            |mut tree| {
+                remap_features(&mut tree.nodes, feature_alias);
+                tree.into_native(cutoff_values, cutoff_offsets)
+            },
         );
 
-        Ok(Self { trees, n_features: x.ncols(), feature_importances, oob_prediction, oob_counts, oob_indices })
+        Ok(Self { trees, n_features: canonical, feature_importances, oob_prediction, oob_counts, oob_indices })
     }
 
     pub fn combined(&self, other: &Self) -> Result<Self, ForestError> {
@@ -555,19 +558,19 @@ pub(crate) fn validate_batch(configs: &[Config], oob_rows: Option<usize>) -> Res
     Ok(())
 }
 
-pub(crate) fn validate_training_data(
-    x: ArrayView2<'_, u32>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-) -> Result<(), ForestError> {
-    validate_encoded_data(x, y.len(), cutoff_values, cutoff_offsets)?;
+pub(crate) fn validate_training_data<'a>(
+    x: ArrayView2<'a, u32>, projections: &'a Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+) -> Result<TrainingData<'a>, ForestError> {
+    let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
     if y.iter().any(|v| !v.is_finite()) {
         return Err(ForestError::new("targets must all be finite"));
     }
-    Ok(())
+    Ok(data)
 }
 
-pub(crate) fn validate_encoded_data(
-    x: ArrayView2<'_, u32>, y_len: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
-) -> Result<(), ForestError> {
+pub(crate) fn validate_encoded_data<'a>(
+    x: ArrayView2<'a, u32>, projections: &'a Projections, y_len: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
+) -> Result<TrainingData<'a>, ForestError> {
     if x.nrows() == 0 {
         return Err(ForestError::new("training data must contain at least one row"));
     }
@@ -577,7 +580,9 @@ pub(crate) fn validate_encoded_data(
     if x.nrows() != y_len {
         return Err(ForestError::new(format!("X has {} rows but y has {} values", x.nrows(), y_len)));
     }
-    if cutoff_offsets.len() != x.ncols() + 1
+    projections.validate(x.ncols())?;
+    let data = TrainingData { matrix: x, projections };
+    if cutoff_offsets.len() != data.n_features() + 1
         || cutoff_offsets.first() != Some(&0)
         || cutoff_offsets.last() != Some(&cutoff_values.len())
         || cutoff_offsets.windows(2).any(|pair| pair[0] >= pair[1])
@@ -587,13 +592,20 @@ pub(crate) fn validate_encoded_data(
     if cutoff_values.iter().any(|value| !value.is_finite()) {
         return Err(ForestError::new("native cutoff values must all be finite"));
     }
-    for col in 0..x.ncols() {
+    for col in 0..data.n_features() {
         let cardinality = cutoff_offsets[col + 1] - cutoff_offsets[col];
-        if x.column(col).iter().any(|&value| value as usize >= cardinality) {
+        let (column, table) = data.source(col);
+        let valid = if table.is_empty() {
+            x.column(column).iter().all(|&value| (value as usize) < cardinality)
+        } else {
+            table.iter().all(|&value| (value as usize) < cardinality)
+                && x.column(column).iter().all(|&value| (value as usize) < table.len())
+        };
+        if !valid {
             return Err(ForestError::new(format!("encoded feature {col} contains a value outside its cutoff mapping")));
         }
     }
-    Ok(())
+    Ok(data)
 }
 
 pub(crate) fn validate_prediction_data(x: ArrayView2<'_, f32>, n_features: usize) -> Result<(), ForestError> {

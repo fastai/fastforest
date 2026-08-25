@@ -1,4 +1,6 @@
-use ndarray::{ArrayView1, ArrayView2};
+use ndarray::ArrayView1;
+
+use crate::projection::TrainingData;
 use rand::rngs::StdRng;
 use std::collections::HashSet;
 
@@ -79,17 +81,17 @@ impl ClassSplitScratch {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn find_class_split(
-    x: ArrayView2<'_, u32>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, cutoff_offsets: &[usize],
-    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, universe: &[usize], n_classes: usize, config: &Config,
+    cutoff_offsets: &[usize], missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let max_samples = evaluation_rows(node.n_rows, config);
-    if x.ncols() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) {
+    if universe.is_empty() || node.n_rows < config.min_node_size || all_same(y, node, max_samples) {
         return leaf();
     }
     if config.random_splitter {
-        random_split(x, y, node, n_classes, config, missing_ranks, rng, scratch)
+        random_split(x, y, node, universe, n_classes, config, missing_ranks, rng, scratch)
     } else {
-        histogram_split(x, y, node, n_classes, config, cutoff_offsets, missing_ranks, rng, scratch)
+        histogram_split(x, y, node, universe, n_classes, config, cutoff_offsets, missing_ranks, rng, scratch)
     }
 }
 
@@ -119,11 +121,11 @@ fn move_class_score(table: &[f64], stride: usize, score: &mut f64, class: usize,
 
 #[allow(clippy::too_many_arguments)]
 fn random_split(
-    x: ArrayView2<'_, u32>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, missing_ranks: &[u32],
-    rng: &mut StdRng, scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, universe: &[usize], n_classes: usize, config: &Config,
+    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let used_n = evaluation_rows(node.n_rows, config);
-    let features = sample_features(x.ncols(), config, rng);
+    let features = sample_features(universe, config, rng);
     propose_candidates(x, node, used_n, &features, config.cutoff_divisor, rng, scratch);
     let window = evaluation_window(y, node, n_classes, used_n, rng, scratch);
     let (score_table, score_stride, total_classes, class_weights) =
@@ -133,39 +135,19 @@ fn random_split(
     scratch.candidate_classes.resize(scratch.candidates.len() * n_classes, 0);
     scratch.candidate_missing_classes.clear();
     scratch.candidate_missing_classes.resize(scratch.candidates.len() * n_classes, 0);
-    if let Some(data) = x.as_slice() {
-        for &row in &node.rows[window.start..window.start + window.n_rows] {
-            let row = row as usize;
-            let class = y[row] as usize;
-            let offset = row * x.ncols();
-            for (candidate_idx, candidate) in scratch.candidates.iter_mut().enumerate() {
-                let value = data[offset + candidate.cut_col];
-                if value == missing_ranks[candidate.cut_col] {
-                    scratch.candidate_missing_classes[candidate_idx * n_classes + class] += 1;
-                } else if value < candidate.cut_val {
-                    let count = &mut scratch.candidate_classes[candidate_idx * n_classes + class];
-                    move_class_score(score_table, score_stride, &mut candidate.child_class_score, class, *count, total_classes[class], 1);
-                    *count += 1;
-                    candidate.left_count += 1;
-                    candidate.left_mass += class_weights[class];
-                }
-            }
-        }
-    } else {
-        for &row in &node.rows[window.start..window.start + window.n_rows] {
-            let row = row as usize;
-            let class = y[row] as usize;
-            for (candidate_idx, candidate) in scratch.candidates.iter_mut().enumerate() {
-                let value = x[[row, candidate.cut_col]];
-                if value == missing_ranks[candidate.cut_col] {
-                    scratch.candidate_missing_classes[candidate_idx * n_classes + class] += 1;
-                } else if value < candidate.cut_val {
-                    let count = &mut scratch.candidate_classes[candidate_idx * n_classes + class];
-                    move_class_score(score_table, score_stride, &mut candidate.child_class_score, class, *count, total_classes[class], 1);
-                    *count += 1;
-                    candidate.left_count += 1;
-                    candidate.left_mass += class_weights[class];
-                }
+    for &row in &node.rows[window.start..window.start + window.n_rows] {
+        let row = row as usize;
+        let class = y[row] as usize;
+        for (candidate_idx, candidate) in scratch.candidates.iter_mut().enumerate() {
+            let value = x.value(row, candidate.cut_col);
+            if value == missing_ranks[candidate.cut_col] {
+                scratch.candidate_missing_classes[candidate_idx * n_classes + class] += 1;
+            } else if value < candidate.cut_val {
+                let count = &mut scratch.candidate_classes[candidate_idx * n_classes + class];
+                move_class_score(score_table, score_stride, &mut candidate.child_class_score, class, *count, total_classes[class], 1);
+                *count += 1;
+                candidate.left_count += 1;
+                candidate.left_mass += class_weights[class];
             }
         }
     }
@@ -173,7 +155,7 @@ fn random_split(
 }
 
 fn propose_candidates(
-    x: ArrayView2<'_, u32>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng,
+    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng,
     scratch: &mut ClassSplitScratch,
 ) {
     scratch.candidates.clear();
@@ -185,20 +167,19 @@ fn propose_candidates(
 
 #[allow(clippy::too_many_arguments)]
 fn histogram_split(
-    x: ArrayView2<'_, u32>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, cutoff_offsets: &[usize],
-    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, universe: &[usize], n_classes: usize, config: &Config,
+    cutoff_offsets: &[usize], missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
-    let features = sample_features(x.ncols(), config, rng);
+    let features = sample_features(universe, config, rng);
     let window = evaluation_window(y, node, n_classes, evaluation_rows(node.n_rows, config), rng, scratch);
     let (score_table, score_stride) = (&scratch.class_score_table, scratch.score_stride);
     let impurity = log_score(0.0, window.total_class_score, &window);
     let mut criterion = impurity;
     let mut best = None;
     let sort_work = window.n_rows * (window.n_rows.ilog2() as usize + 1);
-    let total_bins =
-        dense_layout(&features, x.ncols(), cutoff_offsets, &mut scratch.dense_features, &mut scratch.dense_lookup, |cardinality| {
-            cardinality <= window.n_rows && cardinality * n_classes <= sort_work
-        });
+    let total_bins = dense_layout(x, &features, cutoff_offsets, &mut scratch.dense_features, &mut scratch.dense_lookup, |cardinality| {
+        cardinality <= window.n_rows && cardinality * n_classes <= sort_work
+    });
     scratch.bin_classes.clear();
     scratch.bin_classes.resize(total_bins * n_classes, 0);
     let (dense_features, bin_classes) = (&scratch.dense_features, &mut scratch.bin_classes);

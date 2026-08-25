@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np,pandas as pd
 from fastcore.script import call_parse
 
-from accuracy import Dataset,_rows,load_data,split_indices
+from fastforest.datasets import Dataset,_rows,load_data,split_indices
 from fastforest import FastForest,FastForestClassifier
 from fastforest.preprocessing import _Encoder
 from fastforest.tools import ADVISOR_PARAMS,advisor_features

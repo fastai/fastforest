@@ -18,8 +18,8 @@ use rand::{RngExt, SeedableRng};
 
 use crate::forest::uniform_sample_indices;
 use crate::{
-    ClassifierForest, Config, Encoder, Forest, ForestError, MaxFeatures, ModelMetadata, SavedModel, SavedValue, plan_fit,
-    resolve_replacement,
+    ClassifierForest, Config, Encoder, EncoderOptions, Forest, ForestError, MaxFeatures, ModelMetadata, SavedModel, SavedValue, StatTarget,
+    plan_fit, resolve_replacement,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +48,7 @@ pub struct FileFitOptions {
     pub allow_new_missing: bool,
     pub missing_values: Vec<(String, SavedValue)>,
     pub date_columns: Vec<(String, String)>,
+    pub stat_options: EncoderOptions,
 }
 
 impl Default for FileFitOptions {
@@ -78,6 +79,7 @@ impl FileFitOptions {
             allow_new_missing: false,
             missing_values: Vec::new(),
             date_columns: Vec::new(),
+            stat_options: EncoderOptions::default(),
         }
     }
 
@@ -203,7 +205,6 @@ fn fit_sampled(
     predictors: &RecordBatch, targets: &[Option<SavedValue>], total_rows: usize, options: &FileFitOptions, metadata: ModelMetadata,
     dates: Vec<(usize, String)>,
 ) -> Result<SavedModel, ForestError> {
-    let (encoder, x) = Encoder::fit_arrow(predictors, &metadata.markers, options.allow_new_missing, dates, options.seed)?;
     let replacement = options.resolved_replacement(total_rows);
     match options.task {
         Task::Regression => {
@@ -219,15 +220,28 @@ fn fit_sampled(
                         .ok_or_else(|| ForestError::new(format!("invalid regression target {:?}", value.value)))
                 })
                 .collect();
+            let y = y?;
+            let (encoder, x, alias) = Encoder::fit_arrow(
+                predictors,
+                &metadata.markers,
+                options.allow_new_missing,
+                dates,
+                options.seed,
+                Some(StatTarget::Regression(&y)),
+                &options.stat_options,
+            )?;
             let plan =
                 plan_fit(total_rows, options.n_trees, options.bootstrap_fraction, options.bootstrap_max, replacement, options.oob, 1)?;
             let config = fit_config(options, replacement, plan.n_trees, plan.rows_per_tree.min(x.nrows()));
+            let (cutoff_values, cutoff_offsets, missing_ranks, _, _, _, _) = encoder.training_layout(&alias);
             let forest = Forest::fit(
                 x.view(),
-                Array1::from_vec(y?).view(),
-                encoder.cutoff_values(),
-                encoder.cutoff_offsets(),
-                &encoder.missing_ranks(),
+                encoder.projections(),
+                Array1::from_vec(y).view(),
+                &cutoff_values,
+                &cutoff_offsets,
+                &missing_ranks,
+                &alias,
                 &config,
             )?;
             Ok(SavedModel::regression(encoder, forest, metadata))
@@ -242,6 +256,16 @@ fn fit_sampled(
             }
             let lookup: HashMap<_, _> = classes.iter().cloned().enumerate().map(|(index, value)| (value, index as u32)).collect();
             let y = Array1::from_iter(targets.iter().flatten().map(|value| lookup[value]));
+            let target = (classes.len() == 2).then(|| StatTarget::Binary(y.as_slice().unwrap()));
+            let (encoder, x, alias) = Encoder::fit_arrow(
+                predictors,
+                &metadata.markers,
+                options.allow_new_missing,
+                dates,
+                options.seed,
+                target,
+                &options.stat_options,
+            )?;
             let dimensions = classes.len().saturating_sub(1).max(1);
             let plan = plan_fit(
                 total_rows,
@@ -253,13 +277,16 @@ fn fit_sampled(
                 dimensions,
             )?;
             let config = fit_config(options, replacement, plan.n_trees, plan.rows_per_tree.min(x.nrows()));
+            let (cutoff_values, cutoff_offsets, missing_ranks, _, _, _, _) = encoder.training_layout(&alias);
             let forest = ClassifierForest::fit(
                 x.view(),
+                encoder.projections(),
                 y.view(),
                 classes.len(),
-                encoder.cutoff_values(),
-                encoder.cutoff_offsets(),
-                &encoder.missing_ranks(),
+                &cutoff_values,
+                &cutoff_offsets,
+                &missing_ranks,
+                &alias,
                 &config,
             )?;
             Ok(SavedModel::classification(encoder, forest, metadata, classes))

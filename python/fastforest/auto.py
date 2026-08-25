@@ -111,7 +111,7 @@ class _Auto:
 
     def _fit_native(self, task, encoded, target, encoder, n_rows, replacement, outputs, classes, trees, seed, tracking_indices=None):
         args = self._fit_args(task, n_rows, len(target), replacement, outputs, trees, seed, tracking_indices)
-        common = (encoded,target,encoder.cutoff_values,encoder.cutoff_offsets,encoder.missing_ranks)
+        common = (encoded,target,*encoder.fit_layout,encoder.fit_alias)
         return (_ClassifierForest.fit(encoded,target,len(classes),*common[2:],*args) if task=="classification"
             else _Forest.fit(*common,*args))
 
@@ -157,8 +157,8 @@ class AutoForest(_Auto, FastForest):
         n_rows,pool_indices,X,y = _fit_pool(X, y, trees, self.bootstrap_fraction,
             self.bootstrap_max, replacement, self.autogrow, fit_seed)
         target = _vector(y, indices=pool_indices)
-        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed)
-        encoded = encoder.fit_transform(X, pool_indices)
+        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed, self._stat_options())
+        encoded = encoder.fit_transform(X, pool_indices, y=target)
         self.replacement_ = replacement
         fit = self._grow if self.autogrow else self._fit_once
         native = fit("regression", encoded, target, encoder, n_rows, replacement, 1, None, fit_seed)
@@ -179,8 +179,8 @@ class AutoForestClassifier(_Auto, FastForestClassifier):
         self.classes_,target = _class_vector(y, pool_indices)
         self.n_classes_ = len(self.classes_)
         outputs = max(1,self.n_classes_-1)
-        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed)
-        encoded = encoder.fit_transform(X, pool_indices)
+        encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, fit_seed, self._stat_options())
+        encoded = encoder.fit_transform(X, pool_indices, y_class=target if self.n_classes_ == 2 else None)
         self.replacement_ = replacement
         fit = self._grow if self.autogrow else self._fit_once
         native = fit("classification", encoded, target, encoder, n_rows, replacement, outputs, self.classes_, fit_seed)

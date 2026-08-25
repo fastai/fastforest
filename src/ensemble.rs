@@ -8,6 +8,47 @@ pub(crate) fn tree_seeds(config: &Config) -> Vec<u64> {
     (0..config.n_trees).map(|_| rng.random()).collect()
 }
 
+pub(crate) fn variant_groups(alias: &[u32], n_columns: usize) -> Result<(usize, Vec<Vec<u32>>), ForestError> {
+    if alias.len() != n_columns {
+        return Err(ForestError::new(format!("expected {n_columns} feature aliases, got {}", alias.len())));
+    }
+    let canonical = alias.iter().enumerate().take_while(|&(index, &target)| target as usize == index).count();
+    let mut groups: Vec<Vec<u32>> = Vec::new();
+    for (index, &target) in alias.iter().enumerate().skip(canonical) {
+        if target as usize >= canonical {
+            return Err(ForestError::new("feature aliases must map extra columns to canonical features"));
+        }
+        match groups.iter_mut().find(|group| group[0] == target) {
+            Some(group) => group.push(index as u32),
+            None => groups.push(vec![target, index as u32]),
+        }
+    }
+    if groups.windows(2).any(|pair| pair[0].len() != pair[1].len()) {
+        return Err(ForestError::new("feature alias groups must share one variant count"));
+    }
+    Ok((canonical, groups))
+}
+
+pub(crate) fn tree_universe(canonical: usize, groups: &[Vec<u32>], rng: &mut StdRng) -> Vec<usize> {
+    let mut universe: Vec<usize> = (0..canonical).collect();
+    if let Some(width) = groups.first().map(Vec::len) {
+        let variant = rng.random_range(0..width);
+        for group in groups {
+            universe[group[0] as usize] = group[variant] as usize;
+        }
+    }
+    universe
+}
+
+pub(crate) fn fold_variant_importance(importance: &mut Vec<f32>, canonical: usize, groups: &[Vec<u32>]) {
+    for group in groups {
+        for &column in &group[1..] {
+            importance[group[0] as usize] += importance[column as usize];
+        }
+    }
+    importance.truncate(canonical);
+}
+
 pub(crate) fn add_importance(total: &mut [f32], importance: &[f32]) {
     total.iter_mut().zip(importance).for_each(|(total, value)| *total += value);
 }

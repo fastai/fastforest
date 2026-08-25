@@ -133,12 +133,15 @@ class _Column:
         if missing.any(): result[missing] = self.median
         return result
 
-class _Encoder:
-    def __init__(self, missing_values=None, date_columns=None, allow_new_missing=False, seed=None):
-        self.missing_values,self.date_columns = missing_values,date_columns
-        self.allow_new_missing,self.seed = allow_new_missing,seed
+_ENCODING_KINDS = {0:"ordered", 1:"stat", 2:"count"}
 
-    def fit_transform(self, X, indices=None):
+
+class _Encoder:
+    def __init__(self, missing_values=None, date_columns=None, allow_new_missing=False, seed=None, stats=None):
+        self.missing_values,self.date_columns = missing_values,date_columns
+        self.allow_new_missing,self.seed,self.stats = allow_new_missing,seed,stats
+
+    def fit_transform(self, X, indices=None, y=None, y_class=None):
         if indices is not None:
             X = _take_rows(X, indices)
         batch,self.input_names = _arrow_batch(X)
@@ -148,7 +151,11 @@ class _Encoder:
             detected = _NativeEncoder.detect_dates(batch, [_saved_scalar(marker) for marker in markers], self.seed)
             self.date_columns = {self.input_names[index]:format for index,format in detected}
         dates,self._direct = _date_columns(self.date_columns, self.input_names, self._direct)
-        native,ranked = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.allow_new_missing, dates, self.seed)
+        stats = self.stats if self.stats is not None else (False, 6, 4, 1.0, 4, False, True, 64, False)
+        native,ranked,alias = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.allow_new_missing, dates,
+            self.seed, y, y_class, *stats)
+        self.fit_alias = np.asarray(alias)
+        self.fit_layout = tuple(np.asarray(part) for part in native.training_layout(alias))
         self.names,self._dates = tuple(native.logical_names),tuple((index,format,tuple(parts)) for index,format,parts in native.date_layout)
         self._bundles = tuple((name,tuple(indices),tuple(members)) for name,indices,members in native.bundle_layout)
         bundled = {index for _,indices,_ in self._bundles for index in indices}
@@ -165,9 +172,9 @@ class _Encoder:
             numeric,all_int,had_missing,median_num,median_text,numeric_values,text_values,raw_encoded = self._native.metadata(col)
             values = np.asarray(numeric_values, dtype=np.float32) if numeric else np.asarray(text_values, dtype=str)
             median = median_num if numeric else median_text
-            encoded = tuple(("ordered", None) for _ in raw_encoded)
+            encoded = tuple((_ENCODING_KINDS[kind], None) for kind,_ in raw_encoded)
             for kind,category in encoded:
-                if kind == "ordered": encoded_names.append(name)
+                encoded_names.append(name if kind == "ordered" else f"{name}_{kind}")
             fitted.append(_Column(name, marker, numeric, all_int, values, median, had_missing, encoded))
         self.columns = tuple(fitted)
         self.encoded_names = tuple(encoded_names)
