@@ -72,17 +72,17 @@ struct EvaluationWindow {
 }
 
 pub(crate) fn find_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, universe: &[usize], config: &Config, cutoff_offsets: &[usize],
-    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
+    rng: &mut StdRng, scratch: &mut SplitScratch,
 ) -> Split {
     let max_samples = evaluation_rows(node.n_rows, config);
-    if universe.is_empty() || node.n_rows < config.min_node_size || all_same(y, node, max_samples) {
+    if x.n_features() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) {
         return leaf(y, node);
     }
     if config.random_splitter {
-        random_split(x, y, node, universe, config, missing_ranks, rng, scratch)
+        random_split(x, y, node, config, missing_ranks, rng, scratch)
     } else {
-        histogram_split(x, y, node, universe, config, cutoff_offsets, missing_ranks, rng, scratch)
+        histogram_split(x, y, node, config, cutoff_offsets, missing_ranks, rng, scratch)
     }
 }
 
@@ -151,16 +151,18 @@ pub(crate) fn dense_layout(
 ) -> usize {
     dense.clear();
     lookup.clear();
-    lookup.resize(x.n_features(), usize::MAX);
+    lookup.reserve(features.len());
     let mut total_bins = 0;
     for &cut_col in features {
         let cardinality = cutoff_offsets[cut_col + 1] - cutoff_offsets[cut_col];
         if supported(cardinality) {
             let (column, table) = x.source(cut_col);
             let table = if table.is_empty() { usize::MAX } else { x.projections.offsets[cut_col] };
-            lookup[cut_col] = dense.len();
+            lookup.push(dense.len());
             dense.push(DenseFeature { cardinality, offset: total_bins, column, table });
             total_bins += cardinality;
+        } else {
+            lookup.push(usize::MAX);
         }
     }
     total_bins
@@ -214,11 +216,11 @@ pub(crate) fn supported_equality(value: u32, cardinality: usize, equal: usize, t
 
 #[allow(clippy::too_many_arguments)]
 fn random_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, universe: &[usize], config: &Config, missing_ranks: &[u32],
-    rng: &mut StdRng, scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, missing_ranks: &[u32], rng: &mut StdRng,
+    scratch: &mut SplitScratch,
 ) -> Split {
     let used_n = evaluation_rows(node.n_rows, config);
-    let features = sample_features(universe, config, rng);
+    let features = sample_features(x.n_features(), config, rng);
     propose_candidates(x, node, used_n, &features, config.cutoff_divisor, rng, scratch);
     let window = evaluation_window(y, node, used_n, rng);
     for &row in &node.rows[window.start..window.start + window.n_rows] {
@@ -252,10 +254,10 @@ fn propose_candidates(
 }
 
 fn histogram_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, universe: &[usize], config: &Config, cutoff_offsets: &[usize],
-    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
+    rng: &mut StdRng, scratch: &mut SplitScratch,
 ) -> Split {
-    let features = sample_features(universe, config, rng);
+    let features = sample_features(x.n_features(), config, rng);
     let window = evaluation_window(y, node, evaluation_rows(node.n_rows, config), rng);
     let impurity = weighted_loss(0.0, 0.0, 0, window.sum_target, window.sum_sqr_target, window.n_rows, config.split_prior_rows);
     let mut criterion = impurity;
@@ -276,8 +278,8 @@ fn histogram_split(
         targets[bin] += target;
         squares[bin] += target * target;
     });
-    for cut_col in features {
-        let dense = scratch.dense_lookup[cut_col];
+    for (position, cut_col) in features.into_iter().enumerate() {
+        let dense = scratch.dense_lookup[position];
         if dense != usize::MAX {
             let DenseFeature { cardinality, offset, .. } = scratch.dense_features[dense];
             let has_missing = missing_ranks[cut_col] != u32::MAX;
@@ -472,9 +474,9 @@ fn histogram_split(
     finish_split(y, node, &window, best, criterion, impurity)
 }
 
-pub(crate) fn sample_features(universe: &[usize], config: &Config, rng: &mut StdRng) -> Vec<usize> {
-    let selected = config.max_features.resolve(universe.len()).min(universe.len());
-    rand::seq::index::sample(rng, universe.len(), selected).into_iter().map(|index| universe[index]).collect()
+pub(crate) fn sample_features(n_features: usize, config: &Config, rng: &mut StdRng) -> Vec<usize> {
+    let selected = config.max_features.resolve(n_features).min(n_features);
+    rand::seq::index::sample(rng, n_features, selected).into_vec()
 }
 
 #[inline(always)]

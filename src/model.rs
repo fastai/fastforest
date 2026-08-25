@@ -7,7 +7,7 @@ use tempfile::NamedTempFile;
 
 use crate::{ClassifierForest, Encoder, Forest, ForestError};
 
-const MAGIC: &[u8; 8] = b"FFM\0\x04\0\0\0";
+const MAGIC: &[u8; 8] = b"FFM\0\x06\0\0\0";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SavedValue {

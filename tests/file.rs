@@ -43,9 +43,19 @@ fn mixed_file_and_model_story() {
     let sampled = view_csv(&data, &CsvViewOptions { sample: Some(CsvSample::Rows(20)), seed: 42, ..CsvViewOptions::default() }).unwrap();
     assert!(sampled.starts_with("20 randomly sampled rows from 240\n"));
 
-    let regression =
-        fit_csv(&data, &FileFitOptions { target: "target".into(), n_trees: Some(12), seed: Some(42), ..FileFitOptions::default() })
-            .unwrap();
+    let unknown = fit_csv(&data, &FileFitOptions { target: "target".into(), order: Some("nope".into()), ..FileFitOptions::default() });
+    assert!(unknown.unwrap_err().to_string().contains("unknown order column"));
+    let regression = fit_csv(
+        &data,
+        &FileFitOptions {
+            target: "target".into(),
+            order: Some("label".into()),
+            n_trees: Some(12),
+            seed: Some(42),
+            ..FileFitOptions::default()
+        },
+    )
+    .unwrap();
     let model_path = directory.path().join("regression.ffm");
     regression.save(&model_path).unwrap();
     let loaded = SavedModel::load(&model_path).unwrap();

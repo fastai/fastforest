@@ -46,7 +46,6 @@ def _worker(send, dataset, data_home, max_rows, seed, screen_trees, levels):
                 stratify=y if task == "classification" else None)
             X,y = _rows(X, selected),y[selected]
         train_idx,valid_idx,split = split_indices(dataset, X, y if task == "classification" else None)
-        if dataset == Dataset.walmart_nodate: X = X.drop(columns="Date")
         X_train,X_valid,y_train,y_valid = _rows(X, train_idx),_rows(X, valid_idx),y[train_idx],y[valid_idx]
         cls,model_args,levels = _setup(task, levels)
         model = cls(**model_args, missing_values=missing, seed=seed)

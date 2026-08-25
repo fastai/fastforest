@@ -254,18 +254,9 @@ def _prepare_sweep(model, X, y, configs, seed, trees, oob):
         for (_,_,params),replacement in zip(configs,replacements))
     return _PreparedSweep(task, base, seed, configs, target, outputs, replacements, plans)
 
-def _native_config(params, replacement, plan, target_rows, seed, oob):
-    from .core import _native_max_features
-    kind,value = _native_max_features(params["max_features"])
-    return dict(n_trees=plan[0], min_node_size=params["min_node_size"], bootstrap_fraction=params["bootstrap_fraction"],
-        bootstrap_max=params["bootstrap_max"], sample_rows=min(plan[1], target_rows), replacement=replacement,
-        max_node_samples=params["max_node_samples"], split_prior_rows=params.get("split_prior_rows", 0.),
-        class_weight_power=params.get("class_weight_power", .75), cutoff_divisor=params["cutoff_divisor"], seed=seed, oob=oob,
-        random_splitter=params["random_splitter"], max_features_kind=kind, max_features_value=value)
-
 def screen(model, X, y, configs=None, trees=8, seed=None):
     "Fit one encoded, parallel OOB batch and return forest-configuration diagnostics."
-    from .core import _ClassifierForest,_Encoder,_Forest,_class_vector,_fit_plan,_sample_indices,_vector
+    from .core import _ClassifierForest,_Encoder,_Forest,_STAT_PARAMS,_class_vector,_fit_plan,_native_config,_sample_indices,_vector
     if trees < 1: raise ValueError("trees must be positive")
     prepared = _prepare_sweep(model, X, y, configs, seed, trees, True)
     task,base,seed,configs,y_array = prepared.task,prepared.base,prepared.seed,prepared.configs,prepared.target
@@ -281,9 +272,8 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
     else:
         target = _vector(y_array, indices=indices)
         fitted_outputs = 1
-    stats = tuple(base[name] for name in ("target_statistics", "min_stat_cardinality", "min_rows_per_level", "stat_prior_rows",
-        "stat_permutations", "frequency", "keep_rank", "order_buckets", "natural_sort"))
-    encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats)
+    stats = {name:base[name] for name in _STAT_PARAMS}
+    encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats, base["order"], plans[0][1])
     encoded = (encoder.fit_transform(X, indices, y=target) if task == "regression"
         else encoder.fit_transform(X, indices, y_class=target if len(classes) == 2 else None))
     training = encoder.transform(_take_rows(X, indices))
@@ -294,9 +284,9 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
             replacement, True, fitted_outputs)
         native_configs.append(_native_config(params, replacement, fitted_plan, len(target), seed, True))
     started = perf_counter()
-    args = (encoded, target, *encoder.fit_layout, encoder.fit_alias)
-    if task == "classification": forests = _ClassifierForest.fit_batch(encoded, target, len(classes), *args[2:], native_configs, oob_rows)
-    else: forests = _Forest.fit_batch(*args, native_configs, oob_rows)
+    layout = encoder.fit_layout
+    if task == "classification": forests = _ClassifierForest.fit_batch(encoded, target, len(classes), layout, native_configs, oob_rows)
+    else: forests = _Forest.fit_batch(encoded, target, layout, native_configs, oob_rows)
     batch_seconds = perf_counter()-started
     results = []
     for (label,changes,_),forest in zip(configs, forests):
@@ -317,7 +307,7 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
 
 def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None, allow_unseen_classes=False):
     "Fit the same one-axis configurations with ordinary resolved tree counts and score train/validation data."
-    from .core import _ClassifierForest,_Encoder,_Forest,_class_vector,_fit_plan,_sample_indices,_vector
+    from .core import _ClassifierForest,_Encoder,_Forest,_STAT_PARAMS,_class_vector,_fit_plan,_native_config,_sample_indices,_vector
     y_train,y_valid = np.asarray(y_train),np.asarray(y_valid)
     if len(X_valid) != len(y_valid): raise ValueError("feature and target row counts must match")
     prepared = _prepare_sweep(model, X_train, y_train, configs, seed, None, False)
@@ -342,9 +332,8 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
             classes = None
             fitted_outputs = 1
             target,valid_target = _vector(y_train, indices=indices),_vector(y_valid)
-        stats = tuple(base[name] for name in ("target_statistics", "min_stat_cardinality", "min_rows_per_level", "stat_prior_rows",
-            "stat_permutations", "frequency", "keep_rank", "order_buckets", "natural_sort"))
-        encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats)
+        stats = {name:base[name] for name in _STAT_PARAMS}
+        encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats, base["order"], rows_per_tree)
         encoded = (encoder.fit_transform(X_train, indices, y=target) if task == "regression"
             else encoder.fit_transform(X_train, indices, y_class=target if len(classes) == 2 else None))
         fit_preprocess_seconds = perf_counter()-started
@@ -352,7 +341,7 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
         started = perf_counter()
         validation = encoder.transform(X_valid)
         predict_preprocess_seconds = perf_counter()-started
-        args = (encoded, target, *encoder.fit_layout, encoder.fit_alias)
+        layout = encoder.fit_layout
         for index in indices_in_group:
             params = configs[index][2]
             replacement = replacements[index]
@@ -360,8 +349,8 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
                 replacement, False, fitted_outputs)
             native_config = _native_config(params, replacement, fitted_plan, len(target), seed, False)
             started = perf_counter()
-            if task == "classification": forest = _ClassifierForest.fit_batch(encoded, target, len(classes), *args[2:], [native_config], 1)[0]
-            else: forest = _Forest.fit_batch(*args, [native_config], 1)[0]
+            if task == "classification": forest = _ClassifierForest.fit_batch(encoded, target, len(classes), layout, [native_config], 1)[0]
+            else: forest = _Forest.fit_batch(encoded, target, layout, [native_config], 1)[0]
             native_fit_seconds = perf_counter()-started
             batch_seconds += native_fit_seconds
             started = perf_counter()

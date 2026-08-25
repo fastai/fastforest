@@ -90,14 +90,19 @@ def _date_columns(spec, names, direct):
     if not isinstance(spec, dict): raise TypeError("date_columns must be a dict of columns to formats")
     dates = []
     for selector,format in spec.items():
-        try: index = names.index(selector) if isinstance(selector, str) else int(selector)
-        except ValueError as error: raise ValueError(f"unknown date column {selector!r}") from error
-        if index < 0 or index >= len(names): raise ValueError(f"date column {selector!r} is out of range")
+        index = _column_index(selector, names, "date")
         if index not in direct: raise ValueError(f"date column {names[index]!r} is already configured")
         if not isinstance(format, str) or not format: raise TypeError(f"date column {names[index]!r} must have a non-empty format")
         direct.remove(index)
         dates.append((index, format))
     return dates,direct
+
+def _column_index(selector, names, kind):
+    if selector is None: return None
+    try: index = names.index(selector) if isinstance(selector, str) else int(selector)
+    except (TypeError,ValueError) as error: raise ValueError(f"unknown {kind} column {selector!r}") from error
+    if index < 0 or index >= len(names): raise ValueError(f"{kind} column {selector!r} is out of range")
+    return index
 
 def _numeric(values, name):
     try: result = np.asarray(values, dtype=np.float32)
@@ -134,12 +139,14 @@ class _Column:
         return result
 
 _ENCODING_KINDS = {0:"ordered", 1:"stat", 2:"count"}
+_STATS_OFF = dict(target_statistics=False, min_rows_per_level=20, min_stat_agreement=.75, frequency=False, natural_sort=False)
 
 
 class _Encoder:
-    def __init__(self, missing_values=None, date_columns=None, allow_new_missing=False, seed=None, stats=None):
+    def __init__(self, missing_values=None, date_columns=None, allow_new_missing=False, seed=None, stats=None, order=None, agreement_sample_rows=None):
         self.missing_values,self.date_columns = missing_values,date_columns
-        self.allow_new_missing,self.seed,self.stats = allow_new_missing,seed,stats
+        self.allow_new_missing,self.seed,self.stats,self.order = allow_new_missing,seed,stats,order
+        self.agreement_sample_rows = agreement_sample_rows
 
     def fit_transform(self, X, indices=None, y=None, y_class=None):
         if indices is not None:
@@ -151,11 +158,12 @@ class _Encoder:
             detected = _NativeEncoder.detect_dates(batch, [_saved_scalar(marker) for marker in markers], self.seed)
             self.date_columns = {self.input_names[index]:format for index,format in detected}
         dates,self._direct = _date_columns(self.date_columns, self.input_names, self._direct)
-        stats = self.stats if self.stats is not None else (False, 6, 4, 1.0, 4, False, True, 64, False)
-        native,ranked,alias = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.allow_new_missing, dates,
-            self.seed, y, y_class, *stats)
-        self.fit_alias = np.asarray(alias)
-        self.fit_layout = tuple(np.asarray(part) for part in native.training_layout(alias))
+        order = _column_index(self.order, self.input_names, "order")
+        stats = self.stats if self.stats is not None else _STATS_OFF
+        agreement_sample_rows = len(X) if self.agreement_sample_rows is None else min(len(X), self.agreement_sample_rows)
+        native,ranked = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.allow_new_missing, dates,
+            self.seed, y, y_class, order_column=order, agreement_sample_rows=agreement_sample_rows, **stats)
+        self.fit_layout = tuple(np.asarray(part) for part in native.training_layout())
         self.names,self._dates = tuple(native.logical_names),tuple((index,format,tuple(parts)) for index,format,parts in native.date_layout)
         self._bundles = tuple((name,tuple(indices),tuple(members)) for name,indices,members in native.bundle_layout)
         bundled = {index for _,indices,_ in self._bundles for index in indices}

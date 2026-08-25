@@ -85,12 +85,6 @@ pub(crate) fn structure<C, P>(nodes: &[TreeNode<C, P>]) -> (usize, usize, usize)
     (nodes.len(), leaves, depth)
 }
 
-pub(crate) fn remap_features<C, P>(nodes: &mut [TreeNode<C, P>], alias: &[u32]) {
-    for node in nodes.iter_mut().filter(|node| !node.is_leaf()) {
-        node.cut_col = (node.cut_col & !FEATURE_MASK) | alias[node.feature()];
-    }
-}
-
 pub(crate) fn native_node<P>(node: TreeNode<u32, P>, cutoff_values: &[f32], cutoff_offsets: &[usize]) -> TreeNode<f32, P> {
     TreeNode {
         cut_val: if node.is_leaf() {

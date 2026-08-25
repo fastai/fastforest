@@ -6,6 +6,7 @@ from fastcore.script import call_parse
 import pyarrow.parquet as pq
 
 GITLAB_API = "https://gitlab.com/api/v4/groups/data%2Fd%2Fopenml/projects"
+OPENML_TASK_API = "https://www.openml.org/api/v1/json/task"
 
 def _json(url):
     with urllib.request.urlopen(url, timeout=30) as response: return json.load(response)
@@ -50,17 +51,38 @@ def _valid_parquet(path):
     try: pq.ParquetFile(path); return True
     except Exception: return False
 
-def _download(item, output_dir):
-    dataset_id = _resolve(item)
+def _download(item, output_dir, task_metadata):
     path = Path(output_dir)/_slug(item["name"])
     path.mkdir(parents=True, exist_ok=True)
-    base = f"https://gitlab.com/data/d/openml/{dataset_id}/-/raw/master/dataset"
-    for name in ("metadata.json","features.json","qualities.json"):
-        _fetch(f"{base}/{name}", path/name)
-    _fetch(f"{base}/tables/data.pq", path/"data.pq")
-    if not _valid_parquet(path/"data.pq"): raise ValueError("mirror file is not valid Parquet")
-    print(f"downloaded {item['name']}", flush=True)
+    dataset_id = _number(item.get("openml_id"))
+    if not _valid_parquet(path/"data.pq"):
+        dataset_id = dataset_id or _resolve(item)
+        base = f"https://gitlab.com/data/d/openml/{dataset_id}/-/raw/master/dataset"
+        for name in ("metadata.json","features.json","qualities.json"): _fetch(f"{base}/{name}", path/name)
+        _fetch(f"{base}/tables/data.pq", path/"data.pq")
+        if not _valid_parquet(path/"data.pq"): raise ValueError("mirror file is not valid Parquet")
+    if task_metadata: _fetch(f"{OPENML_TASK_API}/{item['task_id']}", path/"task.json")
+    print(f"ready {item['name']}", flush=True)
     return dataset_id,path
+
+def _procedure(path):
+    with open(path) as handle: task = json.load(handle)["task"]
+    inputs = {item["name"]:item for item in task["input"]}
+    procedure = inputs["estimation_procedure"]["estimation_procedure"]
+    params = {item["name"]:item.get("value") for item in procedure.get("parameter", [])}
+    return dict(procedure=procedure["type"], repeats=_number(params.get("number_repeats")), folds=_number(params.get("number_folds")),
+        percentage=params.get("percentage"), split_url=procedure.get("data_splits_url"))
+
+def _write_procedures(rows, output_dir, path):
+    summaries = []
+    for row in rows:
+        task_path = Path(output_dir)/_slug(row["name"])/"task.json"
+        if task_path.exists(): summaries.append(dict(task_id=row["task_id"], name=row["name"], **_procedure(task_path)))
+    if summaries:
+        with open(path, "w", newline="") as handle:
+            writer = csv.DictWriter(handle, summaries[0])
+            writer.writeheader()
+            writer.writerows(summaries)
 
 def _read_manifest(path):
     with open(path, newline="") as handle: return list(csv.DictReader(handle))
@@ -80,12 +102,15 @@ def main(
     workers:int=8, # Concurrent downloads
     timeout:int=120, # Maximum seconds per dataset
     limit:int=None, # Optional number of pending datasets
+    task_metadata:bool=True, # Cache OpenML task descriptions without downloading split files
+    procedures_csv:str="meta/amlb/task_procedures.csv", # Compact summary of cached split procedures
 ):
     "Download AMLB datasets directly from the GitLab OpenML mirror."
     rows = _read_manifest(manifest)
-    pending = [row for row in rows if not _valid_parquet(Path(output_dir)/_slug(row["name"])/"data.pq")]
+    pending = [row for row in rows if not _valid_parquet(Path(output_dir)/_slug(row["name"])/"data.pq") or
+        task_metadata and not (Path(output_dir)/_slug(row["name"])/"task.json").exists()]
     if limit is not None: pending = pending[:limit]
-    results = asyncio.run(parallel_async(_download, pending, output_dir, n_workers=workers, timeout=timeout, return_exceptions=True))
+    results = asyncio.run(parallel_async(_download, pending, output_dir, task_metadata, n_workers=workers, timeout=timeout, return_exceptions=True))
     complete = failed = 0
     for row,result in zip(pending,results):
         if isinstance(result,Exception):
@@ -93,7 +118,8 @@ def main(
             print(f"failed {row['name']}: {type(result).__name__}: {result}")
         else:
             dataset_id,path = result
-            row["openml_id"] = dataset_id
+            if dataset_id is not None: row["openml_id"] = dataset_id
             complete += 1
     _write_manifest(manifest, rows)
+    if task_metadata: _write_procedures(rows, output_dir, procedures_csv)
     print(f"{complete} complete · {failed} failed")

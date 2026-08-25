@@ -19,6 +19,19 @@ impl Projections {
         self.phys.len()
     }
 
+    pub(crate) fn push_direct(&mut self, column: u32) {
+        self.phys.push(column);
+        self.base.push(0);
+        self.offsets.push(self.tables.len());
+    }
+
+    pub(crate) fn push_projected(&mut self, base: u32, table: &[u32]) {
+        self.phys.push(u32::MAX);
+        self.base.push(base);
+        self.tables.extend_from_slice(table);
+        self.offsets.push(self.tables.len());
+    }
+
     pub(crate) fn validate(&self, columns: usize) -> Result<(), ForestError> {
         let n = self.phys.len();
         if self.base.len() != n || self.offsets.len() != n + 1 || self.offsets.first() != Some(&0) {

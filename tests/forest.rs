@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Float32Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
-use fastforest::{ClassifierForest, Config, Encoder, EncoderOptions, FitPlan, Forest, MaxFeatures, SavedValue, plan_fit};
+use fastforest::{ClassifierForest, Config, Encoder, EncoderOptions, FitPlan, Forest, MaxFeatures, SavedValue, StatContext, plan_fit};
 use ndarray::Array1;
 
 fn numeric_batch(rows: usize, cols: usize) -> RecordBatch {
@@ -20,13 +20,10 @@ fn numeric_batch(rows: usize, cols: usize) -> RecordBatch {
 
 fn encoded(batch: &RecordBatch) -> (Encoder, ndarray::Array2<u32>, ndarray::Array2<f32>, Vec<SavedValue>) {
     let markers = (0..batch.num_columns()).map(|_| SavedValue { kind: 5, value: String::new() }).collect::<Vec<_>>();
-    let (encoder, ranked, _) = Encoder::fit_arrow(batch, &markers, false, vec![], Some(42), None, &EncoderOptions::default()).unwrap();
+    let (encoder, ranked) =
+        Encoder::fit_arrow(batch, &markers, false, vec![], Some(42), &EncoderOptions::default(), StatContext::default()).unwrap();
     let native = encoder.transform_arrow(batch, &markers).unwrap();
     (encoder, ranked, native, markers)
-}
-
-fn identity_alias(encoder: &Encoder) -> Vec<u32> {
-    (0..encoder.missing_ranks().len() as u32).collect()
 }
 
 fn same_floats(left: &[f32], right: &[f32]) -> bool {
@@ -47,7 +44,6 @@ fn regression_and_classification_behaviour_story() {
             encoder.cutoff_values(),
             encoder.cutoff_offsets(),
             &encoder.missing_ranks(),
-            &identity_alias(&encoder),
             config,
         )
         .unwrap()
@@ -79,7 +75,6 @@ fn regression_and_classification_behaviour_story() {
         encoder.cutoff_values(),
         encoder.cutoff_offsets(),
         &encoder.missing_ranks(),
-        &identity_alias(&encoder),
         &configs,
         None,
     )
@@ -96,7 +91,6 @@ fn regression_and_classification_behaviour_story() {
         encoder.cutoff_values(),
         encoder.cutoff_offsets(),
         &encoder.missing_ranks(),
-        &identity_alias(&encoder),
         &[configs[1].clone(), configs[0].clone()],
         None,
     )
@@ -112,7 +106,6 @@ fn regression_and_classification_behaviour_story() {
         encoder.cutoff_values(),
         encoder.cutoff_offsets(),
         &encoder.missing_ranks(),
-        &identity_alias(&encoder),
         &config,
     )
     .unwrap();
@@ -143,7 +136,6 @@ fn regression_and_classification_behaviour_story() {
         encoder.cutoff_values(),
         encoder.cutoff_offsets(),
         &encoder.missing_ranks(),
-        &identity_alias(&encoder),
         &Config {
             n_trees: 1,
             bootstrap_fraction: Some(1.),

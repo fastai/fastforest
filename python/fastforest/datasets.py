@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 
 Dataset = str_enum("Dataset", "california", "concrete", "sgemm", "diamonds", "allstate", "diabetes", "covertype",
     "adult", "bank", "click", "shuttle", "airlines", "higgs", "kddcup99", "sf_police",
-    "bluebook", "bluebook_raw", "walmart", "walmart_raw", "walmart_nodate", "ashrae", "rossmann")
+    "bluebook", "bluebook_raw", "walmart", "walmart_raw", "ashrae", "rossmann")
 
 _amlb = {
     Dataset.click:("click_prediction_small", "Click Prediction Small"),
@@ -21,13 +21,37 @@ _amlb = {
 }
 
 _classification = frozenset((Dataset.covertype, Dataset.adult, Dataset.bank, *_amlb))
+_orders = {Dataset.bluebook:"saledate", Dataset.bluebook_raw:"saledate", Dataset.walmart:"Date", Dataset.walmart_raw:"Date",
+    Dataset.rossmann:"Date", Dataset.ashrae:"timestamp"}
 
 def dataset_task(dataset):
     "Return the dataset's modelling task without loading it."
     return "classification" if Dataset(dataset) in _classification else "regression"
 
+def order_column(dataset):
+    "Return the chronological feature used by a canonical time split, or None."
+    return _orders.get(Dataset(dataset))
+
 _sgemm_url = "https://archive.ics.uci.edu/static/public/440/sgemm%2Bgpu%2Bkernel%2Bperformance.zip"
 _diabetes_url = "https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip"
+_beyond_metadata = "https://raw.githubusercontent.com/autogluon/tabarena/main/packages/tabarena/src/tabarena/benchmark/task/metadata/sources/data/BeyondArena_tasks_metadata.csv"
+
+def beyond_manifest(path, include_text=False):
+    "Load one canonical split per BeyondArena dataset."
+    path = Path(path)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(_beyond_metadata, path)
+    tasks = pd.read_csv(path)
+    tasks = tasks[(tasks.repeat == 0)&(tasks.fold == 0)].copy()
+    if not include_text: tasks = tasks[~tasks.has_text]
+    tasks["dataset"] = tasks.tabarena_task_name
+    tasks["source_group"] = tasks.dataset_name
+    tasks["task"] = np.where(tasks.is_classification, "classification", "regression")
+    tasks["rows"],tasks["features"] = tasks.num_instances,tasks.num_features
+    tasks["uuid"] = tasks.data_foundry_uri.str.rsplit("/", n=1).str[-1]
+    tasks["collection"] = "beyondarena"
+    return tasks.reset_index(drop=True)
 
 def _cached_zip(url, data_home, name):
     "Download and cache a zip archive."
@@ -129,14 +153,14 @@ def load_data(dataset, data_home):
         y = np.log(X.pop("SalePrice").to_numpy(dtype=np.float32))
         name = "Blue Book for Bulldozers"+(" (raw date)" if dataset == Dataset.bluebook_raw else "")
         return name,X,y,None,"regression"
-    if dataset in (Dataset.walmart, Dataset.walmart_raw, Dataset.walmart_nodate):
+    if dataset in (Dataset.walmart, Dataset.walmart_raw):
         folder = Path(data_home)/"walmart"
         paths = [folder/name for name in ("train.csv", "features.csv", "stores.csv")]
         if not all(path.exists() for path in paths): raise FileNotFoundError(f"download the Walmart train, features, and stores CSVs to {folder}")
         train,features,stores = (pd.read_csv(path, keep_default_na=False) for path in paths)
         X = train.merge(features, on=["Store", "Date", "IsHoliday"], validate="many_to_one").merge(stores, on="Store", validate="many_to_one")
         y = X.pop("Weekly_Sales").to_numpy(dtype=np.float32)
-        suffix = " (raw date)" if dataset == Dataset.walmart_raw else " (date removed)" if dataset == Dataset.walmart_nodate else ""
+        suffix = " (raw date)" if dataset == Dataset.walmart_raw else ""
         missing = {name:"NA" for name in ("MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5")}
         return "Walmart Store Sales"+suffix,X,y,missing,"regression"
     if dataset == Dataset.ashrae:
@@ -167,7 +191,7 @@ def split_indices(
     "Return the dataset's canonical training and validation row indexes."
     idx = np.arange(len(X))
     if dataset in (Dataset.bluebook, Dataset.bluebook_raw): return idx[:-12_000],idx[-12_000:],"final 12,000 rows"
-    if dataset in (Dataset.walmart, Dataset.walmart_raw, Dataset.walmart_nodate):
+    if dataset in (Dataset.walmart, Dataset.walmart_raw):
         dates = pd.to_datetime(X.Date)
         cutoff = np.sort(dates.unique())[-12]
         return idx[dates < cutoff],idx[dates >= cutoff],"final 12 weeks"
