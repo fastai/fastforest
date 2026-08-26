@@ -157,7 +157,7 @@ Classification scoring research is recorded chronologically in `meta/experiments
 
 Broad scripted sweeps belong later, once the parameter ideas and useful levels are understood. Use them to confirm proposed defaults across many datasets, produce reproducible reporting tables, or collect deliberately designed advisor-training data. Keep the marginal one-parameter calibration sweep separate from randomized joint configurations used to teach the advisor about interactions.
 
-For focused FastForest tuning, add `--models FastForest` and vary `--min_node_size`, `--bootstrap_fraction`, `--bootstrap_max`, `--replacement`, `--max_node_samples`, `--cutoff_divisor`, or `--max_features`; regression also exposes `--split_prior_rows`, and classification exposes `--class_weight_power`. Set `--random_splitter` to compare the original split search. The tools use `call_parse`, so CLI names match their underscored function parameters.
+For focused FastForest tuning, add `--models FastForest` and vary `--min-node-size`, `--bootstrap-fraction`, `--bootstrap-max`, `--replacement`, `--max-node-samples`, `--cutoff-divisor`, or `--max-features`; regression also exposes `--split-prior-rows`, and classification exposes `--class-weight-power`. Set `--random-splitter` to compare the original split search. The tools use `call_parse`, which converts underscores in function parameter names to hyphens in CLI flags.
 
 Run a reproducible parameter grid (SGEMM by default) and save its metrics and timings with:
 
@@ -208,12 +208,12 @@ python tools/meta_benchmark.py
 Collect or resume the 20-row joint design separately with:
 
 ```bash
-python tools/meta_benchmark.py --output_dir meta/meta_joint --suite_kind joint --joint_configs 20
+python tools/meta_benchmark.py --output-dir meta/meta_joint --suite-kind joint --joint-configs 20
 ```
 
-Seed the new output directory's `slow.csv` from the current marginal run before starting, rather than pointing `--slow_csv` at an older experiment: a running collector updates its own timeout list. Both modes write each completed dataset immediately and print dataset-level progress, so an interrupted run remains usable and resumes without repeating successful datasets.
+Seed the new output directory's `slow.csv` from the current marginal run before starting, rather than pointing `--slow-csv` at an older experiment: a running collector updates its own timeout list. Both modes write each completed dataset immediately and print dataset-level progress, so an interrupted run remains usable and resumes without repeating successful datasets.
 
-Useful controls include `--task_timeout`, `--limit`, `--task_names`, and `--include_slow`. Targeted follow-ups can also replace the marginal suite's baseline `replacement`, node size, absolute child support, and feature fraction without changing package defaults. Do not delete successful per-dataset CSVs merely to rebuild `all.csv`; the script regenerates it from them after each successful task.
+Useful controls include `--task-timeout`, `--limit`, `--task-names`, and `--include-slow`. Targeted follow-ups can also replace the marginal suite's baseline `replacement`, node size, absolute child support, and feature fraction without changing package defaults. Do not delete successful per-dataset CSVs merely to rebuild `all.csv`; the script regenerates it from them after each successful task.
 
 Classification planning first estimates output dimensions to bound the initial pool, then both the OOB screen and full validation recompute their tree/sample plans from the classes actually found in that pool. This matters for large multiclass data: a 1,000-target estimate can miss rare classes and would otherwise under-budget rows per tree and OOB evaluation. When comparing historical sweep snapshots, first reproduce an old winning configuration with the current implementation; old validation numbers can reflect implementation changes rather than a parameter regression, especially on tiny validation sets.
 
@@ -236,7 +236,7 @@ At README benchmark time, `compare` with the `AutoForest` and `Autogrow` models 
 Rebuild the held-out advisor from the large sweep with:
 
 ```bash
-python tools/sweep_advisor.py --results meta/meta_benchmark/all.csv --output_dir meta/meta_advisor
+python tools/sweep_advisor.py --results meta/meta_benchmark/all.csv --output-dir meta/meta_advisor
 ```
 
 After changing `STANDARD_LEVELS`, defaults, or `_ADVISOR_COMPARISONS`, do not assume existing artifacts describe the new setup. Inspect the resolved parameters stored in the raw rows, collect only newly required configurations where practical, then rebuild the filtered advisor matrices and models. The next full meta-dataset should use the current defaults and add randomly sampled combinations of the supported hyperparameter levels, rather than containing only baseline-plus-one-axis sweeps.
