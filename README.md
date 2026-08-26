@@ -947,7 +947,7 @@ importance = concrete.feature_importance(Xc_valid, yc_valid)
 importance.plot();
 ```
 
-<img src="index_files/figure-commonmark/cell-12-output-1.png" width="702" height="260" />
+![](index_files/figure-commonmark/cell-12-output-1.png)
 
 Correlated features can substitute for one another and therefore look individually unimportant. Permute them together to measure their joint importance:
 
@@ -978,7 +978,7 @@ explanation.row(0)
 explanation.plot(0);
 ```
 
-<img src="index_files/figure-commonmark/cell-14-output-1.png" width="750" height="299" />
+![](index_files/figure-commonmark/cell-14-output-1.png)
 
 ``` python
 tree_predictions = concrete.predict_trees(Xc_valid)
@@ -998,20 +998,20 @@ age = concrete.partial_dependence(Xc_train, "age")
 age.plot();
 ```
 
-<img src="index_files/figure-commonmark/cell-16-output-1.png" width="609" height="409" />
+![](index_files/figure-commonmark/cell-16-output-1.png)
 
 ``` python
 age.plot(clusters=5);
 ```
 
-<img src="index_files/figure-commonmark/cell-17-output-1.png" width="609" height="409" />
+![](index_files/figure-commonmark/cell-17-output-1.png)
 
 ``` python
 interaction = concrete.partial_dependence(Xc_train, ["cement", "water"])
 interaction.plot();
 ```
 
-<img src="index_files/figure-commonmark/cell-18-output-1.png" width="601" height="409" />
+![](index_files/figure-commonmark/cell-18-output-1.png)
 
 Partial dependence repeatedly replaces the selected feature values and averages the resulting predictions. ICE retains the individual prediction lines. These plots describe the fitted model rather than a causal intervention, and highly correlated features can produce unrealistic synthetic rows.
 
@@ -1042,13 +1042,13 @@ relations.groups(threshold=0.2)
 relations.plot_dendrogram();
 ```
 
-<img src="index_files/figure-commonmark/cell-20-output-1.png" width="615" height="466" />
+![](index_files/figure-commonmark/cell-20-output-1.png)
 
 ``` python
 relations.plot();
 ```
 
-<img src="index_files/figure-commonmark/cell-21-output-1.png" width="575" height="470" />
+![](index_files/figure-commonmark/cell-21-output-1.png)
 
 `feature_dependence` complements correlation: it measures how predictable each feature is from the others, in any nonlinear form the forest can capture.
 
@@ -1064,37 +1064,6 @@ dependence.predictability
 dependence.plot();
 ```
 
-<img src="index_files/figure-commonmark/cell-23-output-1.png" width="605" height="465" />
+![](index_files/figure-commonmark/cell-23-output-1.png)
 
 `feature_relations` uses tie-aware Spearman correlation and average linkage implemented directly with NumPy. `feature_dependence` detects nonlinear redundancy by treating each feature in turn as a target, fitting a small forest from the remaining features, and measuring grouped prediction and permutation dependence.
-
-## Development
-
-The project is locally installed with maturin until it joins the aai-ws workspace:
-
-``` bash
-cargo build --release --bins
-python tools/stage_binaries.py
-maturin develop
-cargo test
-pytest -q
-```
-
-For performance work, build the extension in release mode and run the benchmark:
-
-``` bash
-maturin develop --release
-python tools/bench.py
-```
-
-Compare accuracy and timings against sklearn’s random forest and histogram GBM on one fixed California Housing split:
-
-``` bash
-python tools/accuracy.py
-```
-
-`README.md` is generated from `nbs/index.ipynb`. The displayed results live in `tools/results/`. After updating those CSVs, re-execute the notebook and run `nbdev-readme`.
-
-Use `--dataset concrete` for the smaller Concrete Compressive Strength regression dataset, or `--dataset sgemm` for the 241,600-row SGEMM GPU Kernel Performance dataset. Each model/dataset combination runs in an isolated process with a three-minute timeout; process startup and input transfer are excluded from reported timings.
-
-Use `--models FastForest` with `--min_node_size`, `--bootstrap_fraction`, `--bootstrap_max`, `--replacement`, `--max_node_samples`, and `--cutoff_divisor` for focused FastForest experiments. These spellings come directly from the `call_parse` function parameters.
