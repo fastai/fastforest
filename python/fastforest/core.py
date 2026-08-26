@@ -56,6 +56,11 @@ def _resolve_replacement(replacement, n_rows, classification=False):
         raise ValueError("replacement must be True, False, or None")
     return _native_resolve_replacement(n_rows, None if replacement is None else bool(replacement), classification)
 
+def _pool_indices(n_rows, pool_rows, seed):
+    "Sorted pool selection: pool order carries nothing, and a sorted take is much faster."
+    if pool_rows >= n_rows: return None
+    return np.sort(np.asarray(_sample_indices(n_rows, pool_rows, seed, 2)))
+
 def _fit_pool(X, y, n_trees, bootstrap_fraction, bootstrap_max, replacement, oob, seed, classification=False):
     "Select the shared bounded training pool before expensive conversion."
     if getattr(y, "ndim", 1) != 1: raise ValueError("y must be a one-dimensional array")
@@ -64,7 +69,7 @@ def _fit_pool(X, y, n_trees, bootstrap_fraction, bootstrap_max, replacement, oob
     if n_rows != len(y): raise ValueError(f"X has {n_rows} rows but y has {len(y)} values")
     outputs = _estimated_outputs(y, seed) if classification else 1
     plan_trees,rows_per_tree,pool_rows = _fit_plan(n_rows, n_trees, bootstrap_fraction, bootstrap_max, replacement, oob, outputs)
-    indices = None if pool_rows == n_rows else np.asarray(_sample_indices(n_rows, pool_rows, seed, 2))
+    indices = _pool_indices(n_rows, pool_rows, seed)
     return n_rows,plan_trees,rows_per_tree,indices,X,y
 
 def _original_indices(pool_indices, local_indices):
@@ -130,7 +135,7 @@ def _native_max_features(value):
     if isinstance(value, (float, np.floating)) and np.isfinite(value) and 0 < value <= 1: return 2,float(value)
     raise ValueError("max_features must be 'sqrt' or a float in (0, 1]")
 
-_STAT_PARAMS = ("target_statistics", "min_rows_per_level", "min_stat_agreement", "frequency", "natural_sort")
+_STAT_PARAMS = ("target_statistics", "min_rows_per_level", "min_stat_agreement", "stat_components", "frequency", "natural_sort")
 
 def _native_config(params, replacement, plan, target_rows, seed, oob):
     "Build the native fit-configuration dict from public parameters and a resolved `(n_trees, rows_per_tree)` plan."
@@ -159,6 +164,8 @@ def _finish_regression(model, encoder, native, pool_indices):
     "Attach native regression results to a fitted public estimator."
     _finish_common(model, encoder, native, pool_indices)
     model.oob_prediction_ = native.oob_prediction
+    if encoder.trend is not None and model.oob_prediction_ is not None:
+        model.oob_prediction_ = np.where(model.oob_counts_ > 0, model.oob_prediction_ + encoder.trend[3], model.oob_prediction_)
     return model
 
 def _finish_classifier(model, encoder, native, pool_indices, target):
@@ -218,7 +225,7 @@ class FastForest(_ForestFacade):
     "A fast approximate-forest regressor."
     _param_names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples", "split_prior_rows",
         "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing",
-        "target_statistics", "min_rows_per_level", "min_stat_agreement", "frequency", "natural_sort", "order")
+        "target_statistics", "min_rows_per_level", "min_stat_agreement", "stat_components", "frequency", "natural_sort", "order", "detrend")
     def __init__(self, n_trees=_REG_DEFAULTS["n_trees"], min_node_size=_REG_DEFAULTS["min_node_size"],
         bootstrap_fraction=_REG_DEFAULTS["bootstrap_fraction"], bootstrap_max=_REG_DEFAULTS["bootstrap_max"], replacement=None,
         max_node_samples=_REG_DEFAULTS["max_node_samples"], split_prior_rows=_REG_DEFAULTS["split_prior_rows"],
@@ -226,8 +233,8 @@ class FastForest(_ForestFacade):
         max_features=_REG_DEFAULTS["max_features"], seed=_REG_DEFAULTS["seed"], oob=_REG_DEFAULTS["oob"], missing_values=None,
         date_columns=None, allow_new_missing=_REG_DEFAULTS["allow_new_missing"],
         target_statistics=_REG_DEFAULTS["target_statistics"], min_rows_per_level=_REG_DEFAULTS["min_rows_per_level"],
-        min_stat_agreement=_REG_DEFAULTS["min_stat_agreement"], frequency=_REG_DEFAULTS["frequency"],
-        natural_sort=_REG_DEFAULTS["natural_sort"], order=None):
+        min_stat_agreement=_REG_DEFAULTS["min_stat_agreement"], stat_components=_REG_DEFAULTS["stat_components"], frequency=_REG_DEFAULTS["frequency"],
+        natural_sort=_REG_DEFAULTS["natural_sort"], order=None, detrend=False):
         self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
         self.bootstrap_max,self.replacement = bootstrap_max,replacement
         self.max_node_samples,self.split_prior_rows = max_node_samples,split_prior_rows
@@ -237,7 +244,9 @@ class FastForest(_ForestFacade):
         self.date_columns = date_columns
         self.allow_new_missing = allow_new_missing
         self.target_statistics,self.min_rows_per_level,self.min_stat_agreement = target_statistics,min_rows_per_level,min_stat_agreement
+        self.stat_components = stat_components
         self.frequency,self.natural_sort,self.order = frequency,natural_sort,order
+        self.detrend = detrend
         self._model = None
 
     def fit(self, X, y):
@@ -246,12 +255,15 @@ class FastForest(_ForestFacade):
         _,self.n_trees_,sample_rows,pool_indices,X,y = _fit_pool(X, y, self.n_trees, self.bootstrap_fraction, self.bootstrap_max,
             replacement, self.oob, self.seed)
         y = _vector(y, indices=pool_indices)
-        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed, self._stat_options(), self.order, sample_rows)
+        self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed, self._stat_options(), self.order, sample_rows,
+            detrend=self.detrend)
         X = self._encoder.fit_transform(X, pool_indices, y=y)
+        trend = self._encoder.trend
+        if trend is not None: y = y - trend[3]
         self.date_columns_ = self._encoder.date_columns
         self.replacement_ = replacement
         config = _native_config(self.get_params(), replacement, (self.n_trees_, sample_rows), len(y), self.seed, self.oob)
-        native = _Forest.fit(X, y, self._encoder.fit_layout, config, None)
+        native = _Forest.fit(X, y, self._encoder.fit_layout, config, None, trend[:3] if trend is not None else None)
         return _finish_regression(self, self._encoder, native, pool_indices)
 
     def predict(self, X):
@@ -305,7 +317,7 @@ class FastForestClassifier(_ForestFacade):
     _analysis_metric = "accuracy"
     _param_names = ("n_trees", "min_node_size", "bootstrap_fraction", "bootstrap_max", "replacement", "max_node_samples", "class_weight_power",
         "cutoff_divisor", "random_splitter", "max_features", "seed", "oob", "missing_values", "date_columns", "allow_new_missing",
-        "target_statistics", "min_rows_per_level", "min_stat_agreement", "frequency", "natural_sort", "order")
+        "target_statistics", "min_rows_per_level", "min_stat_agreement", "stat_components", "frequency", "natural_sort", "order")
     def __init__(self, n_trees=_CLASS_DEFAULTS["n_trees"], min_node_size=_CLASS_DEFAULTS["min_node_size"],
         bootstrap_fraction=_CLASS_DEFAULTS["bootstrap_fraction"], bootstrap_max=_CLASS_DEFAULTS["bootstrap_max"], replacement=None,
         max_node_samples=_CLASS_DEFAULTS["max_node_samples"], class_weight_power=_CLASS_DEFAULTS["class_weight_power"],
@@ -313,7 +325,7 @@ class FastForestClassifier(_ForestFacade):
         max_features=_CLASS_DEFAULTS["max_features"], seed=_CLASS_DEFAULTS["seed"], oob=_CLASS_DEFAULTS["oob"], missing_values=None,
         date_columns=None, allow_new_missing=_CLASS_DEFAULTS["allow_new_missing"],
         target_statistics=_CLASS_DEFAULTS["target_statistics"], min_rows_per_level=_CLASS_DEFAULTS["min_rows_per_level"],
-        min_stat_agreement=_CLASS_DEFAULTS["min_stat_agreement"], frequency=_CLASS_DEFAULTS["frequency"],
+        min_stat_agreement=_CLASS_DEFAULTS["min_stat_agreement"], stat_components=_CLASS_DEFAULTS["stat_components"], frequency=_CLASS_DEFAULTS["frequency"],
         natural_sort=_CLASS_DEFAULTS["natural_sort"], order=None):
         self.n_trees,self.min_node_size,self.bootstrap_fraction = n_trees,min_node_size,bootstrap_fraction
         self.bootstrap_max,self.replacement = bootstrap_max,replacement
@@ -324,6 +336,7 @@ class FastForestClassifier(_ForestFacade):
         self.date_columns = date_columns
         self.allow_new_missing = allow_new_missing
         self.target_statistics,self.min_rows_per_level,self.min_stat_agreement = target_statistics,min_rows_per_level,min_stat_agreement
+        self.stat_components = stat_components
         self.frequency,self.natural_sort,self.order = frequency,natural_sort,order
         self._model = None
 
@@ -335,7 +348,7 @@ class FastForestClassifier(_ForestFacade):
         self.classes_,y = _class_vector(y, pool_indices)
         self.n_classes_ = len(self.classes_)
         self._encoder = _Encoder(self.missing_values, self.date_columns, self.allow_new_missing, self.seed, self._stat_options(), self.order, sample_rows)
-        X = self._encoder.fit_transform(X, pool_indices, y_class=y if self.n_classes_ == 2 else None)
+        X = self._encoder.fit_transform(X, pool_indices, y_class=(y, self.n_classes_))
         self.date_columns_ = self._encoder.date_columns
         outputs = max(1, self.n_classes_-1)
         self.n_trees_,_,_ = _fit_plan(n_rows, self.n_trees, self.bootstrap_fraction, self.bootstrap_max,

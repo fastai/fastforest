@@ -132,7 +132,7 @@ impl RawColumn {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Encoding {
     Ordered,
-    Statistic,
+    Statistic(u8),
     Counter,
 }
 
@@ -313,6 +313,36 @@ fn invalid(message: impl Into<String>) -> ForestError {
     ForestError::new(message)
 }
 
+#[derive(Clone, Copy)]
+enum NumericMarker {
+    Never,
+    Nan,
+    Value(f64),
+}
+
+// Bit-identical to `marker_matches(&value.to_string(), marker)` for any f64 value, hoisted out of
+// the per-cell loop: shortest-roundtrip formatting means a float's string equals a marker exactly
+// when the float equals the marker's parsed value and that value reproduces the marker's string.
+fn numeric_marker(marker: &SavedValue) -> NumericMarker {
+    match marker.kind {
+        1 => NumericMarker::Nan,
+        3 => match marker.value.parse::<i64>() {
+            Ok(parsed) if (parsed as f64) as i64 == parsed && parsed.to_string() == marker.value => NumericMarker::Value(parsed as f64),
+            _ => NumericMarker::Never,
+        },
+        4 => match marker.value.parse::<f64>() {
+            Ok(parsed) if !parsed.is_nan() => NumericMarker::Value(parsed),
+            _ => NumericMarker::Never,
+        },
+        5 => match marker.value.parse::<f64>() {
+            Ok(parsed) if parsed.is_nan() && marker.value == "NaN" => NumericMarker::Nan,
+            Ok(parsed) if parsed.to_string() == marker.value => NumericMarker::Value(parsed),
+            _ => NumericMarker::Never,
+        },
+        _ => NumericMarker::Never,
+    }
+}
+
 pub(crate) fn marker_matches(value: &str, marker: &SavedValue) -> bool {
     match marker.kind {
         0 => value.is_empty(),
@@ -328,6 +358,7 @@ pub(crate) fn marker_matches(value: &str, marker: &SavedValue) -> bool {
 macro_rules! numeric_arrow_column {
     ($array:expr, $marker:expr, $ty:ty) => {{
         let array = $array.as_any().downcast_ref::<$ty>().unwrap();
+        let marker = numeric_marker($marker);
         RawColumn::Numeric(
             (0..array.len())
                 .map(|row| {
@@ -335,7 +366,12 @@ macro_rules! numeric_arrow_column {
                         return None;
                     }
                     let value = array.value(row) as f64;
-                    (!marker_matches(&value.to_string(), $marker)).then_some(value as f32)
+                    let missing = match marker {
+                        NumericMarker::Never => false,
+                        NumericMarker::Nan => value.is_nan(),
+                        NumericMarker::Value(marker) => value == marker,
+                    };
+                    (!missing).then_some(value as f32)
                 })
                 .collect(),
         )
@@ -1069,13 +1105,21 @@ pub struct EncoderOptions {
     pub target_statistics: bool,
     pub min_rows_per_level: usize,
     pub min_stat_agreement: f32,
+    pub stat_components: usize,
     pub frequency: bool,
     pub natural_sort: bool,
 }
 
 impl Default for EncoderOptions {
     fn default() -> Self {
-        Self { target_statistics: true, min_rows_per_level: 20, min_stat_agreement: 0.75, frequency: false, natural_sort: false }
+        Self {
+            target_statistics: true,
+            min_rows_per_level: 20,
+            min_stat_agreement: 0.75,
+            stat_components: 1,
+            frequency: false,
+            natural_sort: true,
+        }
     }
 }
 
@@ -1087,13 +1131,16 @@ impl EncoderOptions {
         if !self.min_stat_agreement.is_finite() || !(0.0..=1.0).contains(&self.min_stat_agreement) {
             return Err(invalid("min_stat_agreement must be between zero and one"));
         }
+        if self.stat_components == 0 {
+            return Err(invalid("stat_components must be positive"));
+        }
         Ok(())
     }
 }
 
 pub enum StatTarget<'a> {
     Regression(&'a [f32]),
-    Binary(&'a [u32]),
+    Classes { codes: &'a [u32], k: usize },
 }
 
 #[derive(Default)]
@@ -1101,23 +1148,19 @@ pub struct StatContext<'a> {
     pub target: Option<StatTarget<'a>>,
     pub order_column: Option<usize>,
     pub agreement_sample_rows: usize,
+    pub detrend: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct LevelStats {
     counts: Vec<u32>,
-    sums: Vec<f64>,
-    prior: f32,
-    min_rows: u32,
+    values: Vec<Vec<f32>>,
+    priors: Vec<f32>,
 }
 
 impl LevelStats {
-    fn statistic(&self, code: Option<usize>) -> f32 {
-        let value = match code {
-            Some(code) if self.counts[code] >= self.min_rows => (self.sums[code] / self.counts[code] as f64) as f32,
-            _ => self.prior,
-        };
-        value
+    fn statistic(&self, code: Option<usize>, component: usize) -> f32 {
+        code.map_or(self.priors[component], |code| self.values[component][code])
     }
 
     fn count(&self, code: Option<usize>) -> f32 {
@@ -1148,7 +1191,7 @@ fn fit_float_ranks(values: &[f32]) -> (Vec<u32>, Vec<f32>) {
     (table, bounds)
 }
 
-fn grouped_order(codes: &[u32]) -> Vec<usize> {
+fn grouped_order(codes: &[u32]) -> (Vec<usize>, Vec<usize>) {
     let mut counts = vec![0usize; codes.iter().copied().max().unwrap_or(0) as usize + 1];
     for &code in codes {
         counts[code as usize] += 1;
@@ -1163,7 +1206,7 @@ fn grouped_order(codes: &[u32]) -> Vec<usize> {
         rows[next[code as usize]] = row;
         next[code as usize] += 1;
     }
-    rows
+    (rows, starts)
 }
 
 fn stat_agrees(codes: &FitCodes, y: &[f32], levels: usize, floor: u32, early: &[usize], later: &[usize], minimum: f32) -> bool {
@@ -1199,18 +1242,22 @@ fn stat_agrees(codes: &FitCodes, y: &[f32], levels: usize, floor: u32, early: &[
         observed.push((late_sums[code] / n_late as f64) as f32);
         weights.push(n_late as f64);
     }
-    let (predicted, predicted_bounds) = fit_float_ranks(&predicted);
-    let (observed, observed_bounds) = fit_float_ranks(&observed);
+    rank_agreement(&predicted, &observed, &weights, minimum)
+}
+
+fn rank_agreement(predicted: &[f32], observed: &[f32], weights: &[f64], minimum: f32) -> bool {
+    let (predicted, predicted_bounds) = fit_float_ranks(predicted);
+    let (observed, observed_bounds) = fit_float_ranks(observed);
     if predicted_bounds.len() < 2 || observed_bounds.len() < 2 {
         return false;
     }
     let weight = weights.iter().sum::<f64>();
-    let mean_predicted = predicted.iter().zip(&weights).map(|(&rank, &weight)| rank as f64 * weight).sum::<f64>() / weight;
-    let mean_observed = observed.iter().zip(&weights).map(|(&rank, &weight)| rank as f64 * weight).sum::<f64>() / weight;
+    let mean_predicted = predicted.iter().zip(weights).map(|(&rank, &weight)| rank as f64 * weight).sum::<f64>() / weight;
+    let mean_observed = observed.iter().zip(weights).map(|(&rank, &weight)| rank as f64 * weight).sum::<f64>() / weight;
     let mut covariance = 0.0;
     let mut predicted_variance = 0.0;
     let mut observed_variance = 0.0;
-    for ((&predicted, &observed), &weight) in predicted.iter().zip(&observed).zip(&weights) {
+    for ((&predicted, &observed), &weight) in predicted.iter().zip(&observed).zip(weights) {
         let predicted = predicted as f64 - mean_predicted;
         let observed = observed as f64 - mean_observed;
         covariance += weight * predicted * observed;
@@ -1221,8 +1268,309 @@ fn stat_agrees(codes: &FitCodes, y: &[f32], levels: usize, floor: u32, early: &[
     scale > 0.0 && covariance >= minimum as f64 * scale
 }
 
+struct ClassProfiles {
+    cells: Vec<u32>,
+    totals: Vec<u32>,
+    pooled: Vec<f64>,
+    k: usize,
+}
+
+impl ClassProfiles {
+    fn fit(codes: &FitCodes, classes: &[u32], levels: usize, k: usize, rows: impl Iterator<Item = usize>) -> Self {
+        let mut cells = vec![0u32; levels * k];
+        let mut totals = vec![0u32; levels];
+        for row in rows {
+            let level = codes.at(row) as usize;
+            cells[level * k + classes[row] as usize] += 1;
+            totals[level] += 1;
+        }
+        let mut pooled = vec![0f64; k];
+        for level in 0..levels {
+            for class in 0..k {
+                pooled[class] += cells[level * k + class] as f64;
+            }
+        }
+        let total: f64 = pooled.iter().sum();
+        if total > 0.0 {
+            for rate in &mut pooled {
+                *rate /= total;
+            }
+        }
+        Self { cells, totals, pooled, k }
+    }
+
+    fn profile(&self, level: usize, class: usize) -> f64 {
+        self.cells[level * self.k + class] as f64 / self.totals[level] as f64 - self.pooled[class]
+    }
+
+    fn dot(&self, level: usize, axis: &[f64]) -> f64 {
+        (0..self.k).map(|class| self.profile(level, class) * axis[class]).sum()
+    }
+
+    fn project(&self, floor: u32, axis: &[f64]) -> Vec<f32> {
+        (0..self.totals.len()).map(|level| if self.totals[level] < floor { 0.0 } else { self.dot(level, axis) as f32 }).collect()
+    }
+
+    fn reliability(&self, floor: u32, axis: &[f64]) -> f32 {
+        let levels = self.totals.len();
+        let mut sums = vec![0f64; levels];
+        let mut sumsqs = vec![0f64; levels];
+        for level in 0..levels {
+            for class in 0..self.k {
+                let count = self.cells[level * self.k + class] as f64;
+                sums[level] += count * axis[class];
+                sumsqs[level] += count * axis[class] * axis[class];
+            }
+        }
+        signal_reliability(&self.totals, &sums, &sumsqs, floor)
+    }
+
+    fn axes(&self, components: usize) -> Vec<Vec<f64>> {
+        let k = self.k;
+        let mut diag = vec![0f64; k];
+        for level in 0..self.totals.len() {
+            if self.totals[level] == 0 {
+                continue;
+            }
+            let weight = self.totals[level] as f64;
+            for class in 0..k {
+                let rate = self.profile(level, class);
+                diag[class] += weight * rate * rate;
+            }
+        }
+        let mut starts: Vec<usize> = (0..k).collect();
+        starts.sort_by(|&a, &b| diag[b].total_cmp(&diag[a]).then(a.cmp(&b)));
+        let mut axes: Vec<Vec<f64>> = Vec::new();
+        for component in 0..components {
+            let mut axis = vec![0f64; k];
+            axis[starts[component]] = 1.0;
+            for _ in 0..3 {
+                let mut next = vec![0f64; k];
+                for level in 0..self.totals.len() {
+                    if self.totals[level] == 0 {
+                        continue;
+                    }
+                    let score = self.totals[level] as f64 * self.dot(level, &axis);
+                    for class in 0..k {
+                        next[class] += score * self.profile(level, class);
+                    }
+                }
+                for previous in &axes {
+                    let overlap: f64 = next.iter().zip(previous).map(|(next, previous)| next * previous).sum();
+                    for (next, &previous) in next.iter_mut().zip(previous) {
+                        *next -= overlap * previous;
+                    }
+                }
+                let norm = next.iter().map(|value| value * value).sum::<f64>().sqrt();
+                if norm == 0.0 {
+                    return axes;
+                }
+                for value in &mut next {
+                    *value /= norm;
+                }
+                axis = next;
+            }
+            // Orient by the highest-index nonzero coordinate, not the largest: magnitude ties resolve by
+            // rounding noise, and the k=2 axis must come out increasing in the positive rate.
+            let orient = axis.iter().rposition(|&value| value != 0.0).unwrap_or(0);
+            if axis[orient] < 0.0 {
+                for value in &mut axis {
+                    *value = -*value;
+                }
+            }
+            axes.push(axis);
+        }
+        axes
+    }
+}
+
+fn class_agrees(
+    codes: &FitCodes, classes: &[u32], levels: usize, k: usize, floor: u32, early: &[usize], later: &[usize], components: usize,
+    minimum: f32,
+) -> Vec<bool> {
+    if minimum == 0.0 {
+        return vec![true; components];
+    }
+    if early.is_empty() || later.is_empty() {
+        return vec![false; components];
+    }
+    let union = ClassProfiles::fit(codes, classes, levels, k, early.iter().chain(later).copied());
+    let axes = union.axes(components);
+    let early = ClassProfiles::fit(codes, classes, levels, k, early.iter().copied());
+    let late = ClassProfiles::fit(codes, classes, levels, k, later.iter().copied());
+    (0..components)
+        .map(|component| {
+            let Some(axis) = axes.get(component) else { return false };
+            let mut predicted = Vec::new();
+            let mut observed = Vec::new();
+            let mut weights = Vec::new();
+            for level in 0..levels {
+                if late.totals[level] == 0 {
+                    continue;
+                }
+                let value = if early.totals[level] >= floor { early.dot(level, axis) as f32 } else { 0.0 };
+                predicted.push(value);
+                observed.push(late.dot(level, axis) as f32);
+                weights.push(late.totals[level] as f64);
+            }
+            rank_agreement(&predicted, &observed, &weights, minimum)
+        })
+        .collect()
+}
+
+fn regression_stats(
+    codes: &FitCodes, counts: &[u32], y: &[f32], floor: u32, agreement: Option<(&[usize], &[usize], u32)>, options: &EncoderOptions,
+) -> (Vec<Vec<f32>>, Vec<f32>, Vec<bool>) {
+    let prior = y.iter().sum::<f32>() / y.len().max(1) as f32;
+    let levels = counts.len();
+    let mut sums = vec![0f64; levels];
+    let mut sumsqs = vec![0f64; levels];
+    for row in 0..codes.len() {
+        let value = y[row] as f64;
+        let code = codes.at(row) as usize;
+        sums[code] += value;
+        sumsqs[code] += value * value;
+    }
+    let means: Vec<f32> =
+        counts.iter().zip(&sums).map(|(&count, &sum)| if count >= floor { (sum / count as f64) as f32 } else { prior }).collect();
+    let agreeing = match agreement {
+        None => signal_reliability(counts, &sums, &sumsqs, floor) >= options.min_stat_agreement,
+        Some((early, later, gate_floor)) => stat_agrees(codes, y, levels, gate_floor, early, later, options.min_stat_agreement),
+    };
+    (vec![means], vec![prior], vec![agreeing])
+}
+
+fn signal_reliability(counts: &[u32], sums: &[f64], sumsqs: &[f64], floor: u32) -> f32 {
+    let (mut n_total, mut levels, mut sum_total, mut squared_counts) = (0f64, 0usize, 0f64, 0f64);
+    for (level, &count) in counts.iter().enumerate() {
+        if count < floor {
+            continue;
+        }
+        n_total += count as f64;
+        levels += 1;
+        sum_total += sums[level];
+        squared_counts += count as f64 * count as f64;
+    }
+    if levels < 2 || n_total <= levels as f64 {
+        return 0.0;
+    }
+    let grand = sum_total / n_total;
+    let (mut between, mut within) = (0f64, 0f64);
+    for (level, &count) in counts.iter().enumerate() {
+        if count < floor {
+            continue;
+        }
+        let n = count as f64;
+        let mean = sums[level] / n;
+        between += n * (mean - grand) * (mean - grand);
+        within += (sumsqs[level] - n * mean * mean).max(0.0);
+    }
+    let scale = n_total - squared_counts / n_total;
+    if scale <= 0.0 {
+        return 0.0;
+    }
+    let noise = within / (n_total - levels as f64);
+    let signal = ((between - noise * (levels as f64 - 1.0)) / scale).max(0.0);
+    if noise == 0.0 {
+        return if signal > 0.0 { 1.0 } else { 0.0 };
+    }
+    let typical = scale / (levels as f64 - 1.0);
+    (signal / (signal + noise / typical)) as f32
+}
+
+pub struct TrendFit {
+    pub feature: usize,
+    pub intercept: f64,
+    pub slope: f64,
+    pub values: Vec<f32>,
+}
+
+fn trend_fit(
+    target: &Option<StatTarget<'_>>, date_order: &Option<(Arc<[u32]>, Arc<[NaiveDateTime]>, usize)>, explicit_position: Option<usize>,
+    fitted: &[FittedColumn], rows: usize,
+) -> Result<Option<(usize, f64, f64, Vec<f32>)>, ForestError> {
+    let Some(StatTarget::Regression(y)) = target else {
+        return Err(invalid("detrend requires a regression target"));
+    };
+    let (position, axis): (usize, Vec<f64>) = match (date_order, explicit_position) {
+        (Some((codes, distinct, position)), _) => (
+            *position,
+            (0..rows)
+                .map(|row| {
+                    let code = codes[row] as usize;
+                    if code < distinct.len() { date_value(distinct[code], DATE_PARTS.len() as u8 - 1) as f64 } else { f64::NAN }
+                })
+                .collect(),
+        ),
+        (None, Some(position)) => {
+            let codes =
+                fitted[position].training_codes().ok_or_else(|| invalid("order column must contain at least two distinct values"))?;
+            let column = &fitted[position].column;
+            let cardinality = column.cardinality();
+            let values = (0..rows)
+                .map(|row| {
+                    let code = codes.at(row) as usize;
+                    if code >= cardinality {
+                        return f64::NAN;
+                    }
+                    match &column.values {
+                        Values::Numeric(unique) => unique[code] as f64,
+                        _ => code as f64,
+                    }
+                })
+                .collect();
+            (position, values)
+        }
+        (None, None) => return Err(invalid("detrend requires an order column")),
+    };
+    let (mut n, mut sum_t, mut sum_y, mut sum_tt, mut sum_ty) = (0f64, 0f64, 0f64, 0f64, 0f64);
+    for (row, &value) in axis.iter().enumerate() {
+        if value.is_nan() {
+            continue;
+        }
+        n += 1.0;
+        sum_t += value;
+        sum_y += y[row] as f64;
+        sum_tt += value * value;
+        sum_ty += value * y[row] as f64;
+    }
+    if n < 2.0 {
+        return Ok(None);
+    }
+    let variance = sum_tt - sum_t * sum_t / n;
+    if variance <= 0.0 {
+        return Ok(None);
+    }
+    let slope = (sum_ty - sum_t * sum_y / n) / variance;
+    let intercept = (sum_y - slope * sum_t) / n;
+    let mean = (sum_y / n) as f32;
+    let values = axis.iter().map(|&value| if value.is_nan() { mean } else { (intercept + slope * value) as f32 }).collect();
+    Ok(Some((position, intercept, slope, values)))
+}
+
+fn class_stats(
+    codes: &FitCodes, counts: &[u32], classes: &[u32], k: usize, floor: u32, agreement: Option<(&[usize], &[usize], u32)>,
+    options: &EncoderOptions,
+) -> (Vec<Vec<f32>>, Vec<f32>, Vec<bool>) {
+    let components = options.stat_components.min(k.saturating_sub(1));
+    if components == 0 {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+    let profiles = ClassProfiles::fit(codes, classes, counts.len(), k, 0..codes.len());
+    let axes = profiles.axes(components);
+    let values: Vec<Vec<f32>> = axes.iter().map(|axis| profiles.project(floor, axis)).collect();
+    let passing = match agreement {
+        None => axes.iter().map(|axis| profiles.reliability(floor, axis) >= options.min_stat_agreement).collect(),
+        Some((early, later, gate_floor)) => {
+            class_agrees(codes, classes, counts.len(), k, gate_floor, early, later, axes.len(), options.min_stat_agreement)
+        }
+    };
+    let priors = vec![0.0; axes.len()];
+    (values, priors, passing)
+}
+
 fn derived_features(
-    fitted: &mut FittedColumn, y: Option<&[f32]>, agreement_rows: Option<(&[usize], &[usize])>, prior: f32, options: &EncoderOptions,
+    fitted: &mut FittedColumn, target: Option<&StatTarget<'_>>, agreement_rows: Option<(&[usize], &[usize])>, options: &EncoderOptions,
 ) {
     let levels = fitted.column.cardinality() + usize::from(fitted.column.had_missing);
     let Some(codes) = fitted.training_codes() else { return };
@@ -1237,39 +1585,31 @@ fn derived_features(
     if counts.iter().filter(|&&count| count >= floor).count() < MIN_STAT_CARDINALITY {
         return;
     }
-    let mut sums = if y.is_some() { vec![0f64; levels] } else { Vec::new() };
-    let mut statistic = None;
-    let agreeing = y.is_none_or(|y| {
-        agreement_rows.is_none_or(|(early, later)| {
-            let sampled = early.len() + later.len();
-            let agreement_floor = (floor as usize * sampled).div_ceil(codes.len()).max(1) as u32;
-            stat_agrees(codes, y, levels, agreement_floor, early, later, options.min_stat_agreement)
-        })
+    let agreement = agreement_rows.map(|(early, later)| {
+        let sampled = early.len() + later.len();
+        (early, later, (floor as usize * sampled).div_ceil(codes.len()).max(1) as u32)
     });
-    if let Some(y) = y
-        && agreeing
-    {
-        for row in 0..codes.len() {
-            sums[codes.at(row) as usize] += y[row] as f64;
+    let (values, priors, passing) = match target {
+        Some(StatTarget::Regression(y)) => regression_stats(codes, &counts, y, floor, agreement, options),
+        Some(StatTarget::Classes { codes: classes, k }) => class_stats(codes, &counts, classes, *k, floor, agreement, options),
+        None => (Vec::new(), Vec::new(), Vec::new()),
+    };
+    let mut encodings = Vec::new();
+    for (component, (component_values, &pass)) in values.iter().zip(&passing).enumerate() {
+        if !pass {
+            continue;
         }
-        let values: Vec<f32> =
-            counts.iter().zip(&sums).map(|(&count, &sum)| if count >= floor { (sum / count as f64) as f32 } else { prior }).collect();
-        let (table, bounds) = fit_float_ranks(&values);
+        let (table, bounds) = fit_float_ranks(component_values);
         if bounds.len() > 1 {
-            statistic = Some(FittedEncoding { kind: Encoding::Statistic, bounds, codes: codes.projected(table) });
+            encodings.push(FittedEncoding { kind: Encoding::Statistic(component as u8), bounds, codes: codes.projected(table) });
         }
     }
-    let counter = options.frequency.then(|| {
+    if options.frequency {
         let (table, bounds) = fit_counter(&counts);
-        FittedEncoding { kind: Encoding::Counter, bounds, codes: codes.projected(table) }
-    });
-    if let Some(statistic) = statistic {
-        fitted.encodings.push(statistic);
+        encodings.push(FittedEncoding { kind: Encoding::Counter, bounds, codes: codes.projected(table) });
     }
-    if let Some(counter) = counter {
-        fitted.encodings.push(counter);
-    }
-    fitted.column.stats = Some(LevelStats { counts, sums, prior, min_rows: floor });
+    fitted.encodings.extend(encodings);
+    fitted.column.stats = Some(LevelStats { counts, values, priors });
 }
 
 fn fit_date_part(base: DateBase, part: u8, name: String) -> FittedColumn {
@@ -1467,38 +1807,28 @@ fn assemble<T: Copy + Default + Send + Sync>(features: &[Vec<T>], rows: usize) -
     assemble_range(features, 0, rows)
 }
 
-fn agreement_partition(rows: usize, order: Option<&[usize]>, sample_rows: usize, seed: Option<u64>) -> (Vec<usize>, Vec<usize>) {
+const ORDER_GAP: f64 = 0.02;
+
+fn ordered_eras(order: &[usize], starts: &[usize], sample_rows: usize, seed: Option<u64>) -> (Vec<usize>, Vec<usize>) {
+    let rows = order.len();
+    let early_limit = (rows as f64 * (0.5 - ORDER_GAP)) as usize;
+    let late_limit = rows - early_limit;
+    // Eras hold whole order-value groups only: rows sharing an order value must never sit in both
+    // eras, and the dropped band between them makes the gate test persistence across a horizon.
+    let early_end = starts[starts.partition_point(|&start| start <= early_limit) - 1];
+    let late_start = starts[starts.partition_point(|&start| start < late_limit)];
     let total = sample_rows.min(rows);
     let n_early = total / 2;
     let n_late = total - n_early;
-    if let Some(order) = order {
-        let middle = rows / 2;
-        let early = crate::forest::uniform_sample_indices(middle, n_early.min(middle), seed, 0x51a7_0001)
-            .into_iter()
-            .map(|row| order[row])
-            .collect();
-        let later_rows = rows - middle;
-        let later = crate::forest::uniform_sample_indices(later_rows, n_late.min(later_rows), seed, 0x51a7_0002)
-            .into_iter()
-            .map(|row| order[middle + row])
-            .collect();
-        return (early, later);
-    }
-    let selected = crate::forest::uniform_sample_indices(rows, total, seed, 0x51a7_0003);
-    let early_positions = crate::forest::uniform_sample_indices(total, n_early, seed, 0x51a7_0004);
-    let mut is_early = vec![false; total];
-    for position in early_positions {
-        is_early[position] = true;
-    }
-    let mut early = Vec::with_capacity(n_early);
-    let mut later = Vec::with_capacity(n_late);
-    for (position, row) in selected.into_iter().enumerate() {
-        if is_early[position] {
-            early.push(row);
-        } else {
-            later.push(row);
-        }
-    }
+    let early = crate::forest::uniform_sample_indices(early_end, n_early.min(early_end), seed, 0x51a7_0001)
+        .into_iter()
+        .map(|row| order[row])
+        .collect();
+    let late_rows = rows - late_start;
+    let later = crate::forest::uniform_sample_indices(late_rows, n_late.min(late_rows), seed, 0x51a7_0002)
+        .into_iter()
+        .map(|row| order[late_start + row])
+        .collect();
     (early, later)
 }
 
@@ -1520,7 +1850,7 @@ impl Encoder {
     pub fn fit_arrow(
         batch: &RecordBatch, markers: &[SavedValue], allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
         stats: &EncoderOptions, context: StatContext<'_>,
-    ) -> Result<(Self, Array2<u32>), ForestError> {
+    ) -> Result<(Self, Array2<u32>, Option<TrendFit>), ForestError> {
         let names = batch.schema().fields().iter().map(|field| field.name().clone()).collect();
         let date_indices: Vec<_> = date_columns.iter().map(|(index, _)| *index).collect();
         let columns = arrow_columns(batch, markers, &date_indices)?;
@@ -1562,7 +1892,7 @@ impl Encoder {
                     for encoding in &column.encodings {
                         output[encoded] = match encoding {
                             Encoding::Ordered => value,
-                            Encoding::Statistic => column.stats.as_ref().unwrap().statistic(code),
+                            Encoding::Statistic(component) => column.stats.as_ref().unwrap().statistic(code, *component as usize),
                             Encoding::Counter => column.stats.as_ref().unwrap().count(code),
                         };
                         encoded += 1;
@@ -1597,13 +1927,23 @@ impl Encoder {
             }
         }
         for column in &self.columns {
-            let has_statistic = column.encodings.iter().any(|encoding| matches!(encoding, Encoding::Statistic));
-            let needs_stats = has_statistic || column.encodings.iter().any(|encoding| matches!(encoding, Encoding::Counter));
+            let statistic_components = column
+                .encodings
+                .iter()
+                .filter_map(|encoding| match encoding {
+                    Encoding::Statistic(component) => Some(*component as usize + 1),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0);
+            let needs_stats = statistic_components > 0 || column.encodings.iter().any(|encoding| matches!(encoding, Encoding::Counter));
             match &column.stats {
                 None if needs_stats => return Err(invalid("saved statistic encoding has no level table")),
                 Some(stats)
                     if stats.counts.len() != column.cardinality() + usize::from(column.had_missing)
-                        || (has_statistic && stats.sums.len() != stats.counts.len()) =>
+                        || stats.values.len() != stats.priors.len()
+                        || stats.values.iter().any(|values| values.len() != stats.counts.len())
+                        || stats.values.len() < statistic_components =>
                 {
                     return Err(invalid("saved level table is invalid"));
                 }
@@ -1616,8 +1956,8 @@ impl Encoder {
     pub(crate) fn fit(
         columns: Vec<RawColumn>, names: Vec<String>, allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
         stats: &EncoderOptions, context: StatContext<'_>,
-    ) -> Result<(Self, Array2<u32>), ForestError> {
-        let StatContext { target, order_column, agreement_sample_rows } = context;
+    ) -> Result<(Self, Array2<u32>, Option<TrendFit>), ForestError> {
+        let StatContext { target, order_column, agreement_sample_rows, detrend } = context;
         stats.validate()?;
         let rows = validate_rows(&columns, &names)?;
         let date_parts = date_layout(&names, &date_columns)?;
@@ -1633,23 +1973,32 @@ impl Encoder {
         let (input_columns, logical_names) = input_layout(&names, &bundles, &date_parts)?;
         let columns = arrange_training_columns(columns, &input_columns, &logical_names)?;
         let date_order = order_column.and_then(|order| {
-            input_columns.iter().zip(&columns).find_map(|(source, arranged)| match (source, arranged) {
-                (InputColumn::DatePart { index, .. }, ArrangedColumn::DatePart { date, .. }) if *index == order => Some(date.codes.clone()),
+            input_columns.iter().zip(&columns).enumerate().find_map(|(position, (source, arranged))| match (source, arranged) {
+                (InputColumn::DatePart { index, .. }, ArrangedColumn::DatePart { date, part })
+                    if *index == order && *part as usize == DATE_PARTS.len() - 1 =>
+                {
+                    Some((date.codes.clone(), date.distinct.clone(), position))
+                }
                 _ => None,
             })
         });
+        let explicit_position = match (order_column, &date_order) {
+            (Some(order), None) => Some(
+                input_columns
+                    .iter()
+                    .position(|source| matches!(source, InputColumn::Direct(index) if *index == order))
+                    .ok_or_else(|| invalid("order column is unavailable after feature arrangement"))?,
+            ),
+            _ => None,
+        };
         let natural = stats.natural_sort;
         let fitted: Result<Vec<_>, _> =
             columns.into_par_iter().zip(logical_names).map(|(column, name)| fit_arranged(column, name, natural)).collect();
         let mut fitted = fitted?;
         let explicit_order = if stats.target_statistics {
-            match (order_column, date_order) {
-                (_, Some(codes)) => Some(grouped_order(&codes)),
-                (Some(order), None) => {
-                    let position = input_columns
-                        .iter()
-                        .position(|source| matches!(source, InputColumn::Direct(index) if *index == order))
-                        .ok_or_else(|| invalid("order column is unavailable after feature arrangement"))?;
+            match (&date_order, explicit_position) {
+                (Some((codes, _, _)), _) => Some(grouped_order(codes)),
+                (None, Some(position)) => {
                     let codes = fitted[position]
                         .training_codes()
                         .ok_or_else(|| invalid("order column must contain at least two distinct values"))?;
@@ -1660,26 +2009,22 @@ impl Encoder {
         } else {
             None
         };
-        let owned;
-        let y: Option<&[f32]> = match target {
-            Some(StatTarget::Regression(y)) => Some(y),
-            Some(StatTarget::Binary(y)) => {
-                owned = y.iter().map(|&value| value as f32).collect::<Vec<_>>();
-                Some(&owned)
+        if let Some(target) = &target {
+            let length = match target {
+                StatTarget::Regression(y) => y.len(),
+                StatTarget::Classes { codes, .. } => codes.len(),
+            };
+            if length != rows {
+                return Err(invalid("target length must match the training rows"));
             }
-            None => None,
-        };
-        if let Some(y) = y
-            && y.len() != rows
-        {
-            return Err(invalid("target length must match the training rows"));
         }
-        let stat_y = if stats.target_statistics { y } else { None };
-        let agreement_rows = stat_y.map(|_| agreement_partition(rows, explicit_order.as_deref(), agreement_sample_rows, seed));
-        if stat_y.is_some() || stats.frequency {
-            let prior = stat_y.map_or(0.0f32, |y| y.iter().sum::<f32>() / y.len().max(1) as f32);
+        let pending_trend = if detrend { trend_fit(&target, &date_order, explicit_position, &fitted, rows)? } else { None };
+        let stat_target = if stats.target_statistics { target.as_ref() } else { None };
+        let agreement_rows = stat_target
+            .and_then(|_| explicit_order.as_ref().map(|(order, starts)| ordered_eras(order, starts, agreement_sample_rows, seed)));
+        if stat_target.is_some() || stats.frequency {
             let agreement = agreement_rows.as_ref().map(|(early, later)| (early.as_slice(), later.as_slice()));
-            fitted.par_iter_mut().for_each(|fitted| derived_features(fitted, stat_y, agreement, prior, stats));
+            fitted.par_iter_mut().for_each(|fitted| derived_features(fitted, stat_target, agreement, stats));
         }
         let mut physical: Vec<Vec<u32>> = Vec::new();
         let mut projections = Projections { phys: Vec::new(), base: Vec::new(), tables: Vec::new(), offsets: vec![0] };
@@ -1687,14 +2032,20 @@ impl Encoder {
         let mut cutoff_offsets = vec![0];
         let mut encoded_to_raw = Vec::new();
         let mut bases = HashMap::new();
+        let mut trend_feature = None;
         for (raw, column) in fitted.iter().enumerate() {
             for encoding in &column.encodings {
+                if pending_trend.as_ref().is_some_and(|pending| pending.0 == raw) && matches!(encoding.kind, Encoding::Ordered) {
+                    trend_feature = Some(encoded_to_raw.len());
+                }
                 cutoff_values.extend(&encoding.bounds);
                 cutoff_offsets.push(cutoff_values.len());
                 encoded_to_raw.push(raw);
                 append_codes(&encoding.codes, &mut physical, &mut bases, &mut projections);
             }
         }
+        let trend = pending_trend
+            .and_then(|(_, intercept, slope, values)| trend_feature.map(|feature| TrendFit { feature, intercept, slope, values }));
         let matrix = assemble(&physical, rows);
         let encoder = Self {
             columns: fitted
@@ -1713,7 +2064,7 @@ impl Encoder {
             encoded_to_raw,
             projections,
         };
-        Ok((encoder, matrix))
+        Ok((encoder, matrix, trend))
     }
 
     fn transform_features(&self, columns: Vec<RawColumn>) -> Result<(Vec<Vec<f32>>, usize), ForestError> {
@@ -1843,7 +2194,7 @@ impl Encoder {
                 let rank = if column.had_missing { column.cardinality() as u32 } else { u32::MAX };
                 column.encodings.iter().map(move |encoding| match encoding {
                     Encoding::Ordered => rank,
-                    Encoding::Statistic | Encoding::Counter => u32::MAX,
+                    Encoding::Statistic(_) | Encoding::Counter => u32::MAX,
                 })
             })
             .collect()
@@ -1941,9 +2292,9 @@ fn transform_column(raw: RawColumn, fitted: &Column, allow_new_missing: bool, na
         .iter()
         .map(|encoding| match encoding {
             Encoding::Ordered => ordered.clone(),
-            Encoding::Statistic => {
+            Encoding::Statistic(component) => {
                 let stats = fitted.stats.as_ref().unwrap();
-                codes.iter().map(|&code| stats.statistic(code)).collect()
+                codes.iter().map(|&code| stats.statistic(code, *component as usize)).collect()
             }
             Encoding::Counter => {
                 let stats = fitted.stats.as_ref().unwrap();

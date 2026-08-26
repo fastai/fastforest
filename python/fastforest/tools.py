@@ -256,16 +256,18 @@ def _prepare_sweep(model, X, y, configs, seed, trees, oob):
 
 def screen(model, X, y, configs=None, trees=8, seed=None):
     "Fit one encoded, parallel OOB batch and return forest-configuration diagnostics."
-    from .core import _ClassifierForest,_Encoder,_Forest,_STAT_PARAMS,_class_vector,_fit_plan,_native_config,_sample_indices,_vector
+    from .core import _ClassifierForest,_Encoder,_Forest,_STAT_PARAMS,_class_vector,_fit_plan,_native_config,_pool_indices,_vector
     if trees < 1: raise ValueError("trees must be positive")
     prepared = _prepare_sweep(model, X, y, configs, seed, trees, True)
     task,base,seed,configs,y_array = prepared.task,prepared.base,prepared.seed,prepared.configs,prepared.target
     replacements,plans = prepared.replacements,prepared.plans
+    if any(params.get("target_statistics", base["target_statistics"]) != base["target_statistics"] for _,_,params in configs):
+        raise ValueError("screen shares one encoder across configurations; use validate for target_statistics changes")
     for (_,_,params),replacement,plan in zip(configs, replacements, plans):
         if not replacement and plan[1] >= plan[2]:
             raise ValueError(f"configuration {params} leaves no rows for OOB evaluation")
     pool_rows = max(plan[2] for plan in plans)
-    indices = None if pool_rows == len(X) else np.asarray(_sample_indices(len(X), pool_rows, seed, 2))
+    indices = _pool_indices(len(X), pool_rows, seed)
     if task == "classification":
         classes,target = _class_vector(y_array, indices)
         fitted_outputs = max(1,len(classes)-1)
@@ -275,7 +277,7 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
     stats = {name:base[name] for name in _STAT_PARAMS}
     encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats, base["order"], plans[0][1])
     encoded = (encoder.fit_transform(X, indices, y=target) if task == "regression"
-        else encoder.fit_transform(X, indices, y_class=target if len(classes) == 2 else None))
+        else encoder.fit_transform(X, indices, y_class=(target, len(classes))))
     training = encoder.transform(_take_rows(X, indices))
     native_configs = []
     oob_rows = min(len(target), 40_000*fitted_outputs)
@@ -305,21 +307,23 @@ def screen(model, X, y, configs=None, trees=8, seed=None):
             float(structures[:,0].mean()), float(structures[:,1].mean()), float(structures[:,2].mean())))
     return ScreenReport(task, trees, pool_rows, batch_seconds, tuple(results), _feature_metadata(encoder))
 
-def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None, allow_unseen_classes=False):
-    "Fit the same one-axis configurations with ordinary resolved tree counts and score train/validation data."
-    from .core import _ClassifierForest,_Encoder,_Forest,_STAT_PARAMS,_class_vector,_fit_plan,_native_config,_sample_indices,_vector
+def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None, trees=None, allow_unseen_classes=False):
+    "Fit the same one-axis configurations and score train/validation data; `trees` overrides the ordinary resolved tree counts."
+    from .core import _ClassifierForest,_Encoder,_Forest,_STAT_PARAMS,_class_vector,_fit_plan,_native_config,_pool_indices,_vector
     y_train,y_valid = np.asarray(y_train),np.asarray(y_valid)
     if len(X_valid) != len(y_valid): raise ValueError("feature and target row counts must match")
-    prepared = _prepare_sweep(model, X_train, y_train, configs, seed, None, False)
+    prepared = _prepare_sweep(model, X_train, y_train, configs, seed, trees, False)
     task,base,seed,configs = prepared.task,prepared.base,prepared.seed,prepared.configs
     replacements,plans = prepared.replacements,prepared.plans
     grouped = {}
-    for index,plan in enumerate(plans): grouped.setdefault(tuple(plan), []).append(index)
+    for index,plan in enumerate(plans):
+        statistics = configs[index][2].get("target_statistics", base["target_statistics"])
+        grouped.setdefault((tuple(plan), statistics), []).append(index)
     results = [None]*len(configs)
     batch_seconds = 0.
-    for (trees,rows_per_tree,pool_rows),indices_in_group in grouped.items():
+    for ((trees,rows_per_tree,pool_rows),statistics),indices_in_group in grouped.items():
         started = perf_counter()
-        indices = None if pool_rows == len(X_train) else np.asarray(_sample_indices(len(X_train), pool_rows, seed, 2))
+        indices = _pool_indices(len(X_train), pool_rows, seed)
         if task == "classification":
             classes,target = _class_vector(y_train, indices)
             fitted_outputs = max(1,len(classes)-1)
@@ -332,10 +336,10 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
             classes = None
             fitted_outputs = 1
             target,valid_target = _vector(y_train, indices=indices),_vector(y_valid)
-        stats = {name:base[name] for name in _STAT_PARAMS}
+        stats = {name:base[name] for name in _STAT_PARAMS} | {"target_statistics":statistics}
         encoder = _Encoder(base["missing_values"], base["date_columns"], base["allow_new_missing"], seed, stats, base["order"], rows_per_tree)
         encoded = (encoder.fit_transform(X_train, indices, y=target) if task == "regression"
-            else encoder.fit_transform(X_train, indices, y_class=target if len(classes) == 2 else None))
+            else encoder.fit_transform(X_train, indices, y_class=(target, len(classes))))
         fit_preprocess_seconds = perf_counter()-started
         training = encoder.transform(_take_rows(X_train, indices))
         started = perf_counter()
@@ -345,7 +349,7 @@ def validate(model, X_train, y_train, X_valid, y_valid, configs=None, seed=None,
         for index in indices_in_group:
             params = configs[index][2]
             replacement = replacements[index]
-            fitted_plan = _fit_plan(len(X_train), None, params["bootstrap_fraction"], params["bootstrap_max"],
+            fitted_plan = _fit_plan(len(X_train), trees, params["bootstrap_fraction"], params["bootstrap_max"],
                 replacement, False, fitted_outputs)
             native_config = _native_config(params, replacement, fitted_plan, len(target), seed, False)
             started = perf_counter()

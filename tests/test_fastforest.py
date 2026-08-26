@@ -127,7 +127,7 @@ def test_fit_predict_oob_story(tmp_path):
     continuous_model = FastForest(n_trees=4, seed=42, target_statistics=True, frequency=True,
         min_rows_per_level=1, min_stat_agreement=0).fit(repeated_continuous, np.arange(300.))
     assert continuous_model.column_info_[0].encoded_features == ("continuous", "continuous_stat", "continuous_count")
-    stat_encoder = _Encoder(missing_values={0:"NA"}, seed=42, stats=dict(target_statistics=True, min_rows_per_level=1, min_stat_agreement=0.0, frequency=True, natural_sort=False))
+    stat_encoder = _Encoder(missing_values={0:"NA"}, seed=42, stats=dict(target_statistics=True, min_rows_per_level=1, min_stat_agreement=0.0, stat_components=1, frequency=True, natural_sort=False))
     train_stats = stat_encoder.fit_transform(mixed_frame, y=np.asarray(mixed_y, dtype=np.float32))
     stat_column = list(stat_encoder.encoded_names).index("x2_stat")
     inference_stats = stat_encoder.transform(mixed_frame)[:,stat_column]
@@ -143,7 +143,7 @@ def test_fit_predict_oob_story(tmp_path):
     levels = np.tile(np.repeat(list("abcdef"), 2), 10)
     ordered_frame = pd.DataFrame({"time":times, "level":levels})
     ordered_y = (ordered_frame.time+ordered_frame.level.map({level:i for i,level in enumerate("abcdef")})).to_numpy(dtype=np.float32)
-    ordered_encoder = _Encoder(seed=42, order="time", stats=dict(target_statistics=True, min_rows_per_level=1, min_stat_agreement=.8, frequency=False, natural_sort=False))
+    ordered_encoder = _Encoder(seed=42, order="time", stats=dict(target_statistics=True, min_rows_per_level=1, min_stat_agreement=.8, stat_components=1, frequency=False, natural_sort=False))
     ordered_encoder.fit_transform(ordered_frame, y=ordered_y)
     ordered_stat = list(ordered_encoder.encoded_names).index("level_stat")
     ordered_inference = ordered_encoder.transform(ordered_frame)[:,ordered_stat]
@@ -156,20 +156,29 @@ def test_fit_predict_oob_story(tmp_path):
     assert "level_stat" in agreement._encoder.encoded_names and "level_stat" not in unstable._encoder.encoded_names
     ordered_without_stats = FastForest(n_trees=4, seed=42, order="time", target_statistics=False).fit(ordered_frame, ordered_y)
     assert not any(name.endswith("_stat") for name in ordered_without_stats._encoder.encoded_names)
+    future_frame = pd.DataFrame({"time":[30]*6, "level":list("abcdef")})
+    plain_ceiling = ordered_without_stats.predict(future_frame).max()
+    detrended = FastForest(n_trees=4, seed=42, order="time", target_statistics=False, detrend=True).fit(ordered_frame, ordered_y)
+    assert detrended.predict(future_frame).min() > plain_ceiling + 10 # the linear trend extrapolates where trees cannot
+    detrended.save(tmp_path/"detrended.ffm")
+    assert np.array_equal(load(tmp_path/"detrended.ffm").predict(future_frame), detrended.predict(future_frame))
     count_column = list(stat_encoder.encoded_names).index("x2_count")
     level_counts = mixed_frame["x2"].map(mixed_frame["x2"].value_counts()).fillna(0).to_numpy()
     assert (stat_encoder.transform(mixed_frame)[:,count_column] == level_counts).all() # counts are exact, not bucketed
     counted = FastForest(n_trees=4, seed=42, missing_values={0:"NA"}, target_statistics=False, frequency=True).fit(mixed_frame, mixed_y)
     assert counted.column_info_[2].encoded_features == ("x2", "x2_count") and np.isfinite(counted.predict(mixed_frame[:4])).all()
     items = pd.DataFrame({"item":["item2","item10","item3"]*20})
-    assert FastForest(n_trees=2, seed=42).fit(items, np.arange(60.))._encoder.columns[0].values.tolist() == ["item10", "item2", "item3"] # the default order is lexical
-    natural = FastForest(n_trees=2, seed=42, natural_sort=True).fit(items, np.arange(60.))
-    assert natural._encoder.columns[0].values.tolist() == ["item2", "item3", "item10"] # natural_sort compares digit runs numerically
-    binary_model = FastForestClassifier(n_trees=8, seed=42, missing_values={0:"NA"}, target_statistics=True,
+    assert FastForest(n_trees=2, seed=42).fit(items, np.arange(60.))._encoder.columns[0].values.tolist() == ["item2", "item3", "item10"] # digit runs compare numerically by default
+    lexical = FastForest(n_trees=2, seed=42, natural_sort=False).fit(items, np.arange(60.))
+    assert lexical._encoder.columns[0].values.tolist() == ["item10", "item2", "item3"] # natural_sort=False restores plain lexical order
+    binary_model = FastForestClassifier(n_trees=8, seed=42, missing_values={0:"NA"}, target_statistics=True, stat_components=2,
         min_rows_per_level=1, min_stat_agreement=0).fit(mixed_frame, mixed[:,1] == "common")
-    assert "x2_stat" in binary_model._encoder.encoded_names # binary classification uses the positive rate
-    multiclass_model = FastForestClassifier(n_trees=8, seed=42, missing_values={0:"NA"}, target_statistics=True, frequency=True).fit(mixed_frame, mixed[:,3])
-    assert not any(name.endswith("_stat") for name in multiclass_model._encoder.encoded_names) # multiclass statistics are deferred
+    assert "x2_stat" in binary_model._encoder.encoded_names # binary classification is the two-class profile projection
+    assert not any(name.endswith("_stat2") for name in binary_model._encoder.encoded_names) # components cap at K-1
+    multiclass_model = FastForestClassifier(n_trees=8, seed=42, missing_values={0:"NA"}, target_statistics=True, frequency=True,
+        stat_components=2, min_rows_per_level=1, min_stat_agreement=0).fit(mixed_frame, mixed[:,3])
+    assert "x2_stat" in multiclass_model._encoder.encoded_names # multiclass projects level class-profiles onto principal axes
+    assert "x2_stat2" in multiclass_model._encoder.encoded_names # the second component is its own gated feature
     assert "x2_count" in multiclass_model._encoder.encoded_names # frequency needs no target, so multiclass carries it
     assert mixed_model.feature_importances_.shape == (mixed.shape[1],) and np.isclose(mixed_model.feature_importances_.sum(), 1)
     assert np.isfinite(mixed_model.predict(mixed_frame.iloc[:4])).all()
@@ -297,6 +306,11 @@ def test_bounded_pool_defaults_story():
     assert 32 <= sized.n_trees_ <= 64 and sized.tree_history_ == () and sized.oob_prediction_ is None and sized.min_improvement == .01
     sized_stat = AutoForest(bootstrap_max=100, seed=42, target_statistics=True, min_rows_per_level=1).fit(categorical, y[:600])
     assert np.isfinite(sized_stat.predict(categorical[:10])).all()
+    leveled = 3.*(np.arange(600)%10)+X[:600,1]
+    screened = AutoForest(bootstrap_max=2000, seed=42, min_rows_per_level=1).fit(categorical, leveled)
+    assert screened.sizing_["active"] is True and screened.sizing_["threshold"] == 3600
+    assert len(screened.sizing_["stats_losses"]) == 2 and screened.sizing_["bootstrap_losses"] == {}
+    assert screened.target_statistics is True
     automatic = AutoForest(autogrow=True, tree_batch_size=8, max_trees=16, min_improvement=.99, bootstrap_max=100, seed=42).fit(X[:600], y[:600])
     assert automatic.n_trees_ == 8 and len(automatic.tree_history_) == 2
     assert automatic.tree_history_[-1]["accepted"] is False and automatic.sizing_["active"] is True

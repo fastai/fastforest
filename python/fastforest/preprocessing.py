@@ -139,14 +139,14 @@ class _Column:
         return result
 
 _ENCODING_KINDS = {0:"ordered", 1:"stat", 2:"count"}
-_STATS_OFF = dict(target_statistics=False, min_rows_per_level=20, min_stat_agreement=.75, frequency=False, natural_sort=False)
+_STATS_OFF = dict(target_statistics=False, min_rows_per_level=20, min_stat_agreement=.75, stat_components=1, frequency=False, natural_sort=True)
 
 
 class _Encoder:
-    def __init__(self, missing_values=None, date_columns=None, allow_new_missing=False, seed=None, stats=None, order=None, agreement_sample_rows=None):
+    def __init__(self, missing_values=None, date_columns=None, allow_new_missing=False, seed=None, stats=None, order=None, agreement_sample_rows=None, detrend=False):
         self.missing_values,self.date_columns = missing_values,date_columns
         self.allow_new_missing,self.seed,self.stats,self.order = allow_new_missing,seed,stats,order
-        self.agreement_sample_rows = agreement_sample_rows
+        self.agreement_sample_rows,self.detrend = agreement_sample_rows,detrend
 
     def fit_transform(self, X, indices=None, y=None, y_class=None):
         if indices is not None:
@@ -161,8 +161,9 @@ class _Encoder:
         order = _column_index(self.order, self.input_names, "order")
         stats = self.stats if self.stats is not None else _STATS_OFF
         agreement_sample_rows = len(X) if self.agreement_sample_rows is None else min(len(X), self.agreement_sample_rows)
-        native,ranked = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.allow_new_missing, dates,
-            self.seed, y, y_class, order_column=order, agreement_sample_rows=agreement_sample_rows, **stats)
+        native,ranked,trend = _NativeEncoder.fit(batch, [_saved_scalar(marker) for marker in markers], self.allow_new_missing, dates,
+            self.seed, y, y_class, order_column=order, agreement_sample_rows=agreement_sample_rows, detrend=self.detrend, **stats)
+        self.trend = None if trend is None else (trend[0], trend[1], trend[2], np.asarray(trend[3]))
         self.fit_layout = tuple(np.asarray(part) for part in native.training_layout())
         self.names,self._dates = tuple(native.logical_names),tuple((index,format,tuple(parts)) for index,format,parts in native.date_layout)
         self._bundles = tuple((name,tuple(indices),tuple(members)) for name,indices,members in native.bundle_layout)
@@ -180,9 +181,9 @@ class _Encoder:
             numeric,all_int,had_missing,median_num,median_text,numeric_values,text_values,raw_encoded = self._native.metadata(col)
             values = np.asarray(numeric_values, dtype=np.float32) if numeric else np.asarray(text_values, dtype=str)
             median = median_num if numeric else median_text
-            encoded = tuple((_ENCODING_KINDS[kind], None) for kind,_ in raw_encoded)
-            for kind,category in encoded:
-                encoded_names.append(name if kind == "ordered" else f"{name}_{kind}")
+            encoded = tuple((_ENCODING_KINDS[kind], part if part >= 0 else None) for kind,part in raw_encoded)
+            for kind,part in encoded:
+                encoded_names.append(name if kind == "ordered" else f"{name}_{kind}" if not part else f"{name}_{kind}{part+1}")
             fitted.append(_Column(name, marker, numeric, all_int, values, median, had_missing, encoded))
         self.columns = tuple(fitted)
         self.encoded_names = tuple(encoded_names)

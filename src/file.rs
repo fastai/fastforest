@@ -50,6 +50,7 @@ pub struct FileFitOptions {
     pub date_columns: Vec<(String, String)>,
     pub stat_options: EncoderOptions,
     pub order: Option<String>,
+    pub detrend: bool,
 }
 
 impl Default for FileFitOptions {
@@ -82,6 +83,7 @@ impl FileFitOptions {
             date_columns: Vec::new(),
             stat_options: EncoderOptions::default(),
             order: None,
+            detrend: false,
         }
     }
 
@@ -237,7 +239,7 @@ fn fit_sampled(
             let y = y?;
             let plan =
                 plan_fit(total_rows, options.n_trees, options.bootstrap_fraction, options.bootstrap_max, replacement, options.oob, 1)?;
-            let (encoder, x) = Encoder::fit_arrow(
+            let (encoder, x, trend) = Encoder::fit_arrow(
                 predictors,
                 &metadata.markers,
                 options.allow_new_missing,
@@ -248,12 +250,18 @@ fn fit_sampled(
                     target: Some(StatTarget::Regression(&y)),
                     order_column,
                     agreement_sample_rows: plan.rows_per_tree.min(predictors.num_rows()),
+                    detrend: options.detrend,
                 },
             )?;
-            let y = Array1::from_vec(y);
+            let y = match &trend {
+                Some(trend) => Array1::from_iter(y.iter().zip(&trend.values).map(|(&y, &fitted)| y - fitted)),
+                None => Array1::from_vec(y),
+            };
             let config = fit_config(options, replacement, plan.n_trees, plan.rows_per_tree.min(x.nrows()));
             let (cutoff_values, cutoff_offsets, missing_ranks, _, _, _, _) = encoder.training_layout();
-            let forest = Forest::fit(x.view(), encoder.projections(), y.view(), &cutoff_values, &cutoff_offsets, &missing_ranks, &config)?;
+            let mut forest =
+                Forest::fit(x.view(), encoder.projections(), y.view(), &cutoff_values, &cutoff_offsets, &missing_ranks, &config)?;
+            forest.trend = trend.map(|trend| (trend.feature, trend.intercept, trend.slope));
             Ok(SavedModel::regression(encoder, forest, metadata))
         }
         Task::Classification => {
@@ -266,7 +274,7 @@ fn fit_sampled(
             }
             let lookup: HashMap<_, _> = classes.iter().cloned().enumerate().map(|(index, value)| (value, index as u32)).collect();
             let y = Array1::from_iter(targets.iter().flatten().map(|value| lookup[value]));
-            let target = (classes.len() == 2).then(|| StatTarget::Binary(y.as_slice().unwrap()));
+            let target = Some(StatTarget::Classes { codes: y.as_slice().unwrap(), k: classes.len() });
             let dimensions = classes.len().saturating_sub(1).max(1);
             let plan = plan_fit(
                 total_rows,
@@ -277,14 +285,19 @@ fn fit_sampled(
                 options.oob,
                 dimensions,
             )?;
-            let (encoder, x) = Encoder::fit_arrow(
+            let (encoder, x, _) = Encoder::fit_arrow(
                 predictors,
                 &metadata.markers,
                 options.allow_new_missing,
                 dates,
                 options.seed,
                 &options.stat_options,
-                StatContext { target, order_column, agreement_sample_rows: plan.rows_per_tree.min(predictors.num_rows()) },
+                StatContext {
+                    target,
+                    order_column,
+                    agreement_sample_rows: plan.rows_per_tree.min(predictors.num_rows()),
+                    detrend: options.detrend,
+                },
             )?;
             let config = fit_config(options, replacement, plan.n_trees, plan.rows_per_tree.min(x.nrows()));
             let (cutoff_values, cutoff_offsets, missing_ranks, _, _, _, _) = encoder.training_layout();

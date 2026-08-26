@@ -18,3 +18,4 @@ venv/
 .data/
 meta/
 Cargo.lock
+tools/results/bench.db

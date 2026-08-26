@@ -20,7 +20,7 @@ fn numeric_batch(rows: usize, cols: usize) -> RecordBatch {
 
 fn encoded(batch: &RecordBatch) -> (Encoder, ndarray::Array2<u32>, ndarray::Array2<f32>, Vec<SavedValue>) {
     let markers = (0..batch.num_columns()).map(|_| SavedValue { kind: 5, value: String::new() }).collect::<Vec<_>>();
-    let (encoder, ranked) =
+    let (encoder, ranked, _) =
         Encoder::fit_arrow(batch, &markers, false, vec![], Some(42), &EncoderOptions::default(), StatContext::default()).unwrap();
     let native = encoder.transform_arrow(batch, &markers).unwrap();
     (encoder, ranked, native, markers)
