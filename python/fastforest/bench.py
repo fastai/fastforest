@@ -415,12 +415,7 @@ def compare(
     frequency:bool=False,          # Add exact per-level frequency features
     natural_sort:bool=False,       # Sort text digit runs numerically
     timeout:int=180,               # Maximum seconds for each model/dataset combination, including loading
-    ff_only:bool=False,            # Run only FastForest
-    auto_only:bool=False,          # Run AutoForest with and without autogrow
-    sizer_only:bool=False,         # Run AutoForest sample sizing without autogrow
-    autogrow_only:bool=False,      # Run only AutoForest with autogrow
-    rf_only:bool=False,            # Run only sklearn RandomForest
-    hist_only:bool=False,          # Run only sklearn HistGradientBoosting
+    models:str=None,               # Comma-separated model names; default FastForest,RandomForest,HistGBM
     max_rows:int=None,             # Optional reproducible dataset row limit
     data_home:str=".data",         # Dataset cache directory
     save:bool=False,               # Update the README benchmark result CSVs
@@ -430,7 +425,9 @@ def compare(
 ):
     "Compare accuracy and timing on canonical dataset splits."
     if timeout < 1: raise ValueError("timeout must be positive")
-    if sum((ff_only,auto_only,sizer_only,autogrow_only,rf_only,hist_only)) > 1: raise ValueError("model-only options are mutually exclusive")
+    models = models.split(",") if models else ["FastForest", "RandomForest", "HistGBM"]
+    unknown = set(models) - {"FastForest", "RandomForest", "HistGBM", "AutoForest", "Autogrow"}
+    if unknown: raise ValueError(f"unknown models {sorted(unknown)}")
     ff_kwargs = dict(n_trees=ff_trees, bootstrap_fraction=bootstrap_fraction, replacement=_replacement(replacement),
         random_splitter=random_splitter, date_columns=None if dates else {}, target_statistics=target_statistics,
         frequency=frequency, natural_sort=natural_sort)
@@ -440,13 +437,6 @@ def compare(
         min_rows_per_level=min_rows_per_level, min_stat_agreement=min_stat_agreement,
         ).items():
         if value is not None: ff_kwargs[name] = value
-    models = ["FastForest", "RandomForest", "HistGBM"]
-    if ff_only: models = models[:1]
-    if auto_only: models = ["AutoForest", "Autogrow"]
-    if sizer_only: models = ["AutoForest"]
-    if autogrow_only: models = ["Autogrow"]
-    if rf_only: models = models[1:2]
-    if hist_only: models = models[2:]
     selected = README_DATASETS if datasets == "readme" else tuple(map(Dataset, datasets.split(","))) if datasets else (dataset,)
     results = benchmark_datasets(selected, models=models, output=output, resume=resume, timeout=timeout, rf_trees=rf_trees,
         ff_kwargs=ff_kwargs, max_rows=max_rows, data_home=data_home)

@@ -132,8 +132,8 @@ For accuracy and timing comparisons using canonical fixed splits:
 
 ```bash
 python tools/accuracy.py
-python tools/accuracy.py --datasets concrete,california --ff_only --output meta/play.csv
-python tools/accuracy.py --datasets readme --ff_only --output meta/play.csv --resume
+python tools/accuracy.py --datasets concrete,california --models FastForest --output meta/play.csv
+python tools/accuracy.py --datasets readme --models FastForest --output meta/play.csv --resume
 ```
 
 The reusable API is `fastforest.bench.benchmark_dataset`/`benchmark_datasets`. It returns `FitResult`/`FitResults`, whose notebook and terminal reprs show the headline metrics while retaining diagnostics as normal dict entries. A batch output is updated after each dataset, and `resume=True` (or `--resume`) skips completed dataset/model pairs.
@@ -156,7 +156,7 @@ Classification scoring research is recorded chronologically in `meta/experiments
 
 Broad scripted sweeps belong later, once the parameter ideas and useful levels are understood. Use them to confirm proposed defaults across many datasets, produce reproducible reporting tables, or collect deliberately designed advisor-training data. Keep the marginal one-parameter calibration sweep separate from randomized joint configurations used to teach the advisor about interactions.
 
-For focused FastForest tuning, add `--ff_only` and vary `--min_node_size`, `--bootstrap_fraction`, `--bootstrap_max`, `--replacement`, `--max_node_samples`, `--cutoff_divisor`, or `--max_features`; regression also exposes `--split_prior_rows`, and classification exposes `--class_weight_power`. Set `--random_splitter` to compare the original split search. The tools use `call_parse`, so CLI names match their underscored function parameters.
+For focused FastForest tuning, add `--models FastForest` and vary `--min_node_size`, `--bootstrap_fraction`, `--bootstrap_max`, `--replacement`, `--max_node_samples`, `--cutoff_divisor`, or `--max_features`; regression also exposes `--split_prior_rows`, and classification exposes `--class_weight_power`. Set `--random_splitter` to compare the original split search. The tools use `call_parse`, so CLI names match their underscored function parameters.
 
 Run a reproducible parameter grid (SGEMM by default) and save its metrics and timings with:
 
