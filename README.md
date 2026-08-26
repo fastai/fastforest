@@ -22,26 +22,19 @@ Across nineteen numeric and mixed-data benchmarks spanning 1,030 to 20,216,100 r
   </thead>
   <tbody>
     <tr>
-      <td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/440/sgemm+gpu+kernel+performance">SGEMM GPU</a></strong><br><sub>241,600 rows · 14 features · numeric</sub></td>
+      <td rowspan="4"><strong><a href="https://archive.ics.uci.edu/dataset/440/sgemm+gpu+kernel+performance">SGEMM GPU</a></strong><br><sub>241,600 rows · 14 features · numeric</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.06</td>
+      <td align="right"><strong>0.03</strong></td>
       <td align="right"><strong>1.00</strong></td>
-      <td align="right"><strong>0.07</strong></td>
-      <td align="right">0.014</td>
-    </tr>
-    <tr>
-      <td>AutoForest</td>
-      <td align="right">0.04</td>
-      <td align="right"><strong>1.00</strong></td>
-      <td align="right">0.30</td>
-      <td align="right">0.014</td>
+      <td align="right"><strong>0.13</strong></td>
+      <td align="right">0.013</td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right">0.04</td>
+      <td align="right"><strong>0.03</strong></td>
       <td align="right"><strong>1.00</strong></td>
-      <td align="right">0.92</td>
-      <td align="right">0.035</td>
+      <td align="right">0.83</td>
+      <td align="right">0.065</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -60,24 +53,24 @@ Across nineteen numeric and mixed-data benchmarks spanning 1,030 to 20,216,100 r
     <tr>
       <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/rossmann-store-sales">Rossmann Store Sales</a></strong><br><sub>844,338 rows · 16 features · mixed</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.14</td>
-      <td align="right">0.89</td>
-      <td align="right"><strong>0.41</strong></td>
-      <td align="right">0.021</td>
-    </tr>
-    <tr>
-      <td>AutoForest</td>
-      <td align="right">0.13</td>
-      <td align="right"><strong>0.91</strong></td>
-      <td align="right">2.56</td>
+      <td align="right"><strong>0.13</strong></td>
+      <td align="right">0.90</td>
+      <td align="right"><strong>0.81</strong></td>
       <td align="right"><strong>0.020</strong></td>
     </tr>
     <tr>
-      <td>autogrow</td>
-      <td align="right"><strong>0.12</strong></td>
+      <td>AutoForest</td>
+      <td align="right"><strong>0.13</strong></td>
       <td align="right"><strong>0.91</strong></td>
-      <td align="right">6.55</td>
-      <td align="right">0.035</td>
+      <td align="right">6.21</td>
+      <td align="right">0.023</td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.13</strong></td>
+      <td align="right"><strong>0.91</strong></td>
+      <td align="right">13.88</td>
+      <td align="right">0.057</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -113,12 +106,26 @@ Across nineteen numeric and mixed-data benchmarks spanning 1,030 to 20,216,100 r
   </thead>
   <tbody>
     <tr>
-      <td rowspan="3"><strong><a href="https://archive.ics.uci.edu/dataset/31/covertype">Covertype</a></strong><br><sub>581,012 rows · binary features</sub></td>
+      <td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/31/covertype">Covertype</a></strong><br><sub>581,012 rows · binary features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right"><strong>0.93</strong></td>
-      <td align="right"><strong>0.15</strong></td>
-      <td align="right"><strong>0.65</strong></td>
-      <td align="right">0.055</td>
+      <td align="right">0.93</td>
+      <td align="right">0.15</td>
+      <td align="right">1.92</td>
+      <td align="right">0.053</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right"><strong>0.94</strong></td>
+      <td align="right"><strong>0.10</strong></td>
+      <td align="right">5.02</td>
+      <td align="right">0.046</td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.94</strong></td>
+      <td align="right"><strong>0.10</strong></td>
+      <td align="right">13.68</td>
+      <td align="right">0.168</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -131,15 +138,22 @@ Across nineteen numeric and mixed-data benchmarks spanning 1,030 to 20,216,100 r
       <td>sklearn HistGBM</td>
       <td align="right">0.74</td>
       <td align="right">0.57</td>
-      <td align="right">1.44</td>
+      <td align="right"><strong>1.44</strong></td>
       <td align="right"><strong>0.036</strong></td>
     </tr>
     <tr>
-      <td rowspan="3"><strong><a href="https://www.openml.org/d/1590">Adult Census Income</a></strong><br><sub>48,842 rows · 14 features · mixed</sub></td>
+      <td rowspan="4"><strong><a href="https://www.openml.org/d/1590">Adult Census Income</a></strong><br><sub>48,842 rows · 14 features · mixed</sub></td>
       <td><strong>fastforest</strong></td>
       <td align="right">0.81</td>
-      <td align="right">0.32</td>
-      <td align="right"><strong>0.09</strong></td>
+      <td align="right">0.31</td>
+      <td align="right"><strong>0.13</strong></td>
+      <td align="right"><strong>0.007</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">0.81</td>
+      <td align="right">0.31</td>
+      <td align="right">0.71</td>
       <td align="right"><strong>0.007</strong></td>
     </tr>
     <tr>
@@ -209,7 +223,9 @@ classifier = AutoForestClassifier(seed=42).fit(X, labels)
 grown = AutoForest(autogrow=True, seed=42).fit(X, y)
 ```
 
-For sufficiently large data, one parallel eight-tree screen tries only larger `bootstrap_max` and `max_node_samples` values. Each extra level requires another 1% reduction in OOB loss, independently on each axis. Ordinary sizing tries bootstrap limits of 80k, 120k, 160k, and 200k and node samples of 640, 960, and 1280; autogrow widens these to 80k, 160k, 240k, and 320k and 640, 1280, and 1920. When the row cap removes wider bootstrap choices, their vacant comparison slots are filled from the ordinary grid. The screen is skipped unless rows exceed `2 * bootstrap_max * max(1, classes-1)`, so the default thresholds are 80,000 rows for regression and binary classification, 160,000 for three classes, and 480,000 for seven classes.
+For sufficiently large data, sizing fits eight-tree forests at larger `bootstrap_max`, `max_node_samples`, and `max_features` levels and scores each on a held-out tracking sample of at most 40,000 rows per output, never more than a fifth of the data. Each extra level requires another 1% reduction in tracking loss, independently on each axis. Both modes try bootstrap limits of 320k and 480k, skipping any level beyond the per-output row count; ordinary sizing tries node samples of 640 and 1280, autogrow widens these to 640, 1280, and 1920, and both try feature fractions of .8 and 1.0 above the task default. Bootstrap sizing runs only when rows exceed `1.8 * bootstrap_max * max(1, classes-1)`: 288,000 rows for regression and binary classification at the default `bootstrap_max`, scaling with the class count.
+
+Without `order=`, when any column keeps a target statistic, the screen also tries `target_statistics=False` and disables the statistics when that trial improves tracking loss by at least 1%. Frozen level statistics are reliable yet sometimes redundant: when the other features already carry the same information, splits spent re-encoding it cost accuracy, and no fit-time gate predicts this as well as simply measuring it. This statistics trial runs even below the bootstrap sizing threshold, with the node and feature levels then probed alongside it. Ordered data keeps its rank-correlation gate instead: a random holdout would leak future rows and overrate identity-like statistics.
 
 By default, the final model uses fastforest’s ordinary adaptive 32–64 tree rule and does not enable OOB. With `autogrow=True`, it instead grows in 32-tree batches. An independent random set of at most 40,000 tracking rows per output is fixed before the first batch; at every checkpoint, each row uses only trees for which it was out-of-bag. Another batch is added while cumulative regression MSE or classification Brier loss improves by at least 1%; the first batch that fails this test is discarded by default. Growth is capped at 512 trees by default; `keep_last_batch`, `min_improvement`, `tree_batch_size`, and `max_trees` control these choices.
 
@@ -264,12 +280,26 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
   </thead>
   <tbody>
     <tr>
-      <td rowspan="3"><strong><a href="https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset">California Housing</a></strong><br><sub>20,640 rows · 8 features</sub></td>
+      <td rowspan="5"><strong><a href="https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset">California Housing</a></strong><br><sub>20,640 rows · 8 features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.50</td>
-      <td align="right">0.81</td>
-      <td align="right"><strong>0.08</strong></td>
-      <td align="right"><strong>0.003</strong></td>
+      <td align="right">0.49</td>
+      <td align="right">0.82</td>
+      <td align="right"><strong>0.09</strong></td>
+      <td align="right">0.003</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">0.49</td>
+      <td align="right">0.82</td>
+      <td align="right">0.19</td>
+      <td align="right"><strong>0.002</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">0.49</td>
+      <td align="right">0.82</td>
+      <td align="right">0.38</td>
+      <td align="right">0.004</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -283,15 +313,29 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
       <td align="right"><strong>0.47</strong></td>
       <td align="right"><strong>0.83</strong></td>
       <td align="right">0.43</td>
-      <td align="right"><strong>0.003</strong></td>
+      <td align="right">0.003</td>
     </tr>
     <tr>
-      <td rowspan="3"><strong><a href="https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength">Concrete Strength</a></strong><br><sub>1,030 rows · 8 features</sub></td>
+      <td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength">Concrete Strength</a></strong><br><sub>1,030 rows · 8 features</sub></td>
       <td><strong>fastforest</strong></td>
       <td align="right">5.80</td>
       <td align="right">0.87</td>
       <td align="right"><strong>0.01</strong></td>
-      <td align="right"><strong>0.001</strong></td>
+      <td align="right"><strong>0.000</strong></td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">5.70</td>
+      <td align="right">0.87</td>
+      <td align="right"><strong>0.01</strong></td>
+      <td align="right"><strong>0.000</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">5.66</td>
+      <td align="right">0.88</td>
+      <td align="right">0.02</td>
+      <td align="right">0.001</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -308,12 +352,26 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
       <td align="right">0.002</td>
     </tr>
     <tr>
-      <td rowspan="3"><strong><a href="https://www.openml.org/d/42225">Diamonds</a></strong><br><sub>53,940 rows · 9 features</sub></td>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/42225">Diamonds</a></strong><br><sub>53,940 rows · 9 features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">549</td>
+      <td align="right">553</td>
       <td align="right"><strong>0.98</strong></td>
-      <td align="right"><strong>0.16</strong></td>
-      <td align="right"><strong>0.008</strong></td>
+      <td align="right"><strong>0.17</strong></td>
+      <td align="right">0.007</td>
+    </tr>
+    <tr>
+      <td>AutoForest</td>
+      <td align="right">561</td>
+      <td align="right"><strong>0.98</strong></td>
+      <td align="right">0.34</td>
+      <td align="right"><strong>0.006</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">545</td>
+      <td align="right"><strong>0.98</strong></td>
+      <td align="right">0.87</td>
+      <td align="right">0.016</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -332,24 +390,24 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
     <tr>
       <td rowspan="5"><strong><a href="https://www.openml.org/d/42571">Allstate Claims</a></strong><br><sub>188,318 rows · 130 features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">1,920</td>
-      <td align="right">0.55</td>
-      <td align="right"><strong>0.87</strong></td>
-      <td align="right">0.042</td>
+      <td align="right">1,940</td>
+      <td align="right">0.54</td>
+      <td align="right"><strong>2.28</strong></td>
+      <td align="right">0.039</td>
     </tr>
     <tr>
       <td>AutoForest</td>
-      <td align="right">1,909</td>
-      <td align="right">0.55</td>
-      <td align="right">2.83</td>
-      <td align="right"><strong>0.040</strong></td>
+      <td align="right">1,930</td>
+      <td align="right">0.54</td>
+      <td align="right">5.54</td>
+      <td align="right"><strong>0.038</strong></td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right">1,911</td>
-      <td align="right">0.55</td>
-      <td align="right">4.60</td>
-      <td align="right">0.048</td>
+      <td align="right">1,903</td>
+      <td align="right">0.56</td>
+      <td align="right">10.57</td>
+      <td align="right">0.084</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -363,61 +421,54 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
       <td align="right">0.325</td>
     </tr>
     <tr>
-      <td rowspan="5"><strong><a href="https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008">Diabetes 130-US Hospitals</a></strong><br><sub>101,766 rows · 46 features</sub></td>
+      <td rowspan="4"><strong><a href="https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008">Diabetes 130-US Hospitals</a></strong><br><sub>101,766 rows · 46 features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">2.16</td>
-      <td align="right">0.46</td>
-      <td align="right"><strong>0.36</strong></td>
-      <td align="right">0.019</td>
-    </tr>
-    <tr>
-      <td>AutoForest</td>
-      <td align="right">2.16</td>
-      <td align="right">0.46</td>
-      <td align="right">0.72</td>
-      <td align="right"><strong>0.017</strong></td>
+      <td align="right">2.18</td>
+      <td align="right">0.45</td>
+      <td align="right"><strong>0.51</strong></td>
+      <td align="right"><strong>0.018</strong></td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right">2.16</td>
-      <td align="right">0.46</td>
-      <td align="right">1.43</td>
-      <td align="right">0.018</td>
+      <td align="right">2.15</td>
+      <td align="right">0.47</td>
+      <td align="right">3.36</td>
+      <td align="right">0.038</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
       <td align="right">2.20</td>
       <td align="right">0.45</td>
-      <td align="right">4.30</td>
-      <td align="right">0.132</td>
+      <td align="right">4.47</td>
+      <td align="right">0.141</td>
     </tr>
     <tr>
       <td>sklearn HistGBM</td>
       <td align="right"><strong>2.13</strong></td>
       <td align="right"><strong>0.48</strong></td>
-      <td align="right">1.25</td>
-      <td align="right">0.122</td>
+      <td align="right">1.26</td>
+      <td align="right">0.115</td>
     </tr>
     <tr>
       <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/bluebook-for-bulldozers">Blue Book for Bulldozers</a></strong><br><sub>412,698 rows · 52 features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.25</td>
-      <td align="right">0.89</td>
-      <td align="right"><strong>0.68</strong></td>
-      <td align="right"><strong>0.011</strong></td>
+      <td align="right"><strong>0.23</strong></td>
+      <td align="right"><strong>0.90</strong></td>
+      <td align="right"><strong>1.37</strong></td>
+      <td align="right">0.013</td>
     </tr>
     <tr>
       <td>AutoForest</td>
       <td align="right"><strong>0.23</strong></td>
       <td align="right"><strong>0.90</strong></td>
-      <td align="right">3.84</td>
-      <td align="right"><strong>0.011</strong></td>
+      <td align="right">6.86</td>
+      <td align="right"><strong>0.012</strong></td>
     </tr>
     <tr>
       <td>autogrow</td>
       <td align="right"><strong>0.23</strong></td>
       <td align="right"><strong>0.90</strong></td>
-      <td align="right">11.20</td>
+      <td align="right">15.15</td>
       <td align="right">0.021</td>
     </tr>
     <tr>
@@ -434,23 +485,23 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
     <tr>
       <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/walmart-recruiting-store-sales-forecasting">Walmart Store Sales</a></strong><br><sub>421,570 rows · 15 features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">3,688</td>
-      <td align="right">0.97</td>
-      <td align="right"><strong>0.30</strong></td>
-      <td align="right">0.021</td>
+      <td align="right">2,909</td>
+      <td align="right">0.98</td>
+      <td align="right"><strong>0.62</strong></td>
+      <td align="right"><strong>0.014</strong></td>
     </tr>
     <tr>
       <td>AutoForest</td>
-      <td align="right">2,802</td>
-      <td align="right"><strong>0.98</strong></td>
-      <td align="right">2.06</td>
-      <td align="right"><strong>0.016</strong></td>
+      <td align="right">2,693</td>
+      <td align="right">0.98</td>
+      <td align="right">3.18</td>
+      <td align="right">0.015</td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right"><strong>2,714</strong></td>
-      <td align="right"><strong>0.98</strong></td>
-      <td align="right">6.22</td>
+      <td align="right"><strong>2,676</strong></td>
+      <td align="right"><strong>0.99</strong></td>
+      <td align="right">7.94</td>
       <td align="right">0.032</td>
     </tr>
     <tr>
@@ -470,24 +521,24 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
     <tr>
       <td rowspan="5"><strong><a href="https://www.kaggle.com/competitions/ashrae-energy-prediction">ASHRAE Great Energy Predictor III</a></strong><br><sub>20,216,100 rows · 15 features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.98</td>
-      <td align="right">0.79</td>
-      <td align="right"><strong>0.84</strong></td>
-      <td align="right">0.943</td>
+      <td align="right">0.86</td>
+      <td align="right">0.84</td>
+      <td align="right"><strong>1.26</strong></td>
+      <td align="right"><strong>0.628</strong></td>
     </tr>
     <tr>
       <td>AutoForest</td>
-      <td align="right">0.84</td>
-      <td align="right">0.84</td>
-      <td align="right">5.09</td>
-      <td align="right">0.879</td>
+      <td align="right">0.81</td>
+      <td align="right"><strong>0.86</strong></td>
+      <td align="right">14.17</td>
+      <td align="right">0.761</td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right"><strong>0.82</strong></td>
-      <td align="right"><strong>0.85</strong></td>
-      <td align="right">13.25</td>
-      <td align="right">1.470</td>
+      <td align="right"><strong>0.80</strong></td>
+      <td align="right"><strong>0.86</strong></td>
+      <td align="right">21.05</td>
+      <td align="right">1.504</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -498,12 +549,12 @@ Each `AutoForest` row uses the ordinary adaptive tree count. Its following `auto
       <td align="right">1.43</td>
       <td align="right">0.55</td>
       <td align="right">23.76</td>
-      <td align="right"><strong>0.709</strong></td>
+      <td align="right">0.709</td>
     </tr>
   </tbody>
 </table>
 
-For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-learn’s official preprocessing guidance and examples](https://scikit-learn.org/stable/auto_examples/compose/plot_column_transformer_mixed_types.html): wholly numeric columns are parsed and median-imputed, categorical columns use one-hot encoding through 20 levels and target encoding above that, and HistGBM uses native categoricals through its 255-level limit. This numeric parsing is needed for sensible handling of raw CSV-like tables; otherwise the pipeline uses the documented sklearn behavior. fastforest requires no custom preprocessing and takes the original datasets directly. A timed-out cell marks a model that exceeded the 180-second per-model limit. For validation, Blue Book uses its final 12,000 rows, Walmart uses a 12-week chronological holdout to match the competition’s future-period forecasting setup, Rossmann uses its final six weeks, and ASHRAE uses December 2016. On those four datasets the FastForest models set `order=` to the split column. The Target statistics section under Data preparation describes what the declared order changes.
+For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-learn’s official preprocessing guidance and examples](https://scikit-learn.org/stable/auto_examples/compose/plot_column_transformer_mixed_types.html): wholly numeric columns are parsed and median-imputed, categorical columns use one-hot encoding through 20 levels and target encoding above that, and HistGBM uses native categoricals through its 255-level limit. This numeric parsing is needed for sensible handling of raw CSV-like tables; otherwise the pipeline uses the documented sklearn behavior. fastforest requires no custom preprocessing and takes the original datasets directly. A timed-out cell marks a model that exceeded the 180-second per-model limit. For validation, Blue Book uses its final 12,000 rows, Walmart uses a 12-week chronological holdout to match the competition’s future-period forecasting setup, Rossmann uses its final six weeks, ASHRAE uses December 2016, and SF Crime uses its final 10% of incidents chronologically. On those five datasets the FastForest models set `order=` to the split column. The Target statistics section under Data preparation describes what the declared order changes.
 
 ### Classification
 
@@ -520,12 +571,19 @@ For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-le
   </thead>
   <tbody>
     <tr>
-      <td rowspan="3"><strong><a href="https://www.openml.org/d/1461">Bank Marketing</a></strong><br><sub>45,211 rows · 16 mixed features</sub></td>
+      <td rowspan="4"><strong><a href="https://www.openml.org/d/1461">Bank Marketing</a></strong><br><sub>45,211 rows · 16 mixed features</sub></td>
       <td><strong>fastforest</strong></td>
       <td align="right"><strong>0.76</strong></td>
-      <td align="right"><strong>0.20</strong></td>
-      <td align="right"><strong>0.07</strong></td>
+      <td align="right">0.21</td>
+      <td align="right"><strong>0.10</strong></td>
       <td align="right"><strong>0.006</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.76</strong></td>
+      <td align="right"><strong>0.20</strong></td>
+      <td align="right">0.64</td>
+      <td align="right">0.007</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -542,16 +600,30 @@ For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-le
       <td align="right">0.017</td>
     </tr>
     <tr>
-      <td rowspan="3"><strong><a href="https://www.openml.org/d/42733">Click Prediction Small</a></strong><br><sub>39,948 rows · 11 mixed features</sub></td>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/42733">Click Prediction Small</a></strong><br><sub>39,948 rows · 11 mixed features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right"><strong>0.54</strong></td>
+      <td align="right"><strong>0.56</strong></td>
       <td align="right">0.44</td>
-      <td align="right"><strong>0.16</strong></td>
+      <td align="right"><strong>0.23</strong></td>
       <td align="right"><strong>0.010</strong></td>
     </tr>
     <tr>
+      <td>AutoForest</td>
+      <td align="right">0.55</td>
+      <td align="right">0.44</td>
+      <td align="right">0.55</td>
+      <td align="right"><strong>0.010</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right">0.54</td>
+      <td align="right">0.42</td>
+      <td align="right">0.89</td>
+      <td align="right">0.011</td>
+    </tr>
+    <tr>
       <td>sklearn RF</td>
-      <td align="right"><strong>0.54</strong></td>
+      <td align="right">0.54</td>
       <td align="right">0.44</td>
       <td align="right">0.37</td>
       <td align="right">0.022</td>
@@ -564,16 +636,30 @@ For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-le
       <td align="right">0.017</td>
     </tr>
     <tr>
-      <td rowspan="3"><strong><a href="https://www.openml.org/d/40685">Statlog Shuttle</a></strong><br><sub>58,000 rows · 9 numeric features</sub></td>
+      <td rowspan="5"><strong><a href="https://www.openml.org/d/40685">Statlog Shuttle</a></strong><br><sub>58,000 rows · 9 numeric features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.76</td>
+      <td align="right">0.85</td>
       <td align="right"><strong>0.00</strong></td>
       <td align="right"><strong>0.02</strong></td>
       <td align="right"><strong>0.002</strong></td>
     </tr>
     <tr>
+      <td>AutoForest</td>
+      <td align="right"><strong>0.95</strong></td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right">0.07</td>
+      <td align="right"><strong>0.002</strong></td>
+    </tr>
+    <tr>
+      <td>autogrow</td>
+      <td align="right"><strong>0.95</strong></td>
+      <td align="right"><strong>0.00</strong></td>
+      <td align="right">0.14</td>
+      <td align="right">0.003</td>
+    </tr>
+    <tr>
       <td>sklearn RF</td>
-      <td align="right"><strong>0.85</strong></td>
+      <td align="right">0.85</td>
       <td align="right"><strong>0.00</strong></td>
       <td align="right">0.17</td>
       <td align="right">0.016</td>
@@ -586,26 +672,19 @@ For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-le
       <td align="right">0.007</td>
     </tr>
     <tr>
-      <td rowspan="5"><strong><a href="https://www.openml.org/d/41672">Airlines Delay</a></strong><br><sub>539,383 rows · 7 mixed features</sub></td>
+      <td rowspan="4"><strong><a href="https://www.openml.org/d/41672">Airlines Delay</a></strong><br><sub>539,383 rows · 7 mixed features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right"><strong>0.66</strong></td>
-      <td align="right"><strong>0.61</strong></td>
-      <td align="right"><strong>0.31</strong></td>
-      <td align="right">0.070</td>
-    </tr>
-    <tr>
-      <td>AutoForest</td>
-      <td align="right"><strong>0.66</strong></td>
-      <td align="right"><strong>0.61</strong></td>
-      <td align="right">1.56</td>
-      <td align="right"><strong>0.069</strong></td>
+      <td align="right"><strong>0.64</strong></td>
+      <td align="right">0.66</td>
+      <td align="right"><strong>0.80</strong></td>
+      <td align="right"><strong>0.056</strong></td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right"><strong>0.66</strong></td>
-      <td align="right"><strong>0.61</strong></td>
-      <td align="right">2.83</td>
-      <td align="right">0.083</td>
+      <td align="right"><strong>0.64</strong></td>
+      <td align="right">0.64</td>
+      <td align="right">6.01</td>
+      <td align="right">0.111</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
@@ -616,8 +695,8 @@ For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-le
     </tr>
     <tr>
       <td>sklearn HistGBM</td>
-      <td align="right">0.64</td>
-      <td align="right">0.62</td>
+      <td align="right"><strong>0.64</strong></td>
+      <td align="right"><strong>0.62</strong></td>
       <td align="right">1.38</td>
       <td align="right">0.078</td>
     </tr>
@@ -626,98 +705,91 @@ For mixed data, the sklearn benchmarks use a custom pipeline based on [scikit-le
       <td><strong>fastforest</strong></td>
       <td align="right">0.72</td>
       <td align="right">0.54</td>
-      <td align="right"><strong>0.80</strong></td>
-      <td align="right">0.074</td>
+      <td align="right"><strong>1.93</strong></td>
+      <td align="right"><strong>0.062</strong></td>
     </tr>
     <tr>
       <td>AutoForest</td>
-      <td align="right">0.72</td>
-      <td align="right">0.54</td>
-      <td align="right">3.58</td>
-      <td align="right">0.065</td>
+      <td align="right"><strong>0.73</strong></td>
+      <td align="right">0.53</td>
+      <td align="right">12.89</td>
+      <td align="right">0.068</td>
     </tr>
     <tr>
       <td>autogrow</td>
       <td align="right"><strong>0.73</strong></td>
-      <td align="right"><strong>0.53</strong></td>
-      <td align="right">6.25</td>
-      <td align="right">0.095</td>
+      <td align="right"><strong>0.52</strong></td>
+      <td align="right">24.96</td>
+      <td align="right">0.135</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
       <td align="right"><strong>0.73</strong></td>
-      <td align="right"><strong>0.53</strong></td>
+      <td align="right">0.53</td>
       <td align="right">24.22</td>
       <td align="right">0.519</td>
     </tr>
     <tr>
       <td>sklearn HistGBM</td>
       <td align="right"><strong>0.73</strong></td>
-      <td align="right"><strong>0.53</strong></td>
+      <td align="right">0.53</td>
       <td align="right">1.95</td>
-      <td align="right"><strong>0.064</strong></td>
+      <td align="right">0.064</td>
     </tr>
     <tr>
-      <td rowspan="5"><strong><a href="https://www.openml.org/d/42732">San Francisco Police Incidents</a></strong><br><sub>2,215,023 rows · 9 mixed features</sub></td>
+      <td rowspan="4"><strong><a href="https://www.kaggle.com/competitions/sf-crime">SF Crime</a></strong><br><sub>878,049 rows · 6 mixed features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.47</td>
-      <td align="right">0.36</td>
-      <td align="right"><strong>1.34</strong></td>
-      <td align="right">0.291</td>
-    </tr>
-    <tr>
-      <td>AutoForest</td>
-      <td align="right">0.47</td>
-      <td align="right">0.36</td>
-      <td align="right">4.30</td>
-      <td align="right"><strong>0.247</strong></td>
+      <td align="right"><strong>0.06</strong></td>
+      <td align="right">2.78</td>
+      <td align="right"><strong>8.00</strong></td>
+      <td align="right"><strong>0.082</strong></td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right">0.47</td>
-      <td align="right">0.35</td>
-      <td align="right">7.49</td>
-      <td align="right">0.393</td>
+      <td align="right"><strong>0.06</strong></td>
+      <td align="right"><strong>2.43</strong></td>
+      <td align="right">31.79</td>
+      <td align="right">0.153</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
-      <td align="right"><strong>0.55</strong></td>
-      <td align="right">0.37</td>
-      <td align="right">25.67</td>
-      <td align="right">1.622</td>
+      <td align="right"><strong>0.06</strong></td>
+      <td align="right">4.64</td>
+      <td align="right">19.58</td>
+      <td align="right">0.499</td>
     </tr>
     <tr>
       <td>sklearn HistGBM</td>
-      <td align="right">0.47</td>
-      <td align="right"><strong>0.34</strong></td>
-      <td align="right">7.57</td>
-      <td align="right">0.455</td>
+      <td align="right">0.05</td>
+      <td align="right">2.64</td>
+      <td align="right">19.19</td>
+      <td align="right">0.467</td>
     </tr>
     <tr>
       <td rowspan="5"><strong><a href="https://www.openml.org/d/42746">KDD Cup 1999</a></strong><br><sub>4,898,431 rows · 41 mixed features</sub></td>
       <td><strong>fastforest</strong></td>
-      <td align="right">0.48</td>
+      <td align="right">0.54</td>
       <td align="right"><strong>0.00</strong></td>
-      <td align="right"><strong>3.63</strong></td>
-      <td align="right"><strong>0.186</strong></td>
+      <td align="right"><strong>4.07</strong></td>
+      <td align="right"><strong>0.155</strong></td>
     </tr>
     <tr>
       <td>AutoForest</td>
-      <td align="right">0.61</td>
+      <td align="right">0.67</td>
       <td align="right"><strong>0.00</strong></td>
-      <td align="right">11.18</td>
-      <td align="right">0.216</td>
+      <td align="right">21.44</td>
+      <td align="right">0.156</td>
     </tr>
     <tr>
       <td>autogrow</td>
-      <td align="right">0.61</td>
+      <td align="right"><strong>0.73</strong></td>
       <td align="right"><strong>0.00</strong></td>
-      <td align="right">18.62</td>
-      <td align="right">0.252</td>
+      <td align="right">33.31</td>
+      <td align="right">0.308</td>
     </tr>
     <tr>
       <td>sklearn RF</td>
-      <td align="right"><strong>0.67</strong></td>
+      <td align="right">0.67</td>
       <td align="right"><strong>0.00</strong></td>
       <td align="right">61.07</td>
       <td align="right">1.948</td>
@@ -744,25 +816,17 @@ maturin develop --release
 python tools/accuracy.py --dataset california
 ```
 
-Available regression datasets are `sgemm`, `california`, `concrete`, `diamonds`, `allstate`, `diabetes`, `bluebook`, `bluebook_raw`, `walmart`, `walmart_raw`, `ashrae`, and `rossmann`. Classification choices are `covertype`, `adult`, `bank`, `click`, `shuttle`, `airlines`, `higgs`, `sf_police`, and `kddcup99`. Run one forest alone with `--ff_only`, `--auto_only`, or `--rf_only`, or reproduce all displayed results with:
+Available regression datasets are `sgemm`, `california`, `concrete`, `diamonds`, `allstate`, `diabetes`, `bluebook`, `bluebook_raw`, `walmart`, `walmart_raw`, `ashrae`, and `rossmann`. Classification choices are `covertype`, `adult`, `bank`, `click`, `shuttle`, `airlines`, `higgs`, `sf_police`, and `kddcup99`. Run a subset of models with `--models`, for example `--models FastForest` or `--models RandomForest,HistGBM`. Reproduce all displayed results with:
 
 ``` bash
-for dataset in sgemm california concrete diamonds allstate diabetes; do
-  python tools/accuracy.py --dataset "$dataset"
-done
-
-for dataset in covertype adult bank click shuttle airlines higgs sf_police kddcup99; do
-  python tools/accuracy.py --dataset "$dataset"
-done
-
-python tools/accuracy.py --dataset walmart --ff_only
+python tools/accuracy.py --datasets readme
 ```
 
 ## Data preparation
 
 FastForest fits a deterministic schema for every input column:
 
-1.  Non-missing values are parsed as `float32` when every value can be parsed and are otherwise treated as strings. Numeric columns sort numerically and other columns sort lexically. Numeric columns whose values are all integral retain that metadata so analysis displays them with no decimal places.
+1.  Non-missing values are parsed as `float32` when every value can be parsed and are otherwise treated as strings. Numeric columns sort numerically and other columns sort naturally: digit runs inside strings compare numerically, so `item2` precedes `item10` (`natural_sort=False` restores plain lexical order). Numeric columns whose values are all integral retain that metadata so analysis displays them with no decimal places.
 2.  A constant column is discarded. Every other column becomes one zero-based rank in its sort order; binary columns are therefore ordinary boolean features.
 3.  The default missing value is the empty value. Override it per column with `missing_values`, using column names or indexes. Missing is encoded as a separate rank, and each split learns whether it belongs in its left or right child. No imputation or indicator column is added. By default, a column containing no training missing values rejects missing values during prediction; set `allow_new_missing=True` to route them to the larger child seen in the split’s sampled rows. Entirely missing columns are discarded.
 
@@ -808,15 +872,15 @@ Install the optional dependencies with `pip install 'fastforest[sklearn]'`.
 
 ### Target statistics
 
-By default, fitting also builds one frozen target statistic per qualifying categorical column. The statistic for a level with at least `min_rows_per_level` training rows is its mean target (regression) or positive rate (binary classification). The statistic for every other level, and for values unseen during training, is the training mean. Missing is an ordinary level, with its own mean and its own count.
+By default, fitting also builds one frozen target statistic per qualifying categorical column. For regression, a level’s statistic is its mean target. For classification, it is the level’s class rates projected onto their principal axis across levels. For a binary target this is the level’s positive rate. The statistic for a level with fewer than `min_rows_per_level` training rows, and for values unseen during training, is the pooled value. Missing is an ordinary level, with its own statistic and its own count.
 
-FastForest keeps a column’s statistic only when the two halves of the training data rank its levels the same way, measured by weighted rank correlation of at least `min_stat_agreement`. With `order=` naming the column your rows arrive by, the halves are earlier and later rows; without it they are random. On a chronological split, identity columns such as a store id keep their statistics and calendar columns lose them.
+FastForest keeps a column’s statistic only when its reliability score reaches `min_stat_agreement`. With `order=` naming the column your rows arrive by, the score is the weighted rank correlation between the level orderings of earlier and later rows. On a chronological split, identity columns such as a store id keep their statistics and calendar columns lose them. Without `order=`, the score is how far differences between level statistics exceed within-level noise.
 
 ``` python
 model = FastForest(order="saledate").fit(X, y)
 ```
 
-The fitted table, saved with the model, is identical at training, out-of-bag evaluation, and prediction. `frequency=True` adds each level’s exact training count as another derived feature. `natural_sort=True` ranks digit runs inside strings numerically. `target_statistics=False` disables the statistics. Multiclass classification builds no target statistic. Importance, explanations, and partial dependence aggregate the derived features back to the original column, as they do for ranks and date parts.
+The fitted table, saved with the model, is identical at training, out-of-bag evaluation, and prediction. `frequency=True` adds each level’s exact training count as another derived feature. `natural_sort=False` restores plain lexical text ordering. `target_statistics=False` disables the statistics. Importance, explanations, and partial dependence aggregate the derived features back to the original column, as they do for ranks and date parts.
 
 ## Algorithm
 
@@ -828,7 +892,7 @@ Each regression tree draws `min(floor(bootstrap_fraction * n_rows), bootstrap_ma
 4.  For each selected feature, the sampled rows are sorted by their encoded rank and every distinct observed boundary is evaluated. Regression minimizes size-weighted sample standard deviation, shrinking each child mean toward its parent by a three-row prior. Classification uses tree-frequency-weighted entropy. Missing values occupy the final contiguous rank range: the ordinary pass leaves them right, and a second ordered pass tries them left only when that range is nonempty. These scores penalize poorly supported small children directly; the only hard requirement is that both children are nonempty.
 5.  Every regression leaf predicts the mean target of all tree-sampled rows that reached it. A classification leaf stores their class-probability vector. Thus leaf fitting processes each tree’s capped sample once in total; it does not route the whole dataset through every tree.
 
-By default, forest size targets two million sampled rows across its trees: `n_trees = clamp(ceil(2_000_000 / sampled_rows_per_tree), 32, 64)`. Set `n_trees` to override it. The standard regression cap resolves to 50 trees; Covertype’s seven-class cap resolves to 32. Other defaults are minimum node size 8, all rows capped at 40,000 per output, 90% feature sampling for regression or 60% for classification, at most 320 evaluated rows per node, and a three-row regression split prior. Enabling OOB changes the default sampling fraction to 0.8 so every row can receive held-out predictions. Preprocessing and trees build in parallel over columns and trees respectively. Classification prediction divides rows into roughly four blocks per Rayon worker and calculates how many fitted trees fit in a conservative 512 KiB working-set budget, including nodes and leaf probabilities. It processes those cache-sized tree batches within each row block; small trees retain row locality, while large trees automatically become tree-major. Supplying `seed` makes the fitted forest deterministic regardless of parallel scheduling.
+By default, forest size targets two million sampled rows across its trees: `n_trees = clamp(ceil(2_000_000 / sampled_rows_per_tree), 32, 64)`. Set `n_trees` to override it. The standard regression cap resolves to 32 trees, as does Covertype’s seven-class cap. Other defaults are minimum node size 8, all rows capped at 160,000 per output, 90% feature sampling for regression or 60% for classification, at most 320 evaluated rows per node, and a three-row regression split prior. Enabling OOB changes the default sampling fraction to 0.8 so every row can receive held-out predictions. Preprocessing and trees build in parallel over columns and trees respectively. Classification prediction divides rows into roughly four blocks per Rayon worker and calculates how many fitted trees fit in a conservative 512 KiB working-set budget, including nodes and leaf probabilities. It processes those cache-sized tree batches within each row block; small trees retain row locality, while large trees automatically become tree-major. Supplying `seed` makes the fitted forest deterministic regardless of parallel scheduling.
 
 `max_features` accepts `"sqrt"` or a fraction in `(0, 1]`; its default is `0.9` for regression and `0.6` for classification.
 
@@ -993,8 +1057,8 @@ dependence = feature_dependence(Xc_train)
 dependence.predictability
 ```
 
-    array([ 0.92725313,  0.86571008,  0.93969655,  0.89854634,  0.93675119,
-            0.9088245 ,  0.92628348, -0.02972996])
+    array([ 0.91981745,  0.87221277,  0.93467766,  0.91137922,  0.9297995 ,
+            0.89800131,  0.92628348, -0.02972996])
 
 ``` python
 dependence.plot();
@@ -1033,4 +1097,4 @@ python tools/accuracy.py
 
 Use `--dataset concrete` for the smaller Concrete Compressive Strength regression dataset, or `--dataset sgemm` for the 241,600-row SGEMM GPU Kernel Performance dataset. Each model/dataset combination runs in an isolated process with a three-minute timeout; process startup and input transfer are excluded from reported timings.
 
-Use `--ff_only` with `--min_node_size`, `--bootstrap_fraction`, `--bootstrap_max`, `--replacement`, `--max_node_samples`, and `--cutoff_divisor` for focused FastForest experiments. These spellings come directly from the `call_parse` function parameters.
+Use `--models FastForest` with `--min_node_size`, `--bootstrap_fraction`, `--bootstrap_max`, `--replacement`, `--max_node_samples`, and `--cutoff_divisor` for focused FastForest experiments. These spellings come directly from the `call_parse` function parameters.

@@ -47,6 +47,8 @@ inherits = "release"
 lto = false
 incremental = true
 codegen-units = 16
+strip = false
+debug = true
 
 [profile.dev]
 opt-level = 3

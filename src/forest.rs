@@ -60,7 +60,7 @@ impl Default for Config {
             n_trees: 50,
             min_node_size: 8,
             bootstrap_fraction: None,
-            bootstrap_max: Some(40_000),
+            bootstrap_max: Some(160_000),
             sample_rows: None,
             replacement: false,
             max_node_samples: 320,
@@ -289,6 +289,7 @@ pub struct Forest {
     trees: Vec<Tree>,
     n_features: usize,
     feature_importances: Vec<f32>,
+    pub(crate) trend: Option<(usize, f64, f64)>,
     #[serde(skip)]
     oob_prediction: Option<Vec<f32>>,
     #[serde(skip)]
@@ -377,11 +378,11 @@ impl Forest {
             |tree| tree.into_native(cutoff_values, cutoff_offsets),
         );
 
-        Ok(Self { trees, n_features: x.n_features(), feature_importances, oob_prediction, oob_counts, oob_indices })
+        Ok(Self { trees, n_features: x.n_features(), feature_importances, trend: None, oob_prediction, oob_counts, oob_indices })
     }
 
     pub fn combined(&self, other: &Self) -> Result<Self, ForestError> {
-        if self.n_features != other.n_features || self.oob_indices != other.oob_indices {
+        if self.n_features != other.n_features || self.trend != other.trend || self.oob_indices != other.oob_indices {
             return Err(ForestError::new("forests have incompatible feature or OOB dimensions"));
         }
         let left_trees = self.trees.len();
@@ -394,6 +395,7 @@ impl Forest {
         let (oob_prediction, oob_counts) = combined_oob(left, right, 1)?;
         Ok(Self {
             trees,
+            trend: self.trend,
             n_features: self.n_features,
             feature_importances,
             oob_prediction,
@@ -408,7 +410,13 @@ impl Forest {
             let prediction = self.trees.iter().map(Tree::root_value).sum::<f32>() / self.trees.len() as f32;
             return Ok(vec![prediction; x.nrows()]);
         }
-        Ok(predict_outputs(&self.trees, self.n_features, 1, x))
+        let mut outputs = predict_outputs(&self.trees, self.n_features, 1, x);
+        if let Some((feature, intercept, slope)) = self.trend {
+            for (row, output) in outputs.iter_mut().enumerate() {
+                *output += (intercept + slope * x[[row, feature]] as f64) as f32;
+            }
+        }
+        Ok(outputs)
     }
 
     pub fn predict_trees(&self, x: ArrayView2<'_, f32>) -> Result<Vec<f32>, ForestError> {

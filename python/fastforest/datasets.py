@@ -1,5 +1,5 @@
 "Benchmark dataset loading and canonical train/validation splits."
-import json,urllib.request,zipfile
+import io,json,urllib.request,zipfile
 from pathlib import Path
 
 import numpy as np,pandas as pd
@@ -17,12 +17,11 @@ _amlb = {
     Dataset.airlines:("airlines", "Airlines Delay"),
     Dataset.higgs:("higgs", "HIGGS"),
     Dataset.kddcup99:("kddcup99", "KDD Cup 1999"),
-    Dataset.sf_police:("sf_police_incidents", "San Francisco Police Incidents"),
 }
 
-_classification = frozenset((Dataset.covertype, Dataset.adult, Dataset.bank, *_amlb))
+_classification = frozenset((Dataset.covertype, Dataset.adult, Dataset.bank, Dataset.sf_police, *_amlb))
 _orders = {Dataset.bluebook:"saledate", Dataset.bluebook_raw:"saledate", Dataset.walmart:"Date", Dataset.walmart_raw:"Date",
-    Dataset.rossmann:"Date", Dataset.ashrae:"timestamp"}
+    Dataset.rossmann:"Date", Dataset.ashrae:"timestamp", Dataset.sf_police:"Dates"}
 
 def dataset_task(dataset):
     "Return the dataset's modelling task without loading it."
@@ -87,7 +86,7 @@ def load_diabetes(data_home):
         with archive.open(_zip_member(archive, "diabetic_data.csv")) as src: data = pd.read_csv(src, dtype=str, keep_default_na=False)
     y = data.pop("time_in_hospital").astype(np.float32).to_numpy()
     X = data.drop(columns=["encounter_id", "patient_nbr", "readmitted"])
-    return X,y,{name:"?" for name in X.columns}
+    return X,y
 
 def load_amlb(dataset, data_home):
     "Load one locally cached AMLB table with its OpenML target metadata."
@@ -110,9 +109,7 @@ def load_ashrae(data_home):
     X = train.merge(buildings, on="building_id", how="left", validate="many_to_one")
     X = X.merge(weather, on=["site_id", "timestamp"], how="left", validate="many_to_one")
     X["timestamp"] = pd.Categorical(X.timestamp, ordered=True)
-    missing = {name:np.nan for name in ("year_built", "floor_count", "air_temperature", "cloud_coverage", "dew_temperature",
-        "precip_depth_1_hr", "sea_level_pressure", "wind_direction", "wind_speed")}
-    return X,y,missing
+    return X,y
 
 def load_data(dataset, data_home):
     "Load a dataset and return its name, features, target, and missing-value rules."
@@ -132,8 +129,8 @@ def load_data(dataset, data_home):
         X,y = fetch_openml(data_id=42571, return_X_y=True, as_frame=True, data_home=data_home)
         return "Allstate Claims Severity",X,y,None,"regression"
     if dataset == Dataset.diabetes:
-        X,y,missing = load_diabetes(data_home)
-        return "Diabetes 130-US Hospitals",X,y,missing,"regression"
+        X,y = load_diabetes(data_home)
+        return "Diabetes 130-US Hospitals",X,y,None,"regression"
     if dataset == Dataset.covertype:
         X,y = fetch_covtype(return_X_y=True, data_home=data_home)
         return "Covertype",X,y,None,"classification"
@@ -157,15 +154,14 @@ def load_data(dataset, data_home):
         folder = Path(data_home)/"walmart"
         paths = [folder/name for name in ("train.csv", "features.csv", "stores.csv")]
         if not all(path.exists() for path in paths): raise FileNotFoundError(f"download the Walmart train, features, and stores CSVs to {folder}")
-        train,features,stores = (pd.read_csv(path, keep_default_na=False) for path in paths)
+        train,features,stores = (pd.read_csv(path) for path in paths)
         X = train.merge(features, on=["Store", "Date", "IsHoliday"], validate="many_to_one").merge(stores, on="Store", validate="many_to_one")
         y = X.pop("Weekly_Sales").to_numpy(dtype=np.float32)
         suffix = " (raw date)" if dataset == Dataset.walmart_raw else ""
-        missing = {name:"NA" for name in ("MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5")}
-        return "Walmart Store Sales"+suffix,X,y,missing,"regression"
+        return "Walmart Store Sales"+suffix,X,y,None,"regression"
     if dataset == Dataset.ashrae:
-        X,y,missing = load_ashrae(data_home)
-        return "ASHRAE Great Energy Predictor III",X,y,missing,"regression"
+        X,y = load_ashrae(data_home)
+        return "ASHRAE Great Energy Predictor III",X,y,None,"regression"
     if dataset == Dataset.rossmann:
         folder = Path(data_home)/"rossmann"
         paths = [folder/name for name in ("train.csv", "store.csv")]
@@ -178,6 +174,14 @@ def load_data(dataset, data_home):
         missing = {name:np.nan for name in ("CompetitionDistance", "CompetitionOpenSinceMonth", "CompetitionOpenSinceYear",
             "Promo2SinceWeek", "Promo2SinceYear", "PromoInterval")}
         return "Rossmann Store Sales",X,y,missing,"regression"
+    if dataset == Dataset.sf_police:
+        path = Path(data_home)/"sf_police"/"sf-crime.zip"
+        if not path.exists(): raise FileNotFoundError(f"download the Kaggle sf-crime competition zip to {path}")
+        with zipfile.ZipFile(path) as archive:
+            X = pd.read_csv(io.BytesIO(archive.read("train.csv.zip")), compression="zip")
+        y = X.pop("Category").to_numpy()
+        X = X.drop(columns=["Descript", "Resolution"])
+        return "SF Crime",X,y,None,"classification"
     raise ValueError(f"unknown dataset: {dataset}")
 
 def _rows(X, indexes): return X.iloc[indexes] if hasattr(X, "iloc") else X[indexes]
@@ -202,5 +206,9 @@ def split_indices(
     if dataset == Dataset.ashrae:
         test = np.asarray(X.timestamp >= "2016-12-01 00:00:00")
         return idx[~test],idx[test],"December 2016"
+    if dataset == Dataset.sf_police:
+        dates = pd.to_datetime(X.Dates)
+        cutoff = dates.quantile(.9)
+        return idx[dates < cutoff],idx[dates >= cutoff],"final 10%"
     train,test = train_test_split(idx, test_size=.2, random_state=seed, stratify=y)
     return train,test,"one 80/20 split"

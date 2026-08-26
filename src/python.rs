@@ -81,6 +81,7 @@ fn py_defaults(py: Python<'_>, classification: bool) -> PyResult<Py<PyDict>> {
     result.set_item("target_statistics", stats.target_statistics)?;
     result.set_item("min_rows_per_level", stats.min_rows_per_level)?;
     result.set_item("min_stat_agreement", stats.min_stat_agreement)?;
+    result.set_item("stat_components", stats.stat_components)?;
     result.set_item("frequency", stats.frequency)?;
     result.set_item("natural_sort", stats.natural_sort)?;
     Ok(result.unbind())
@@ -253,19 +254,20 @@ impl PyEncoder {
     fn fit<'py>(
         py: Python<'py>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>, allow_new_missing: bool,
         date_columns: Vec<(usize, String)>, seed: Option<u64>, y: Option<PyReadonlyArray1<'_, f32>>,
-        y_class: Option<PyReadonlyArray1<'_, u32>>, target_statistics: bool, min_rows_per_level: usize, min_stat_agreement: f32,
-        frequency: bool, natural_sort: bool, order_column: Option<usize>, agreement_sample_rows: usize,
-    ) -> PyResult<(Self, Bound<'py, PyArray2<u32>>)> {
+        y_class: Option<(PyReadonlyArray1<'_, u32>, usize)>, target_statistics: bool, min_rows_per_level: usize, min_stat_agreement: f32,
+        stat_components: usize, frequency: bool, natural_sort: bool, order_column: Option<usize>, agreement_sample_rows: usize,
+        detrend: bool,
+    ) -> PyResult<(Self, Bound<'py, PyArray2<u32>>, Option<(usize, f64, f64, Bound<'py, PyArray1<f32>>)>)> {
         let markers = saved_values(markers);
-        let stats = EncoderOptions { target_statistics, min_rows_per_level, min_stat_agreement, frequency, natural_sort };
+        let stats = EncoderOptions { target_statistics, min_rows_per_level, min_stat_agreement, stat_components, frequency, natural_sort };
         let y = y.map(|y| y.as_slice().map(<[f32]>::to_vec)).transpose()?;
-        let y_class = y_class.map(|y| y.as_slice().map(<[u32]>::to_vec)).transpose()?;
+        let y_class = y_class.map(|(y, k)| y.as_slice().map(|y| (y.to_vec(), k))).transpose()?;
         let target = match (&y, &y_class) {
             (Some(y), _) => Some(StatTarget::Regression(y)),
-            (None, Some(y)) => Some(StatTarget::Binary(y)),
+            (None, Some((y, k))) => Some(StatTarget::Classes { codes: y, k: *k }),
             (None, None) => None,
         };
-        let (inner, ranked) = py
+        let (inner, ranked, trend) = py
             .detach(|| {
                 Encoder::fit_arrow(
                     &batch.0,
@@ -274,11 +276,12 @@ impl PyEncoder {
                     date_columns,
                     seed,
                     &stats,
-                    StatContext { target, order_column, agreement_sample_rows },
+                    StatContext { target, order_column, agreement_sample_rows, detrend },
                 )
             })
             .map_err(value_error)?;
-        Ok((Self { inner }, ranked.into_pyarray(py)))
+        let trend = trend.map(|trend| (trend.feature, trend.intercept, trend.slope, trend.values.into_pyarray(py)));
+        Ok((Self { inner }, ranked.into_pyarray(py), trend))
     }
 
     #[allow(clippy::type_complexity)]
@@ -329,7 +332,7 @@ impl PyEncoder {
             .iter()
             .map(|encoding| match encoding {
                 Encoding::Ordered => (0, -1),
-                Encoding::Statistic => (1, -1),
+                Encoding::Statistic(component) => (1, *component as i64),
                 Encoding::Counter => (2, -1),
             })
             .collect();
@@ -436,14 +439,14 @@ impl PyForest {
     #[staticmethod]
     fn fit(
         py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, f32>, layout: PyLayout<'_>, config: PyBatchConfig,
-        tracking_indices: Option<PyReadonlyArray1<'_, usize>>,
+        tracking_indices: Option<PyReadonlyArray1<'_, usize>>, trend: Option<(usize, f64, f64)>,
     ) -> PyResult<Self> {
         let config = config.into_config()?;
         let x = x.as_array();
         let y = y.as_array();
         let layout = native_layout(&layout)?;
         let tracking_indices = tracking_indices.as_ref().map(PyReadonlyArray1::as_slice).transpose()?;
-        let inner = py
+        let mut inner = py
             .detach(|| {
                 let (values, offsets, ranks) = (layout.cutoff_values, layout.cutoff_offsets, layout.missing_ranks);
                 match tracking_indices {
@@ -452,6 +455,7 @@ impl PyForest {
                 }
             })
             .map_err(value_error)?;
+        inner.trend = trend;
         Ok(Self { inner })
     }
 

@@ -58,6 +58,8 @@ struct FitCommand {
     date_columns: Vec<String>,
     #[arg(long)]
     order: Option<String>,
+    #[arg(long)]
+    detrend: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -212,6 +214,7 @@ fn fit_options(command: FitCommand) -> Result<(PathBuf, PathBuf, FileFitOptions)
     options.missing_values = missing_values;
     options.date_columns = date_columns;
     options.order = command.order;
+    options.detrend = command.detrend;
     Ok((command.input, command.output, options))
 }
 
