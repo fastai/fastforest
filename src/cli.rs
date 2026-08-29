@@ -9,10 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
-enum TaskArg {
-    Regression,
-    Classification,
-}
+enum TaskArg { Regression, Classification }
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Fit a FastForest model from a tabular file")]
@@ -105,11 +102,7 @@ struct ViewCommand {
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Build a standalone predictor containing a saved FastForest model")]
-struct CompileCommand {
-    model: PathBuf,
-    #[arg(short, long)]
-    output: PathBuf,
-}
+struct CompileCommand { model: PathBuf, #[arg(short, long)] output: PathBuf }
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Stream predictions from an embedded FastForest model")]
@@ -124,21 +117,15 @@ struct EmbeddedPredictCommand {
 }
 
 fn parse_bootstrap_max(value: &str) -> Result<Option<usize>, ForestError> {
-    if value.eq_ignore_ascii_case("none") {
-        return Ok(None);
-    }
+    if value.eq_ignore_ascii_case("none") { return Ok(None); }
     let value = value.parse::<usize>().map_err(|_| ForestError::new("bootstrap_max must be a positive integer or 'none'"))?;
-    if value == 0 {
-        return Err(ForestError::new("bootstrap_max must be greater than zero"));
-    }
+    if value == 0 { return Err(ForestError::new("bootstrap_max must be greater than zero")); }
     Ok(Some(value))
 }
 
 fn parse_assignment(value: &str, option: &str) -> Result<(String, String), ForestError> {
     let (name, value) = value.split_once('=').ok_or_else(|| ForestError::new(format!("{option} must use COLUMN=VALUE")))?;
-    if name.is_empty() {
-        return Err(ForestError::new(format!("{option} column cannot be empty")));
-    }
+    if name.is_empty() { return Err(ForestError::new(format!("{option} column cannot be empty"))); }
     Ok((name.to_owned(), value.to_owned()))
 }
 
@@ -177,39 +164,22 @@ fn fit_options(command: FitCommand) -> Result<(PathBuf, PathBuf, FileFitOptions)
         .map(|value| parse_assignment(value, "missing-value").map(|(name, value)| (name, SavedValue { kind: 5, value })))
         .collect::<Result<_, _>>()?;
     let date_columns = command.date_columns.iter().map(|value| parse_assignment(value, "date-column")).collect::<Result<_, _>>()?;
-    let task = match command.task {
-        TaskArg::Regression => Task::Regression,
-        TaskArg::Classification => Task::Classification,
-    };
+    let task = match command.task { TaskArg::Regression => Task::Regression, TaskArg::Classification => Task::Classification };
     let mut options = FileFitOptions::for_task(task);
     options.target = command.target;
     options.n_trees = command.n_trees;
-    if let Some(value) = command.min_node_size {
-        options.min_node_size = value
-    }
+    if let Some(value) = command.min_node_size { options.min_node_size = value }
     options.bootstrap_fraction = command.bootstrap_fraction;
-    if let Some(value) = command.bootstrap_max.as_deref() {
-        options.bootstrap_max = parse_bootstrap_max(value)?
-    }
+    if let Some(value) = command.bootstrap_max.as_deref() { options.bootstrap_max = parse_bootstrap_max(value)? }
     options.replacement = command.replacement;
-    if let Some(value) = command.max_node_samples {
-        options.max_node_samples = value
-    }
-    if let Some(value) = command.split_prior_rows {
-        options.split_prior_rows = value
-    }
-    if let Some(value) = command.class_weight_power {
-        options.class_weight_power = value
-    }
-    if let Some(value) = command.cutoff_divisor {
-        options.cutoff_divisor = value
-    }
+    if let Some(value) = command.max_node_samples { options.max_node_samples = value }
+    if let Some(value) = command.split_prior_rows { options.split_prior_rows = value }
+    if let Some(value) = command.class_weight_power { options.class_weight_power = value }
+    if let Some(value) = command.cutoff_divisor { options.cutoff_divisor = value }
     options.seed = command.seed;
     options.oob = command.oob;
     options.random_splitter = command.random_splitter;
-    if let Some(value) = command.max_features.as_deref() {
-        options.max_features = parse_max_features(value)?
-    }
+    if let Some(value) = command.max_features.as_deref() { options.max_features = parse_max_features(value)? }
     options.allow_new_missing = command.allow_new_missing;
     options.missing_values = missing_values;
     options.date_columns = date_columns;
@@ -223,9 +193,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<FitCommand, _, _>(args)? else {
-        return Ok(());
-    };
+    let Some(command) = parse_command::<FitCommand, _, _>(args)? else { return Ok(()); };
     let (input, output, options) = fit_options(command)?;
     fit_file(input, &options)?.save(output)
 }
@@ -235,9 +203,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<PredictCommand, _, _>(args)? else {
-        return Ok(());
-    };
+    let Some(command) = parse_command::<PredictCommand, _, _>(args)? else { return Ok(()); };
     let model = SavedModel::load(command.model)?;
     predict_file(&model, command.input, command.output, command.batch_size, command.proba)
 }
@@ -247,9 +213,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<ConvertCommand, _, _>(args)? else {
-        return Ok(());
-    };
+    let Some(command) = parse_command::<ConvertCommand, _, _>(args)? else { return Ok(()); };
     convert_csv_to_arrow(command.input, command.output, command.batch_size)
 }
 
@@ -258,9 +222,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<ViewCommand, _, _>(args)? else {
-        return Ok(());
-    };
+    let Some(command) = parse_command::<ViewCommand, _, _>(args)? else { return Ok(()); };
     print!(
         "{}",
         view_csv(
@@ -283,9 +245,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<CompileCommand, _, _>(args)? else {
-        return Ok(());
-    };
+    let Some(command) = parse_command::<CompileCommand, _, _>(args)? else { return Ok(()); };
     compile_model(&SavedModel::load(command.model)?, command.output)
 }
 
@@ -294,8 +254,6 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let Some(command) = parse_command::<EmbeddedPredictCommand, _, _>(args)? else {
-        return Ok(());
-    };
+    let Some(command) = parse_command::<EmbeddedPredictCommand, _, _>(args)? else { return Ok(()); };
     predict_file(&SavedModel::from_bytes(model)?, command.input, command.output, command.batch_size, command.proba)
 }

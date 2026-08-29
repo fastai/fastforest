@@ -74,41 +74,41 @@ impl ClassSplitScratch {
         Self { class_score_table, class_weights, score_stride, ..Self::default() }
     }
 
-    fn class_score(&self, class: usize, count: u32) -> f64 {
-        self.class_score_table[class * self.score_stride + count as usize]
-    }
+    fn class_score(&self, class: usize, count: u32) -> f64 { self.class_score_table[class * self.score_stride + count as usize] }
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn find_class_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, cutoff_offsets: &[usize],
-    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>,
+    y: ArrayView1<'_, u32>,
+    node: NodeRows<'_>,
+    n_classes: usize,
+    config: &Config,
+    cutoff_offsets: &[usize],
+    missing_ranks: &[u32],
+    rng: &mut StdRng,
+    scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let max_samples = evaluation_rows(node.n_rows, config);
-    if x.n_features() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) {
-        return leaf();
-    }
-    if config.random_splitter {
-        random_split(x, y, node, n_classes, config, missing_ranks, rng, scratch)
-    } else {
-        histogram_split(x, y, node, n_classes, config, cutoff_offsets, missing_ranks, rng, scratch)
-    }
+    if x.n_features() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) { return leaf(); }
+    if config.random_splitter { random_split(x, y, node, n_classes, config, missing_ranks, rng, scratch) } else { histogram_split(x, y, node, n_classes, config, cutoff_offsets, missing_ranks, rng, scratch) }
 }
 
-fn leaf() -> ClassSplit {
-    ClassSplit { cut_col: None, cut_val: 0, equality: false, missing_right: false, gain: 0.0 }
-}
+fn leaf() -> ClassSplit { ClassSplit { cut_col: None, cut_val: 0, equality: false, missing_right: false, gain: 0.0 } }
 
 fn evaluation_window(
-    y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, max_samples: usize, rng: &mut StdRng, scratch: &mut ClassSplitScratch,
+    y: ArrayView1<'_, u32>,
+    node: NodeRows<'_>,
+    n_classes: usize,
+    max_samples: usize,
+    rng: &mut StdRng,
+    scratch: &mut ClassSplitScratch,
 ) -> EvaluationWindow {
     let n_rows = node.n_rows.min(max_samples);
     let start = evaluation_start(node, n_rows, rng);
     scratch.total_classes.clear();
     scratch.total_classes.resize(n_classes, 0);
-    for &row in &node.rows[start..start + n_rows] {
-        scratch.total_classes[y[row as usize] as usize] += 1;
-    }
+    for &row in &node.rows[start..start + n_rows] { scratch.total_classes[y[row as usize] as usize] += 1; }
     let total_class_score = scratch.total_classes.iter().enumerate().map(|(class, &count)| scratch.class_score(class, count)).sum();
     let total_mass = scratch.total_classes.iter().zip(&scratch.class_weights).map(|(&count, &weight)| count as f64 * weight).sum();
     EvaluationWindow { start, n_rows, total_mass, total_class_score }
@@ -121,8 +121,14 @@ fn move_class_score(table: &[f64], stride: usize, score: &mut f64, class: usize,
 
 #[allow(clippy::too_many_arguments)]
 fn random_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, missing_ranks: &[u32],
-    rng: &mut StdRng, scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>,
+    y: ArrayView1<'_, u32>,
+    node: NodeRows<'_>,
+    n_classes: usize,
+    config: &Config,
+    missing_ranks: &[u32],
+    rng: &mut StdRng,
+    scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let used_n = evaluation_rows(node.n_rows, config);
     let features = sample_features(x.n_features(), config, rng);
@@ -155,7 +161,12 @@ fn random_split(
 }
 
 fn propose_candidates(
-    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng,
+    x: TrainingData<'_>,
+    node: NodeRows<'_>,
+    used_n: usize,
+    features: &[usize],
+    divisor: f32,
+    rng: &mut StdRng,
     scratch: &mut ClassSplitScratch,
 ) {
     scratch.candidates.clear();
@@ -167,8 +178,15 @@ fn propose_candidates(
 
 #[allow(clippy::too_many_arguments)]
 fn histogram_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, cutoff_offsets: &[usize],
-    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>,
+    y: ArrayView1<'_, u32>,
+    node: NodeRows<'_>,
+    n_classes: usize,
+    config: &Config,
+    cutoff_offsets: &[usize],
+    missing_ranks: &[u32],
+    rng: &mut StdRng,
+    scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let features = sample_features(x.n_features(), config, rng);
     let window = evaluation_window(y, node, n_classes, evaluation_rows(node.n_rows, config), rng, scratch);
@@ -196,9 +214,7 @@ fn histogram_split(
                 let start = (offset + observed_cardinality) * n_classes;
                 let counts = &scratch.bin_classes[start..start + n_classes];
                 if counts.iter().any(|&count| count > 0) { counts } else { &[] }
-            } else {
-                &[]
-            };
+            } else { &[] };
             scratch.left_classes.clear();
             scratch.left_classes.resize(n_classes, 0);
             let (mut left_count, mut left_mass, mut child_class_score) = (0, 0.0, window.total_class_score);
@@ -246,12 +262,8 @@ fn histogram_split(
                     left_mass += added as f64 * scratch.class_weights[class];
                 }
                 let next = (offset + cut_val) * n_classes;
-                if scratch.bin_classes[next..next + n_classes].iter().all(|&count| count == 0) {
-                    continue;
-                }
-                if !valid_children(left_count, window.n_rows) {
-                    continue;
-                }
+                if scratch.bin_classes[next..next + n_classes].iter().all(|&count| count == 0) { continue; }
+                if !valid_children(left_count, window.n_rows) { continue; }
                 let score = log_score(left_mass, child_class_score, &window);
                 if score > criterion {
                     criterion = score;
@@ -296,9 +308,7 @@ fn histogram_split(
                     let next = (offset + cut_val) * n_classes;
                     if scratch.bin_classes[next..next + n_classes].iter().all(|&count| count == 0)
                         || !valid_children(left_count, window.n_rows)
-                    {
-                        continue;
-                    }
+                    { continue; }
                     let score = log_score(left_mass, child_class_score, &window);
                     if score > criterion {
                         criterion = score;
@@ -318,20 +328,12 @@ fn histogram_split(
         }
         ranked_rows(x, node, window.start, window.n_rows, cut_col, &mut scratch.ranked_rows);
         let missing_rank = missing_ranks[cut_col];
-        let observed_end = if missing_rank == u32::MAX {
-            scratch.ranked_rows.len()
-        } else {
-            scratch.ranked_rows.partition_point(|row| row.value != missing_rank)
-        };
+        let observed_end = if missing_rank == u32::MAX { scratch.ranked_rows.len() } else { scratch.ranked_rows.partition_point(|row| row.value != missing_rank) };
         scratch.missing_classes.clear();
         if missing_rank != u32::MAX {
             scratch.missing_classes.resize(n_classes, 0);
-            for row in &scratch.ranked_rows[observed_end..] {
-                scratch.missing_classes[y[row.row] as usize] += 1;
-            }
-            if scratch.missing_classes.iter().all(|&count| count == 0) {
-                scratch.missing_classes.clear();
-            }
+            for row in &scratch.ranked_rows[observed_end..] { scratch.missing_classes[y[row.row] as usize] += 1; }
+            if scratch.missing_classes.iter().all(|&count| count == 0) { scratch.missing_classes.clear(); }
         }
         scratch.left_classes.clear();
         scratch.left_classes.resize(n_classes, 0);
@@ -376,9 +378,7 @@ fn histogram_split(
                     });
                 }
             }
-            if position == observed_end || !valid_children(left_count, window.n_rows) {
-                continue;
-            }
+            if position == observed_end || !valid_children(left_count, window.n_rows) { continue; }
             let score = log_score(left_mass, child_class_score, &window);
             if score > criterion {
                 criterion = score;
@@ -414,9 +414,7 @@ fn histogram_split(
                     left_mass += scratch.class_weights[class];
                     position += 1;
                 }
-                if position == observed_end || !valid_children(left_count, window.n_rows) {
-                    continue;
-                }
+                if position == observed_end || !valid_children(left_count, window.n_rows) { continue; }
                 let score = log_score(left_mass, child_class_score, &window);
                 if score > criterion {
                     criterion = score;
@@ -439,8 +437,16 @@ fn histogram_split(
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn consider_candidate(
-    mut candidate: Candidate, left_classes: &[u32], missing_classes: &[u32], window: &EvaluationWindow, score_table: &[f64],
-    score_stride: usize, total_classes: &[u32], class_weights: &[f64], criterion: &mut f32, best: &mut Option<Candidate>,
+    mut candidate: Candidate,
+    left_classes: &[u32],
+    missing_classes: &[u32],
+    window: &EvaluationWindow,
+    score_table: &[f64],
+    score_stride: usize,
+    total_classes: &[u32],
+    class_weights: &[f64],
+    criterion: &mut f32,
+    best: &mut Option<Candidate>,
 ) {
     candidate.missing_right = window.n_rows - candidate.left_count >= candidate.left_count;
     if valid_children(candidate.left_count, window.n_rows) {
@@ -450,25 +456,17 @@ fn consider_candidate(
             *best = Some(candidate);
         }
     }
-    if missing_classes.is_empty() {
-        return;
-    }
+    if missing_classes.is_empty() { return; }
     let missing_count = missing_classes.iter().map(|&count| count as usize).sum::<usize>();
-    if missing_count == 0 {
-        return;
-    }
+    if missing_count == 0 { return; }
     candidate.missing_right = true;
-    if candidate.equality {
-        return;
-    }
+    if candidate.equality { return; }
     let mut left_score = candidate.child_class_score;
     for (class, (&left, &added)) in left_classes.iter().zip(missing_classes).enumerate() {
         move_class_score(score_table, score_stride, &mut left_score, class, left, total_classes[class], added);
     }
     let left_count = candidate.left_count + missing_count;
-    if !valid_children(left_count, window.n_rows) {
-        return;
-    }
+    if !valid_children(left_count, window.n_rows) { return; }
     let missing_mass = missing_classes.iter().zip(class_weights).map(|(&count, &weight)| count as f64 * weight).sum::<f64>();
     let score = log_score(candidate.left_mass + missing_mass, left_score, window);
     if score > *criterion {

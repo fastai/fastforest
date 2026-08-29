@@ -120,9 +120,7 @@ fn mixed_file_and_model_story() {
 
     let numeric_csv = directory.path().join("numeric.csv");
     let mut numeric = String::from("x0,x1,target\n");
-    for row in 0..211 {
-        numeric.push_str(&format!("{row},{},{:.3}\n", row % 7, row as f32 * 0.25));
-    }
+    for row in 0..211 { numeric.push_str(&format!("{row},{},{:.3}\n", row % 7, row as f32 * 0.25)); }
     fs::write(&numeric_csv, numeric).unwrap();
     let numeric_arrow = directory.path().join("numeric.arrow");
     convert_csv_to_arrow(&numeric_csv, &numeric_arrow, 23).unwrap();

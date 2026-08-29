@@ -10,16 +10,11 @@ use crate::{ClassifierForest, Encoder, Forest, ForestError};
 const MAGIC: &[u8; 8] = b"FFM\0\x08\0\0\0";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct SavedValue {
-    pub kind: u8,
-    pub value: String,
-}
+pub struct SavedValue { pub kind: u8, pub value: String }
 
 impl SavedValue {
     pub fn validate(&self) -> Result<(), ForestError> {
-        if self.kind > 5 {
-            return Err(ForestError::new("saved model contains an unknown scalar type"));
-        }
+        if self.kind > 5 { return Err(ForestError::new("saved model contains an unknown scalar type")); }
         match self.kind {
             2 if self.value != "0" && self.value != "1" => Err(ForestError::new("saved model contains an invalid boolean")),
             3 => self.value.parse::<i64>().map(|_| ()).map_err(|_| ForestError::new("saved model contains an invalid integer")),
@@ -30,11 +25,7 @@ impl SavedValue {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ModelMetadata {
-    pub markers: Vec<SavedValue>,
-    pub date_columns: Vec<(usize, String)>,
-    pub parameters: Vec<(String, SavedValue)>,
-}
+pub struct ModelMetadata { pub markers: Vec<SavedValue>, pub date_columns: Vec<(usize, String)>, pub parameters: Vec<(String, SavedValue)> }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SavedModel {
@@ -43,15 +34,10 @@ pub enum SavedModel {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Envelope {
-    writer_version: String,
-    model: SavedModel,
-}
+struct Envelope { writer_version: String, model: SavedModel }
 
 impl SavedModel {
-    pub fn regression(encoder: Encoder, forest: Forest, metadata: ModelMetadata) -> Self {
-        Self::Regression { encoder, forest, metadata }
-    }
+    pub fn regression(encoder: Encoder, forest: Forest, metadata: ModelMetadata) -> Self { Self::Regression { encoder, forest, metadata } }
 
     pub fn classification(encoder: Encoder, forest: ClassifierForest, metadata: ModelMetadata, classes: Vec<SavedValue>) -> Self {
         Self::Classification { encoder, forest, metadata, classes }
@@ -94,14 +80,10 @@ impl SavedModel {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ForestError> {
-        if !bytes.starts_with(MAGIC) {
-            return Err(ForestError::new("unsupported or malformed FastForest model"));
-        }
+        if !bytes.starts_with(MAGIC) { return Err(ForestError::new("unsupported or malformed FastForest model")); }
         let (envelope, used): (Envelope, usize) = bincode::serde::decode_from_slice(&bytes[MAGIC.len()..], bincode::config::standard())
             .map_err(|error| ForestError::new(format!("could not decode model: {error}")))?;
-        if used != bytes.len() - MAGIC.len() {
-            return Err(ForestError::new("saved model contains trailing data"));
-        }
+        if used != bytes.len() - MAGIC.len() { return Err(ForestError::new("saved model contains trailing data")); }
         envelope.model.validate()?;
         Ok(envelope.model)
     }
@@ -128,15 +110,9 @@ impl SavedModel {
         Ok(())
     }
 
-    pub fn encoder(&self) -> &Encoder {
-        match self {
-            Self::Regression { encoder, .. } | Self::Classification { encoder, .. } => encoder,
-        }
-    }
+    pub fn encoder(&self) -> &Encoder { match self { Self::Regression { encoder, .. } | Self::Classification { encoder, .. } => encoder } }
 
     pub fn metadata(&self) -> &ModelMetadata {
-        match self {
-            Self::Regression { metadata, .. } | Self::Classification { metadata, .. } => metadata,
-        }
+        match self { Self::Regression { metadata, .. } | Self::Classification { metadata, .. } => metadata }
     }
 }

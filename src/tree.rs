@@ -27,43 +27,28 @@ pub(crate) struct TreeNode<C, P> {
 }
 
 impl<C: Default, P: Default> TreeNode<C, P> {
-    pub(crate) fn new() -> Self {
-        Self { cut_val: C::default(), value: P::default(), child: 0, cut_col: LEAF_COL }
-    }
+    pub(crate) fn new() -> Self { Self { cut_val: C::default(), value: P::default(), child: 0, cut_col: LEAF_COL } }
 }
 
 impl<C, P> TreeNode<C, P> {
-    pub(crate) fn is_leaf(&self) -> bool {
-        self.cut_col == LEAF_COL
-    }
-    pub(crate) fn equality(&self) -> bool {
-        !self.is_leaf() && self.cut_col & EQUALITY_BIT != 0
-    }
-    pub(crate) fn missing_right(&self) -> bool {
-        !self.is_leaf() && self.cut_col & MISSING_RIGHT_BIT != 0
-    }
-    pub(crate) fn feature(&self) -> usize {
-        (self.cut_col & FEATURE_MASK) as usize
-    }
+    pub(crate) fn is_leaf(&self) -> bool { self.cut_col == LEAF_COL }
+    pub(crate) fn equality(&self) -> bool { !self.is_leaf() && self.cut_col & EQUALITY_BIT != 0 }
+    pub(crate) fn missing_right(&self) -> bool { !self.is_leaf() && self.cut_col & MISSING_RIGHT_BIT != 0 }
+    pub(crate) fn feature(&self) -> usize { (self.cut_col & FEATURE_MASK) as usize }
 }
 
 pub(crate) fn leaf_index<C: Copy + PartialEq, P>(
-    nodes: &[TreeNode<C, P>], value: impl Fn(usize) -> C, missing: impl Fn(usize, C) -> bool, ordered_right: impl Fn(C, C) -> bool,
+    nodes: &[TreeNode<C, P>],
+    value: impl Fn(usize) -> C,
+    missing: impl Fn(usize, C) -> bool,
+    ordered_right: impl Fn(C, C) -> bool,
 ) -> usize {
     let mut node_idx = 0;
     loop {
         let node = &nodes[node_idx];
-        if node.is_leaf() {
-            return node_idx;
-        }
+        if node.is_leaf() { return node_idx; }
         let observed = value(node.feature());
-        let go_right = usize::from(if missing(node.feature(), observed) {
-            node.missing_right()
-        } else if node.equality() {
-            observed != node.cut_val
-        } else {
-            ordered_right(observed, node.cut_val)
-        });
+        let go_right = usize::from(if missing(node.feature(), observed) { node.missing_right() } else if node.equality() { observed != node.cut_val } else { ordered_right(observed, node.cut_val) });
         node_idx = node.child as usize + go_right;
     }
 }
@@ -75,9 +60,7 @@ pub(crate) fn structure<C, P>(nodes: &[TreeNode<C, P>]) -> (usize, usize, usize)
     while let Some((index, node_depth)) = stack.pop() {
         let node = &nodes[index];
         depth = depth.max(node_depth);
-        if node.is_leaf() {
-            leaves += 1
-        } else {
+        if node.is_leaf() { leaves += 1 } else {
             stack.push((node.child as usize, node_depth + 1));
             stack.push((node.child as usize + 1, node_depth + 1));
         }
@@ -87,13 +70,7 @@ pub(crate) fn structure<C, P>(nodes: &[TreeNode<C, P>]) -> (usize, usize, usize)
 
 pub(crate) fn native_node<P>(node: TreeNode<u32, P>, cutoff_values: &[f32], cutoff_offsets: &[usize]) -> TreeNode<f32, P> {
     TreeNode {
-        cut_val: if node.is_leaf() {
-            0.0
-        } else if node.equality() {
-            cutoff_values[cutoff_offsets[node.feature()] + node.cut_val as usize + 1]
-        } else {
-            cutoff_values[cutoff_offsets[node.feature()] + node.cut_val as usize]
-        },
+        cut_val: if node.is_leaf() { 0.0 } else if node.equality() { cutoff_values[cutoff_offsets[node.feature()] + node.cut_val as usize + 1] } else { cutoff_values[cutoff_offsets[node.feature()] + node.cut_val as usize] },
         value: node.value,
         child: node.child,
         cut_col: node.cut_col,
@@ -101,7 +78,12 @@ pub(crate) fn native_node<P>(node: TreeNode<u32, P>, cutoff_values: &[f32], cuto
 }
 
 pub(crate) fn split_children<C: Copy, P: Default>(
-    nodes: &mut Vec<TreeNode<C, P>>, node_idx: usize, cut_col: usize, cut_val: C, equality: bool, missing_right: bool,
+    nodes: &mut Vec<TreeNode<C, P>>,
+    node_idx: usize,
+    cut_col: usize,
+    cut_val: C,
+    equality: bool,
+    missing_right: bool,
 ) -> (usize, usize)
 where
     C: Default,
@@ -118,7 +100,11 @@ where
 }
 
 pub(crate) fn grow_tree<P: Default + Copy>(
-    x: TrainingData<'_>, rows: &mut [u32], nodes: &mut Vec<TreeNode<u32, P>>, importance: &mut [f32], missing_ranks: &[u32],
+    x: TrainingData<'_>,
+    rows: &mut [u32],
+    nodes: &mut Vec<TreeNode<u32, P>>,
+    importance: &mut [f32],
+    missing_ranks: &[u32],
     mut visit: impl FnMut(NodeRows<'_>, &mut TreeNode<u32, P>) -> Option<Branch>,
 ) {
     let mut work = vec![(0, 0, rows.len())];

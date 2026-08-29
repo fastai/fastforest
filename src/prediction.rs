@@ -20,7 +20,12 @@ pub(crate) fn row_block_size(n_rows: usize) -> usize {
 
 #[inline]
 pub(crate) fn add_block_by<T: PredictionTree>(
-    trees: &[T], n_rows: usize, outputs: usize, result: &mut [f32], trees_per_batch: usize, value: impl Fn(usize, usize) -> f32,
+    trees: &[T],
+    n_rows: usize,
+    outputs: usize,
+    result: &mut [f32],
+    trees_per_batch: usize,
+    value: impl Fn(usize, usize) -> f32,
 ) {
     result.fill(0.0);
     for trees in trees.chunks(trees_per_batch) {
@@ -33,9 +38,7 @@ pub(crate) fn add_block_by<T: PredictionTree>(
 
 pub(crate) fn predict_outputs<T: PredictionTree>(trees: &[T], n_features: usize, outputs: usize, x: ArrayView2<'_, f32>) -> Vec<f32> {
     let mut result = vec![0.0; x.nrows() * outputs];
-    if x.nrows() == 0 {
-        return result;
-    }
+    if x.nrows() == 0 { return result; }
     let block_rows = row_block_size(x.nrows());
     let output_block = block_rows * outputs;
     let trees_per_batch = trees_per_batch(trees);
@@ -47,7 +50,8 @@ pub(crate) fn predict_outputs<T: PredictionTree>(trees: &[T], n_features: usize,
             add_block_by(trees, n_rows, outputs, output, trees_per_batch, |row, col| data[(row_start + row) * n_features + col]);
             output.iter_mut().for_each(|value| *value /= n_trees);
         });
-    } else {
+    }
+    else {
         result.par_chunks_mut(output_block).enumerate().for_each(|(block, output)| {
             let row_start = block * block_rows;
             let n_rows = output.len() / outputs;

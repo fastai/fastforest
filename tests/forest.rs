@@ -26,9 +26,7 @@ fn encoded(batch: &RecordBatch) -> (Encoder, ndarray::Array2<u32>, ndarray::Arra
     (encoder, ranked, native, markers)
 }
 
-fn same_floats(left: &[f32], right: &[f32]) -> bool {
-    left.iter().zip(right).all(|(a, b)| a.to_bits() == b.to_bits())
-}
+fn same_floats(left: &[f32], right: &[f32]) -> bool { left.iter().zip(right).all(|(a, b)| a.to_bits() == b.to_bits()) }
 
 #[test]
 fn regression_and_classification_behaviour_story() {

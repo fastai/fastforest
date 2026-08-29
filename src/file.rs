@@ -23,10 +23,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Task {
-    Regression,
-    Classification,
-}
+pub enum Task { Regression, Classification }
 
 #[derive(Clone, Debug)]
 pub struct FileFitOptions {
@@ -53,11 +50,7 @@ pub struct FileFitOptions {
     pub detrend: bool,
 }
 
-impl Default for FileFitOptions {
-    fn default() -> Self {
-        Self::for_task(Task::Regression)
-    }
-}
+impl Default for FileFitOptions { fn default() -> Self { Self::for_task(Task::Regression) } }
 
 impl FileFitOptions {
     pub fn for_task(task: Task) -> Self {
@@ -87,14 +80,10 @@ impl FileFitOptions {
         }
     }
 
-    fn resolved_replacement(&self, rows: usize) -> bool {
-        resolve_replacement(rows, self.replacement, self.task == Task::Classification)
-    }
+    fn resolved_replacement(&self, rows: usize) -> bool { resolve_replacement(rows, self.replacement, self.task == Task::Classification) }
 }
 
-fn file_error(context: &str, error: impl std::fmt::Display) -> ForestError {
-    ForestError::new(format!("{context}: {error}"))
-}
+fn file_error(context: &str, error: impl std::fmt::Display) -> ForestError { ForestError::new(format!("{context}: {error}")) }
 
 fn headers(path: &Path) -> Result<Vec<String>, ForestError> {
     let mut reader = csv::Reader::from_path(path).map_err(|error| file_error("could not open CSV", error))?;
@@ -107,7 +96,9 @@ fn headers(path: &Path) -> Result<Vec<String>, ForestError> {
 }
 
 fn predictor_layout(
-    names: &[String], target: usize, options: &FileFitOptions,
+    names: &[String],
+    target: usize,
+    options: &FileFitOptions,
 ) -> Result<(Vec<usize>, Vec<String>, ModelMetadata, Vec<(usize, String)>), ForestError> {
     let sources: Vec<_> = (0..names.len()).filter(|&index| index != target).collect();
     let predictor_names: Vec<_> = sources.iter().map(|&index| names[index].clone()).collect();
@@ -136,24 +127,23 @@ fn target_sample_and_rows(path: &Path, target: usize, seed: Option<u64>) -> Resu
     for record in reader.records() {
         let record = record.map_err(|error| file_error("could not read CSV", error))?;
         let value = record.get(target).ok_or_else(|| ForestError::new("CSV row has the wrong number of columns"))?;
-        if rows < 1_000 {
-            sample.push(value.to_owned());
-        } else {
+        if rows < 1_000 { sample.push(value.to_owned()); }
+        else {
             let replace = rng.random_range(0..=rows);
-            if replace < 1_000 {
-                sample[replace] = value.to_owned();
-            }
+            if replace < 1_000 { sample[replace] = value.to_owned(); }
         }
         rows += 1;
     }
-    if rows == 0 {
-        return Err(ForestError::new("training CSV must contain at least one row"));
-    }
+    if rows == 0 { return Err(ForestError::new("training CSV must contain at least one row")); }
     Ok((rows, sample))
 }
 
 fn selected_csv_rows(
-    path: &Path, selected: &[usize], sources: &[usize], target: usize, names: &[String],
+    path: &Path,
+    selected: &[usize],
+    sources: &[usize],
+    target: usize,
+    names: &[String],
 ) -> Result<(RecordBatch, Vec<String>), ForestError> {
     let mut selected = selected.to_vec();
     selected.sort_unstable();
@@ -162,12 +152,8 @@ fn selected_csv_rows(
     let mut targets = Vec::with_capacity(selected.len());
     let mut reader = csv::Reader::from_path(path).map_err(|error| file_error("could not open CSV", error))?;
     for (row, record) in reader.records().enumerate() {
-        if next == selected.len() {
-            break;
-        }
-        if row != selected[next] {
-            continue;
-        }
+        if next == selected.len() { break; }
+        if row != selected[next] { continue; }
         let record = record.map_err(|error| file_error("could not read CSV", error))?;
         for (output, &source) in columns.iter_mut().zip(sources) {
             let value = record.get(source).ok_or_else(|| ForestError::new("CSV row has the wrong number of columns"))?;
@@ -176,9 +162,7 @@ fn selected_csv_rows(
         targets.push(record.get(target).ok_or_else(|| ForestError::new("CSV row has the wrong number of columns"))?.to_owned());
         next += 1;
     }
-    if next != selected.len() {
-        return Err(ForestError::new("CSV ended before all sampled rows were found"));
-    }
+    if next != selected.len() { return Err(ForestError::new("CSV ended before all sampled rows were found")); }
     let fields: Vec<_> = names.iter().map(|name| Field::new(name, DataType::Utf8, false)).collect();
     let arrays: Vec<ArrayRef> = columns.into_iter().map(|values| Arc::new(StringArray::from(values)) as ArrayRef).collect();
     let batch = RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
@@ -206,7 +190,11 @@ fn fit_config(options: &FileFitOptions, replacement: bool, n_trees: usize, sampl
 }
 
 fn fit_sampled(
-    predictors: &RecordBatch, targets: &[Option<SavedValue>], total_rows: usize, options: &FileFitOptions, metadata: ModelMetadata,
+    predictors: &RecordBatch,
+    targets: &[Option<SavedValue>],
+    total_rows: usize,
+    options: &FileFitOptions,
+    metadata: ModelMetadata,
     dates: Vec<(usize, String)>,
 ) -> Result<SavedModel, ForestError> {
     let replacement = options.resolved_replacement(total_rows);
@@ -265,13 +253,9 @@ fn fit_sampled(
             Ok(SavedModel::regression(encoder, forest, metadata))
         }
         Task::Classification => {
-            if targets.iter().any(Option::is_none) {
-                return Err(ForestError::new("classification targets cannot be missing"));
-            }
+            if targets.iter().any(Option::is_none) { return Err(ForestError::new("classification targets cannot be missing")); }
             let classes: Vec<_> = targets.iter().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect();
-            if classes.len() < 2 {
-                return Err(ForestError::new("classification requires at least two classes"));
-            }
+            if classes.len() < 2 { return Err(ForestError::new("classification requires at least two classes")); }
             let lookup: HashMap<_, _> = classes.iter().cloned().enumerate().map(|(index, value)| (value, index as u32)).collect();
             let y = Array1::from_iter(targets.iter().flatten().map(|value| lookup[value]));
             let target = Some(StatTarget::Classes { codes: y.as_slice().unwrap(), k: classes.len() });
@@ -344,11 +328,12 @@ pub fn fit_csv(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Saved
 }
 
 fn prediction_columns(
-    path: &Path, names: &[String], batch_size: usize, mut predict: impl FnMut(RecordBatch) -> Result<(), ForestError>,
+    path: &Path,
+    names: &[String],
+    batch_size: usize,
+    mut predict: impl FnMut(RecordBatch) -> Result<(), ForestError>,
 ) -> Result<(), ForestError> {
-    if batch_size == 0 {
-        return Err(ForestError::new("batch_size must be greater than zero"));
-    }
+    if batch_size == 0 { return Err(ForestError::new("batch_size must be greater than zero")); }
     let mut reader = csv::Reader::from_path(path).map_err(|error| file_error("could not open CSV", error))?;
     let source_names: Vec<_> =
         reader.headers().map_err(|error| file_error("could not read CSV header", error))?.iter().map(str::to_owned).collect();
@@ -376,9 +361,7 @@ fn prediction_columns(
             predict(batch(full)?)?;
         }
     }
-    if !columns[0].is_empty() {
-        predict(batch(columns)?)?;
-    }
+    if !columns[0].is_empty() { predict(batch(columns)?)?; }
     Ok(())
 }
 
@@ -392,7 +375,11 @@ fn class_text(value: &SavedValue) -> String {
 }
 
 pub fn predict_csv(
-    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
+    model: &SavedModel,
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    batch_size: usize,
+    proba: bool,
 ) -> Result<(), ForestError> {
     let input = input.as_ref();
     let output = output.as_ref();
@@ -456,9 +443,7 @@ macro_rules! arrow_number {
 }
 
 fn arrow_saved_value(array: &dyn Array, row: usize) -> Result<Option<SavedValue>, ForestError> {
-    if array.is_null(row) {
-        return Ok(None);
-    }
+    if array.is_null(row) { return Ok(None); }
     let (kind, value) = match array.data_type() {
         DataType::Int8 => (3, arrow_number!(array, row, Int8Array).to_string()),
         DataType::Int16 => (3, arrow_number!(array, row, Int16Array).to_string()),
@@ -520,25 +505,18 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
         let array = batch.column(target);
         for row in 0..batch.num_rows() {
             let value = arrow_saved_value(array.as_ref(), row)?;
-            if rows < 1_000 {
-                target_sample.push(value);
-            } else {
+            if rows < 1_000 { target_sample.push(value); }
+            else {
                 let replace = rng.random_range(0..=rows);
-                if replace < 1_000 {
-                    target_sample[replace] = value;
-                }
+                if replace < 1_000 { target_sample[replace] = value; }
             }
             rows += 1;
         }
     }
-    if rows == 0 {
-        return Err(ForestError::new("training Arrow file must contain at least one row"));
-    }
+    if rows == 0 { return Err(ForestError::new("training Arrow file must contain at least one row")); }
     let estimated_outputs = if options.task == Task::Classification {
         target_sample.iter().flatten().collect::<BTreeSet<_>>().len().saturating_sub(1).max(1)
-    } else {
-        1
-    };
+    } else { 1 };
     let estimated = plan_fit(
         rows,
         options.n_trees,
@@ -559,9 +537,7 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
         let batch = batch.map_err(|error| file_error("could not read Arrow batch", error))?;
         let end = global_row + batch.num_rows();
         let start = next;
-        while next < selected.len() && selected[next] < end {
-            next += 1
-        }
+        while next < selected.len() && selected[next] < end { next += 1 }
         if next > start {
             let indices = UInt32Array::from(selected[start..next].iter().map(|row| (row - global_row) as u32).collect::<Vec<_>>());
             let columns: Result<Vec<_>, _> = batch
@@ -575,9 +551,7 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
         }
         global_row = end;
     }
-    if next != selected.len() {
-        return Err(ForestError::new("Arrow input ended before all sampled rows were found"));
-    }
+    if next != selected.len() { return Err(ForestError::new("Arrow input ended before all sampled rows were found")); }
     let selected_batch = concat_batches(&batches, schema)?;
     let targets: Result<Vec<_>, _> =
         (0..selected_batch.num_rows()).map(|row| arrow_saved_value(selected_batch.column(target).as_ref(), row)).collect();
@@ -592,11 +566,13 @@ fn arrow_output_writer(path: &Path, schema: Arc<Schema>) -> Result<FileWriter<Fi
 }
 
 pub fn predict_arrow(
-    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
+    model: &SavedModel,
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    batch_size: usize,
+    proba: bool,
 ) -> Result<(), ForestError> {
-    if batch_size == 0 {
-        return Err(ForestError::new("batch_size must be greater than zero"));
-    }
+    if batch_size == 0 { return Err(ForestError::new("batch_size must be greater than zero")); }
     let input = input.as_ref();
     let output = output.as_ref();
     let encoder = model.encoder();
@@ -655,7 +631,11 @@ pub fn fit_file(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Save
 }
 
 pub fn predict_file(
-    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
+    model: &SavedModel,
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    batch_size: usize,
+    proba: bool,
 ) -> Result<(), ForestError> {
     let input = input.as_ref();
     let output = output.as_ref();
@@ -664,21 +644,14 @@ pub fn predict_file(
             return Err(ForestError::new("Arrow prediction currently requires both input and output to be Arrow"));
         }
         predict_arrow(model, input, output, batch_size, proba)
-    } else {
-        predict_csv(model, input, output, batch_size, proba)
-    }
+    } else { predict_csv(model, input, output, batch_size, proba) }
 }
 
 #[derive(Clone, Copy)]
-enum ConvertedKind {
-    Integer,
-    Float,
-}
+enum ConvertedKind { Integer, Float }
 
 pub fn convert_csv_to_arrow(input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize) -> Result<(), ForestError> {
-    if batch_size == 0 {
-        return Err(ForestError::new("batch_size must be greater than zero"));
-    }
+    if batch_size == 0 { return Err(ForestError::new("batch_size must be greater than zero")); }
     let input = input.as_ref();
     let output = output.as_ref();
     let names = headers(input)?;
@@ -687,14 +660,8 @@ pub fn convert_csv_to_arrow(input: impl AsRef<Path>, output: impl AsRef<Path>, b
     for (row, record) in reader.records().enumerate() {
         let record = record.map_err(|error| file_error("could not read CSV", error))?;
         for (column, value) in record.iter().enumerate() {
-            if value.is_empty() || value.parse::<i64>().is_ok() {
-                continue;
-            }
-            if value.parse::<f64>().is_ok_and(f64::is_finite) {
-                kinds[column] = ConvertedKind::Float;
-            } else {
-                return Err(ForestError::new(format!("column {:?} has nonnumeric value {value:?} at row {row}", names[column])));
-            }
+            if value.is_empty() || value.parse::<i64>().is_ok() { continue; }
+            if value.parse::<f64>().is_ok_and(f64::is_finite) { kinds[column] = ConvertedKind::Float; } else { return Err(ForestError::new(format!("column {:?} has nonnumeric value {value:?} at row {row}", names[column]))); }
         }
     }
     let schema = Arc::new(Schema::new(
@@ -710,9 +677,7 @@ pub fn convert_csv_to_arrow(input: impl AsRef<Path>, output: impl AsRef<Path>, b
     let mut reader = csv::Reader::from_path(input).map_err(|error| file_error("could not open CSV", error))?;
     let mut rows: Vec<Vec<Option<String>>> = names.iter().map(|_| Vec::with_capacity(batch_size)).collect();
     let write_rows = |rows: &mut Vec<Vec<Option<String>>>, writer: &mut FileWriter<File>| -> Result<(), ForestError> {
-        if rows[0].is_empty() {
-            return Ok(());
-        }
+        if rows[0].is_empty() { return Ok(()); }
         let arrays: Result<Vec<ArrayRef>, ForestError> = rows
             .iter()
             .zip(&kinds)
@@ -732,12 +697,8 @@ pub fn convert_csv_to_arrow(input: impl AsRef<Path>, output: impl AsRef<Path>, b
     };
     for record in reader.records() {
         let record = record.map_err(|error| file_error("could not read CSV", error))?;
-        for (column, value) in record.iter().enumerate() {
-            rows[column].push((!value.is_empty()).then(|| value.to_owned()));
-        }
-        if rows[0].len() == batch_size {
-            write_rows(&mut rows, &mut writer)?;
-        }
+        for (column, value) in record.iter().enumerate() { rows[column].push((!value.is_empty()).then(|| value.to_owned())); }
+        if rows[0].len() == batch_size { write_rows(&mut rows, &mut writer)?; }
     }
     write_rows(&mut rows, &mut writer)?;
     writer.finish().map_err(|error| file_error("could not finish Arrow output", error))

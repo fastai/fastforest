@@ -14,9 +14,7 @@ pub(crate) fn add_importance(total: &mut [f32], importance: &[f32]) {
 
 pub(crate) fn normalize_importance(importance: &mut [f32]) {
     let sum = importance.iter().sum::<f32>();
-    if sum > 0.0 {
-        importance.iter_mut().for_each(|value| *value /= sum)
-    }
+    if sum > 0.0 { importance.iter_mut().for_each(|value| *value /= sum) }
 }
 
 pub(crate) fn combined_importance(left: &[f32], right: &[f32], left_trees: usize, right_trees: usize) -> Vec<f32> {
@@ -34,8 +32,13 @@ pub(crate) type BuiltTree<T> = (T, Option<Vec<bool>>, Vec<f32>);
 pub(crate) type AssembledForest<T> = (Vec<T>, Vec<f32>, Option<Vec<f32>>, Option<Vec<u32>>, Option<Vec<usize>>);
 
 pub(crate) fn assemble_forest<T, N>(
-    built: Vec<BuiltTree<T>>, n_features: usize, outputs: usize, oob_indices: Option<Vec<usize>>, track_oob: bool,
-    mut add_oob: impl FnMut(&T, usize, &mut [f32]), mut into_native: impl FnMut(T) -> N,
+    built: Vec<BuiltTree<T>>,
+    n_features: usize,
+    outputs: usize,
+    oob_indices: Option<Vec<usize>>,
+    track_oob: bool,
+    mut add_oob: impl FnMut(&T, usize, &mut [f32]),
+    mut into_native: impl FnMut(T) -> N,
 ) -> AssembledForest<N> {
     let mut trees = Vec::with_capacity(built.len());
     let mut values = oob_indices.as_ref().map(|indices| vec![0.0; indices.len() * outputs]);
@@ -46,9 +49,7 @@ pub(crate) fn assemble_forest<T, N>(
         if track_oob {
             let in_bag = in_bag.as_ref().unwrap();
             for (output_idx, &row_idx) in oob_indices.as_ref().unwrap().iter().enumerate() {
-                if in_bag[row_idx] {
-                    continue;
-                }
+                if in_bag[row_idx] { continue; }
                 add_oob(&tree, row_idx, &mut values.as_mut().unwrap()[output_idx * outputs..(output_idx + 1) * outputs]);
                 counts.as_mut().unwrap()[output_idx] += 1;
             }
@@ -56,14 +57,14 @@ pub(crate) fn assemble_forest<T, N>(
         trees.push(into_native(tree));
     }
     normalize_importance(&mut importance);
-    if let (Some(values), Some(counts)) = (&mut values, &counts) {
-        normalize_oob(values, counts, outputs)
-    }
+    if let (Some(values), Some(counts)) = (&mut values, &counts) { normalize_oob(values, counts, outputs) }
     (trees, importance, values, counts, oob_indices)
 }
 
 pub(crate) fn combined_oob(
-    left: Option<(&[f32], &[u32])>, right: Option<(&[f32], &[u32])>, outputs: usize,
+    left: Option<(&[f32], &[u32])>,
+    right: Option<(&[f32], &[u32])>,
+    outputs: usize,
 ) -> Result<(Option<Vec<f32>>, Option<Vec<u32>>), ForestError> {
     match (left, right) {
         (Some((left, left_counts)), Some((right, right_counts))) => {
@@ -75,9 +76,7 @@ pub(crate) fn combined_oob(
                 .zip(&counts)
                 .flat_map(|(((left, &lc), (right, &rc)), &count)| {
                     (0..outputs).map(move |output| {
-                        if count == 0 {
-                            f32::NAN
-                        } else {
+                        if count == 0 { f32::NAN } else {
                             (if lc == 0 { 0.0 } else { left[output] * lc as f32 } + if rc == 0 { 0.0 } else { right[output] * rc as f32 })
                                 / count as f32
                         }

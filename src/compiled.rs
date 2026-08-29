@@ -6,9 +6,7 @@ use tempfile::{NamedTempFile, tempdir};
 
 use crate::{ForestError, SavedModel};
 
-fn escaped_path(path: &Path) -> String {
-    format!("{:?}", path.to_string_lossy())
-}
+fn escaped_path(path: &Path) -> String { format!("{:?}", path.to_string_lossy()) }
 
 pub fn compile_model(model: &SavedModel, output: impl AsRef<Path>) -> Result<(), ForestError> {
     model.validate()?;
@@ -20,9 +18,7 @@ pub fn compile_model(model: &SavedModel, output: impl AsRef<Path>) -> Result<(),
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dependency = if manifest_dir.join("Cargo.toml").is_file() {
         format!("fastforest = {{ path = {} }}", escaped_path(&manifest_dir))
-    } else {
-        format!("fastforest = \"={}\"", env!("CARGO_PKG_VERSION"))
-    };
+    } else { format!("fastforest = \"={}\"", env!("CARGO_PKG_VERSION")) };
     let manifest =
         format!("[package]\nname = \"fastforest-embedded\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\n{dependency}\n");
     fs::write(directory.path().join("Cargo.toml"), manifest)
@@ -38,9 +34,7 @@ pub fn compile_model(model: &SavedModel, output: impl AsRef<Path>) -> Result<(),
         .current_dir(directory.path())
         .status()
         .map_err(|error| ForestError::new(format!("could not run Cargo: {error}")))?;
-    if !status.success() {
-        return Err(ForestError::new("Cargo could not build the standalone predictor"));
-    }
+    if !status.success() { return Err(ForestError::new("Cargo could not build the standalone predictor")); }
     let executable =
         directory.path().join("target/release").join(if cfg!(windows) { "fastforest-embedded.exe" } else { "fastforest-embedded" });
     let output = output.as_ref();

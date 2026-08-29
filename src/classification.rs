@@ -19,20 +19,14 @@ type ClassNode = TreeNode<f32, u32>;
 type TrainingClassNode = TreeNode<u32, u32>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ClassTree {
-    nodes: Vec<ClassNode>,
-    probabilities: Vec<f32>,
-    n_classes: usize,
-}
+struct ClassTree { nodes: Vec<ClassNode>, probabilities: Vec<f32>, n_classes: usize }
 
 impl ClassTree {
     fn leaf_by(&self, value: impl Fn(usize) -> f32) -> usize {
         self.nodes[leaf_index(&self.nodes, value, |_, observed| observed.is_nan(), |observed, cutoff| observed > cutoff)].value as usize
     }
 
-    fn structure(&self) -> (usize, usize, usize) {
-        structure(&self.nodes)
-    }
+    fn structure(&self) -> (usize, usize, usize) { structure(&self.nodes) }
 
     fn add_probabilities_by(&self, value: impl Fn(usize) -> f32, output: &mut [f32]) {
         let leaf = self.leaf_by(|col| value(col));
@@ -45,16 +39,10 @@ impl PredictionTree for ClassTree {
     fn prediction_bytes(&self) -> usize {
         std::mem::size_of_val(self.nodes.as_slice()) + std::mem::size_of_val(self.probabilities.as_slice())
     }
-    fn add_prediction_by(&self, value: impl Fn(usize) -> f32, output: &mut [f32]) {
-        self.add_probabilities_by(value, output)
-    }
+    fn add_prediction_by(&self, value: impl Fn(usize) -> f32, output: &mut [f32]) { self.add_probabilities_by(value, output) }
 }
 
-struct TrainingClassTree {
-    nodes: Vec<TrainingClassNode>,
-    probabilities: Vec<f32>,
-    n_classes: usize,
-}
+struct TrainingClassTree { nodes: Vec<TrainingClassNode>, probabilities: Vec<f32>, n_classes: usize }
 
 impl TrainingClassTree {
     fn leaf_by(&self, value: impl Fn(usize) -> u32, missing_ranks: &[u32]) -> usize {
@@ -77,8 +65,14 @@ impl TrainingClassTree {
     }
 
     fn build(
-        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
-        seed: u64, track_in_bag: bool,
+        x: TrainingData<'_>,
+        y: ArrayView1<'_, u32>,
+        n_classes: usize,
+        cutoff_offsets: &[usize],
+        missing_ranks: &[u32],
+        config: &Config,
+        seed: u64,
+        track_in_bag: bool,
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let (mut rows, in_bag) = sampled_rows_with_mask(x.n_rows(), config, &mut rng, track_in_bag);
@@ -94,9 +88,7 @@ impl TrainingClassTree {
                 tree_node.value = u32::try_from(probabilities.len() / n_classes).expect("tree has too many leaves");
                 let offset = probabilities.len();
                 probabilities.resize(offset + n_classes, 0.0);
-                for &row in &node.rows[node.start..node.start + node.n_rows] {
-                    probabilities[offset + y[row as usize] as usize] += 1.0;
-                }
+                for &row in &node.rows[node.start..node.start + node.n_rows] { probabilities[offset + y[row as usize] as usize] += 1.0; }
                 probabilities[offset..offset + n_classes].iter_mut().for_each(|value| *value /= node.n_rows as f32);
                 return None;
             };
@@ -122,9 +114,7 @@ pub struct ClassifierForest {
 
 impl ClassifierForest {
     pub(crate) fn validate_loaded(&self, encoded_features: usize) -> Result<(), ForestError> {
-        if self.trees.is_empty() || self.n_classes < 2 {
-            return Err(ForestError::new("saved classifier dimensions are invalid"));
-        }
+        if self.trees.is_empty() || self.n_classes < 2 { return Err(ForestError::new("saved classifier dimensions are invalid")); }
         if self.n_features != encoded_features || self.feature_importances.len() != encoded_features {
             return Err(ForestError::new("saved classifier feature dimensions are inconsistent"));
         }
@@ -140,30 +130,30 @@ impl ClassifierForest {
                 if !node.cut_val.is_finite()
                     || node.is_leaf() && node.value as usize >= leaves
                     || !node.is_leaf() && (node.feature() >= encoded_features || node.child as usize + 1 >= tree.nodes.len())
-                {
-                    return Err(ForestError::new("saved classifier contains an invalid node index"));
-                }
+                { return Err(ForestError::new("saved classifier contains an invalid node index")); }
             }
         }
         Ok(())
     }
 
-    fn trees_per_batch(&self) -> usize {
-        trees_per_batch(&self.trees)
-    }
+    fn trees_per_batch(&self) -> usize { trees_per_batch(&self.trees) }
 
     fn class_index(probabilities: &[f32]) -> u32 {
         probabilities.iter().enumerate().reduce(|best, item| if item.1 > best.1 { item } else { best }).unwrap().0 as u32
     }
 
     pub fn fit(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
-        cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
+        x: ArrayView2<'_, u32>,
+        projections: &Projections,
+        y: ArrayView1<'_, u32>,
+        n_classes: usize,
+        cutoff_values: &[f32],
+        cutoff_offsets: &[usize],
+        missing_ranks: &[u32],
+        config: &Config,
     ) -> Result<Self, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
-        if n_classes < 2 {
-            return Err(ForestError::new("classification requires at least two classes"));
-        }
+        if n_classes < 2 { return Err(ForestError::new("classification requires at least two classes")); }
         if y.iter().any(|&class| class as usize >= n_classes) {
             return Err(ForestError::new("targets contain a class outside 0..n_classes"));
         }
@@ -177,8 +167,15 @@ impl ClassifierForest {
 
     #[allow(clippy::too_many_arguments)]
     pub fn fit_on_tracking(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
-        cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, tracking_indices: &[usize],
+        x: ArrayView2<'_, u32>,
+        projections: &Projections,
+        y: ArrayView1<'_, u32>,
+        n_classes: usize,
+        cutoff_values: &[f32],
+        cutoff_offsets: &[usize],
+        missing_ranks: &[u32],
+        config: &Config,
+        tracking_indices: &[usize],
     ) -> Result<Self, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         if n_classes < 2 || y.iter().any(|&class| class as usize >= n_classes) {
@@ -194,8 +191,15 @@ impl ClassifierForest {
 
     #[allow(clippy::too_many_arguments)]
     pub fn fit_batch(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
-        cutoff_offsets: &[usize], missing_ranks: &[u32], configs: &[Config], oob_rows: Option<usize>,
+        x: ArrayView2<'_, u32>,
+        projections: &Projections,
+        y: ArrayView1<'_, u32>,
+        n_classes: usize,
+        cutoff_values: &[f32],
+        cutoff_offsets: &[usize],
+        missing_ranks: &[u32],
+        configs: &[Config],
+        oob_rows: Option<usize>,
     ) -> Result<Vec<Self>, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         validate_batch(configs, oob_rows)?;
@@ -219,8 +223,15 @@ impl ClassifierForest {
     }
 
     fn fit_fixed(
-        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        missing_ranks: &[u32], config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
+        x: TrainingData<'_>,
+        y: ArrayView1<'_, u32>,
+        n_classes: usize,
+        cutoff_values: &[f32],
+        cutoff_offsets: &[usize],
+        missing_ranks: &[u32],
+        config: &Config,
+        oob_row_override: Option<usize>,
+        tracking_rows: Option<&[usize]>,
     ) -> Result<Self, ForestError> {
         let built: Vec<_> = tree_seeds(config)
             .into_par_iter()
@@ -270,9 +281,7 @@ impl ClassifierForest {
     pub fn predict(&self, x: ArrayView2<'_, f32>) -> Result<Vec<u32>, ForestError> {
         validate_prediction_data(x, self.n_features)?;
         let mut predictions = vec![0; x.nrows()];
-        if x.nrows() == 0 {
-            return Ok(predictions);
-        }
+        if x.nrows() == 0 { return Ok(predictions); }
         let block_rows = row_block_size(x.nrows());
         let trees_per_batch = self.trees_per_batch();
         if let Some(data) = x.as_slice() {
@@ -290,7 +299,8 @@ impl ClassifierForest {
                         .for_each(|(prediction, probabilities)| *prediction = Self::class_index(probabilities));
                 },
             );
-        } else {
+        }
+        else {
             predictions.par_chunks_mut(block_rows).enumerate().for_each_init(
                 || vec![0.0; block_rows * self.n_classes],
                 |probabilities, (block, predictions)| {
@@ -309,32 +319,14 @@ impl ClassifierForest {
         Ok(predictions)
     }
 
-    pub fn n_features(&self) -> usize {
-        self.n_features
-    }
-    pub fn n_trees(&self) -> usize {
-        self.trees.len()
-    }
+    pub fn n_features(&self) -> usize { self.n_features }
+    pub fn n_trees(&self) -> usize { self.trees.len() }
 
-    pub fn tree_structures(&self) -> Vec<(usize, usize, usize)> {
-        self.trees.iter().map(ClassTree::structure).collect()
-    }
-    pub fn n_classes(&self) -> usize {
-        self.n_classes
-    }
-    pub fn prediction_trees_per_batch(&self) -> usize {
-        self.trees_per_batch()
-    }
-    pub fn feature_importances(&self) -> &[f32] {
-        &self.feature_importances
-    }
-    pub fn oob_decision(&self) -> Option<&[f32]> {
-        self.oob_decision.as_deref()
-    }
-    pub fn oob_counts(&self) -> Option<&[u32]> {
-        self.oob_counts.as_deref()
-    }
-    pub fn oob_indices(&self) -> Option<&[usize]> {
-        self.oob_indices.as_deref()
-    }
+    pub fn tree_structures(&self) -> Vec<(usize, usize, usize)> { self.trees.iter().map(ClassTree::structure).collect() }
+    pub fn n_classes(&self) -> usize { self.n_classes }
+    pub fn prediction_trees_per_batch(&self) -> usize { self.trees_per_batch() }
+    pub fn feature_importances(&self) -> &[f32] { &self.feature_importances }
+    pub fn oob_decision(&self) -> Option<&[f32]> { self.oob_decision.as_deref() }
+    pub fn oob_counts(&self) -> Option<&[u32]> { self.oob_counts.as_deref() }
+    pub fn oob_indices(&self) -> Option<&[usize]> { self.oob_indices.as_deref() }
 }
