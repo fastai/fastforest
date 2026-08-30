@@ -23,7 +23,7 @@ def _ensure_hook():
     except ImportError as error: raise ImportError("reloadlib needs the maturin-import-hook package (pip install maturin-import-hook)") from error
     if not any(type(finder).__module__.startswith("maturin_import_hook") for finder in sys.meta_path):
         from maturin_import_hook.settings import MaturinSettings
-        maturin_import_hook.install(settings=MaturinSettings(profile="play", quiet=True))
+        maturin_import_hook.install(settings=MaturinSettings(profile="release", quiet=True))
 
 def _dep_order(pkg):
     "Names of `pkg`'s imported Python submodules, each after every submodule it imports."

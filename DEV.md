@@ -118,12 +118,12 @@ pytest -q
 chkstyle python/fastforest tests tools
 ```
 
-Use the `play` profile for development builds and research passes. It matches the release optimization settings, enables incremental compilation, and keeps symbols and debug info (`strip = false`, `debug = true`), so a fit loop in the kernel profiles directly with macOS `sample <kernel-pid> 10` and frames resolve without any dSYM step. Use `--profile debugging` for an unoptimized, checked build. Shipped wheels use the release profile, which still strips.
+The default `release` profile is the development and research build: optimized, incremental, and retaining symbols and debug info, so a fit loop in the kernel profiles directly with macOS `sample <kernel-pid> 10` and frames resolve without any dSYM step. Use `--profile debugging` for an unoptimized, checked build. CI ships the `dist` profile, which enables full LTO with one codegen unit, disables incremental compilation, and strips the result.
 
 For performance measurements:
 
 ```bash
-maturin develop --profile play
+maturin develop --release
 python tools/bench.py --rows 60000 --cols 50 --trees 100
 ```
 
