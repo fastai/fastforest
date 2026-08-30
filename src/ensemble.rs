@@ -32,13 +32,8 @@ pub(crate) type BuiltTree<T> = (T, Option<Vec<bool>>, Vec<f32>);
 pub(crate) type AssembledForest<T> = (Vec<T>, Vec<f32>, Option<Vec<f32>>, Option<Vec<u32>>, Option<Vec<usize>>);
 
 pub(crate) fn assemble_forest<T, N>(
-    built: Vec<BuiltTree<T>>,
-    n_features: usize,
-    outputs: usize,
-    oob_indices: Option<Vec<usize>>,
-    track_oob: bool,
-    mut add_oob: impl FnMut(&T, usize, &mut [f32]),
-    mut into_native: impl FnMut(T) -> N,
+    built: Vec<BuiltTree<T>>, n_features: usize, outputs: usize, oob_indices: Option<Vec<usize>>, track_oob: bool,
+    mut add_oob: impl FnMut(&T, usize, &mut [f32]), mut into_native: impl FnMut(T) -> N,
 ) -> AssembledForest<N> {
     let mut trees = Vec::with_capacity(built.len());
     let mut values = oob_indices.as_ref().map(|indices| vec![0.0; indices.len() * outputs]);
@@ -62,9 +57,7 @@ pub(crate) fn assemble_forest<T, N>(
 }
 
 pub(crate) fn combined_oob(
-    left: Option<(&[f32], &[u32])>,
-    right: Option<(&[f32], &[u32])>,
-    outputs: usize,
+    left: Option<(&[f32], &[u32])>, right: Option<(&[f32], &[u32])>, outputs: usize,
 ) -> Result<(Option<Vec<f32>>, Option<Vec<u32>>), ForestError> {
     match (left, right) {
         (Some((left, left_counts)), Some((right, right_counts))) => {

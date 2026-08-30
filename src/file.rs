@@ -96,9 +96,7 @@ fn headers(path: &Path) -> Result<Vec<String>, ForestError> {
 }
 
 fn predictor_layout(
-    names: &[String],
-    target: usize,
-    options: &FileFitOptions,
+    names: &[String], target: usize, options: &FileFitOptions,
 ) -> Result<(Vec<usize>, Vec<String>, ModelMetadata, Vec<(usize, String)>), ForestError> {
     let sources: Vec<_> = (0..names.len()).filter(|&index| index != target).collect();
     let predictor_names: Vec<_> = sources.iter().map(|&index| names[index].clone()).collect();
@@ -139,11 +137,7 @@ fn target_sample_and_rows(path: &Path, target: usize, seed: Option<u64>) -> Resu
 }
 
 fn selected_csv_rows(
-    path: &Path,
-    selected: &[usize],
-    sources: &[usize],
-    target: usize,
-    names: &[String],
+    path: &Path, selected: &[usize], sources: &[usize], target: usize, names: &[String],
 ) -> Result<(RecordBatch, Vec<String>), ForestError> {
     let mut selected = selected.to_vec();
     selected.sort_unstable();
@@ -190,11 +184,7 @@ fn fit_config(options: &FileFitOptions, replacement: bool, n_trees: usize, sampl
 }
 
 fn fit_sampled(
-    predictors: &RecordBatch,
-    targets: &[Option<SavedValue>],
-    total_rows: usize,
-    options: &FileFitOptions,
-    metadata: ModelMetadata,
+    predictors: &RecordBatch, targets: &[Option<SavedValue>], total_rows: usize, options: &FileFitOptions, metadata: ModelMetadata,
     dates: Vec<(usize, String)>,
 ) -> Result<SavedModel, ForestError> {
     let replacement = options.resolved_replacement(total_rows);
@@ -328,10 +318,7 @@ pub fn fit_csv(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Saved
 }
 
 fn prediction_columns(
-    path: &Path,
-    names: &[String],
-    batch_size: usize,
-    mut predict: impl FnMut(RecordBatch) -> Result<(), ForestError>,
+    path: &Path, names: &[String], batch_size: usize, mut predict: impl FnMut(RecordBatch) -> Result<(), ForestError>,
 ) -> Result<(), ForestError> {
     if batch_size == 0 { return Err(ForestError::new("batch_size must be greater than zero")); }
     let mut reader = csv::Reader::from_path(path).map_err(|error| file_error("could not open CSV", error))?;
@@ -375,11 +362,7 @@ fn class_text(value: &SavedValue) -> String {
 }
 
 pub fn predict_csv(
-    model: &SavedModel,
-    input: impl AsRef<Path>,
-    output: impl AsRef<Path>,
-    batch_size: usize,
-    proba: bool,
+    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
 ) -> Result<(), ForestError> {
     let input = input.as_ref();
     let output = output.as_ref();
@@ -566,11 +549,7 @@ fn arrow_output_writer(path: &Path, schema: Arc<Schema>) -> Result<FileWriter<Fi
 }
 
 pub fn predict_arrow(
-    model: &SavedModel,
-    input: impl AsRef<Path>,
-    output: impl AsRef<Path>,
-    batch_size: usize,
-    proba: bool,
+    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
 ) -> Result<(), ForestError> {
     if batch_size == 0 { return Err(ForestError::new("batch_size must be greater than zero")); }
     let input = input.as_ref();
@@ -631,11 +610,7 @@ pub fn fit_file(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Save
 }
 
 pub fn predict_file(
-    model: &SavedModel,
-    input: impl AsRef<Path>,
-    output: impl AsRef<Path>,
-    batch_size: usize,
-    proba: bool,
+    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
 ) -> Result<(), ForestError> {
     let input = input.as_ref();
     let output = output.as_ref();

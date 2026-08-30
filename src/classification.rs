@@ -65,14 +65,8 @@ impl TrainingClassTree {
     }
 
     fn build(
-        x: TrainingData<'_>,
-        y: ArrayView1<'_, u32>,
-        n_classes: usize,
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
-        seed: u64,
-        track_in_bag: bool,
+        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
+        seed: u64, track_in_bag: bool,
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let (mut rows, in_bag) = sampled_rows_with_mask(x.n_rows(), config, &mut rng, track_in_bag);
@@ -143,14 +137,8 @@ impl ClassifierForest {
     }
 
     pub fn fit(
-        x: ArrayView2<'_, u32>,
-        projections: &Projections,
-        y: ArrayView1<'_, u32>,
-        n_classes: usize,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
+        cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
     ) -> Result<Self, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         if n_classes < 2 { return Err(ForestError::new("classification requires at least two classes")); }
@@ -167,15 +155,8 @@ impl ClassifierForest {
 
     #[allow(clippy::too_many_arguments)]
     pub fn fit_on_tracking(
-        x: ArrayView2<'_, u32>,
-        projections: &Projections,
-        y: ArrayView1<'_, u32>,
-        n_classes: usize,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
-        tracking_indices: &[usize],
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
+        cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, tracking_indices: &[usize],
     ) -> Result<Self, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         if n_classes < 2 || y.iter().any(|&class| class as usize >= n_classes) {
@@ -191,15 +172,8 @@ impl ClassifierForest {
 
     #[allow(clippy::too_many_arguments)]
     pub fn fit_batch(
-        x: ArrayView2<'_, u32>,
-        projections: &Projections,
-        y: ArrayView1<'_, u32>,
-        n_classes: usize,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        configs: &[Config],
-        oob_rows: Option<usize>,
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
+        cutoff_offsets: &[usize], missing_ranks: &[u32], configs: &[Config], oob_rows: Option<usize>,
     ) -> Result<Vec<Self>, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         validate_batch(configs, oob_rows)?;
@@ -223,15 +197,8 @@ impl ClassifierForest {
     }
 
     fn fit_fixed(
-        x: TrainingData<'_>,
-        y: ArrayView1<'_, u32>,
-        n_classes: usize,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
-        oob_row_override: Option<usize>,
-        tracking_rows: Option<&[usize]>,
+        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
     ) -> Result<Self, ForestError> {
         let built: Vec<_> = tree_seeds(config)
             .into_par_iter()

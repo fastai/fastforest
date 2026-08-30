@@ -509,10 +509,7 @@ fn bundle_prefix(names: &[String]) -> String {
 }
 
 fn automatic_bundles(
-    columns: &[RawColumn],
-    names: &[String],
-    excluded: &[bool],
-    seed: Option<u64>,
+    columns: &[RawColumn], names: &[String], excluded: &[bool], seed: Option<u64>,
 ) -> Vec<(String, Vec<usize>, Vec<String>)> {
     let rows = columns[0].len();
     let sample = crate::forest::uniform_sample_indices(rows, rows.min(10_000), seed, 0xb3e7_68d1);
@@ -569,9 +566,7 @@ fn automatic_bundles(
 }
 
 fn input_layout(
-    names: &[String],
-    bundles: &[(String, Vec<usize>, Vec<String>)],
-    date_parts: &[(usize, String, u8, String)],
+    names: &[String], bundles: &[(String, Vec<usize>, Vec<String>)], date_parts: &[(usize, String, u8, String)],
 ) -> Result<(Vec<InputColumn>, Vec<String>), ForestError> {
     let mut grouped = vec![false; names.len()];
     for (index, _, _, _) in date_parts {
@@ -757,9 +752,7 @@ fn date_value(value: NaiveDateTime, part: u8) -> f32 {
 }
 
 fn arrange_columns<T: Clone>(
-    columns: Vec<RawColumn>,
-    input_columns: &[InputColumn],
-    logical_names: &[String],
+    columns: Vec<RawColumn>, input_columns: &[InputColumn], logical_names: &[String],
     mut prepare_date: impl FnMut(&RawColumn, &str, &str) -> Result<T, ForestError>,
 ) -> Result<Vec<ArrangedColumn<T>>, ForestError> {
     let mut dates = HashMap::new();
@@ -785,9 +778,7 @@ fn arrange_columns<T: Clone>(
 }
 
 fn arrange_training_columns(
-    columns: Vec<RawColumn>,
-    input_columns: &[InputColumn],
-    logical_names: &[String],
+    columns: Vec<RawColumn>, input_columns: &[InputColumn], logical_names: &[String],
 ) -> Result<Vec<ArrangedColumn<DateBase>>, ForestError> {
     arrange_columns(columns, input_columns, logical_names, |raw, format, name| {
         let parsed = parse_dates(raw, format, name)?;
@@ -798,9 +789,7 @@ fn arrange_training_columns(
 }
 
 fn arrange_inference_columns(
-    columns: Vec<RawColumn>,
-    input_columns: &[InputColumn],
-    logical_names: &[String],
+    columns: Vec<RawColumn>, input_columns: &[InputColumn], logical_names: &[String],
 ) -> Result<Vec<RawColumn>, ForestError> {
     arrange_columns(columns, input_columns, logical_names, parse_dates).map(|columns| {
         columns
@@ -1198,14 +1187,7 @@ impl ClassProfiles {
 }
 
 fn class_agrees(
-    codes: &FitCodes,
-    classes: &[u32],
-    levels: usize,
-    k: usize,
-    floor: u32,
-    early: &[usize],
-    later: &[usize],
-    components: usize,
+    codes: &FitCodes, classes: &[u32], levels: usize, k: usize, floor: u32, early: &[usize], later: &[usize], components: usize,
     minimum: f32,
 ) -> Vec<bool> {
     if minimum == 0.0 { return vec![true; components]; }
@@ -1233,12 +1215,7 @@ fn class_agrees(
 }
 
 fn regression_stats(
-    codes: &FitCodes,
-    counts: &[u32],
-    y: &[f32],
-    floor: u32,
-    agreement: Option<(&[usize], &[usize], u32)>,
-    options: &EncoderOptions,
+    codes: &FitCodes, counts: &[u32], y: &[f32], floor: u32, agreement: Option<(&[usize], &[usize], u32)>, options: &EncoderOptions,
 ) -> (Vec<Vec<f32>>, Vec<f32>, Vec<bool>) {
     let prior = y.iter().sum::<f32>() / y.len().max(1) as f32;
     let levels = counts.len();
@@ -1295,11 +1272,8 @@ pub struct TrendFit {
 }
 
 fn trend_fit(
-    target: &Option<StatTarget<'_>>,
-    date_order: &Option<(Arc<[u32]>, Arc<[NaiveDateTime]>, usize)>,
-    explicit_position: Option<usize>,
-    fitted: &[FittedColumn],
-    rows: usize,
+    target: &Option<StatTarget<'_>>, date_order: &Option<(Arc<[u32]>, Arc<[NaiveDateTime]>, usize)>, explicit_position: Option<usize>,
+    fitted: &[FittedColumn], rows: usize,
 ) -> Result<Option<(usize, f64, f64, Vec<f32>)>, ForestError> {
     let Some(StatTarget::Regression(y)) = target else { return Err(invalid("detrend requires a regression target")); };
     let (position, axis): (usize, Vec<f64>) = match (date_order, explicit_position) {
@@ -1348,12 +1322,7 @@ fn trend_fit(
 }
 
 fn class_stats(
-    codes: &FitCodes,
-    counts: &[u32],
-    classes: &[u32],
-    k: usize,
-    floor: u32,
-    agreement: Option<(&[usize], &[usize], u32)>,
+    codes: &FitCodes, counts: &[u32], classes: &[u32], k: usize, floor: u32, agreement: Option<(&[usize], &[usize], u32)>,
     options: &EncoderOptions,
 ) -> (Vec<Vec<f32>>, Vec<f32>, Vec<bool>) {
     let components = options.stat_components.min(k.saturating_sub(1));
@@ -1372,10 +1341,7 @@ fn class_stats(
 }
 
 fn derived_features(
-    fitted: &mut FittedColumn,
-    target: Option<&StatTarget<'_>>,
-    agreement_rows: Option<(&[usize], &[usize])>,
-    options: &EncoderOptions,
+    fitted: &mut FittedColumn, target: Option<&StatTarget<'_>>, agreement_rows: Option<(&[usize], &[usize])>, options: &EncoderOptions,
 ) {
     let levels = fitted.column.cardinality() + usize::from(fitted.column.had_missing);
     let Some(codes) = fitted.training_codes() else { return };
@@ -1626,13 +1592,8 @@ fn append_codes(codes: &FitCodes, physical: &mut Vec<Vec<u32>>, bases: &mut Hash
 
 impl Encoder {
     pub fn fit_arrow(
-        batch: &RecordBatch,
-        markers: &[SavedValue],
-        allow_new_missing: bool,
-        date_columns: Vec<(usize, String)>,
-        seed: Option<u64>,
-        stats: &EncoderOptions,
-        context: StatContext<'_>,
+        batch: &RecordBatch, markers: &[SavedValue], allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
+        stats: &EncoderOptions, context: StatContext<'_>,
     ) -> Result<(Self, Array2<u32>, Option<TrendFit>), ForestError> {
         let names = batch.schema().fields().iter().map(|field| field.name().clone()).collect();
         let date_indices: Vec<_> = date_columns.iter().map(|(index, _)| *index).collect();
@@ -1730,13 +1691,8 @@ impl Encoder {
     }
 
     pub(crate) fn fit(
-        columns: Vec<RawColumn>,
-        names: Vec<String>,
-        allow_new_missing: bool,
-        date_columns: Vec<(usize, String)>,
-        seed: Option<u64>,
-        stats: &EncoderOptions,
-        context: StatContext<'_>,
+        columns: Vec<RawColumn>, names: Vec<String>, allow_new_missing: bool, date_columns: Vec<(usize, String)>, seed: Option<u64>,
+        stats: &EncoderOptions, context: StatContext<'_>,
     ) -> Result<(Self, Array2<u32>, Option<TrendFit>), ForestError> {
         let StatContext { target, order_column, agreement_sample_rows, detrend } = context;
         stats.validate()?;

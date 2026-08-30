@@ -38,10 +38,7 @@ impl<C, P> TreeNode<C, P> {
 }
 
 pub(crate) fn leaf_index<C: Copy + PartialEq, P>(
-    nodes: &[TreeNode<C, P>],
-    value: impl Fn(usize) -> C,
-    missing: impl Fn(usize, C) -> bool,
-    ordered_right: impl Fn(C, C) -> bool,
+    nodes: &[TreeNode<C, P>], value: impl Fn(usize) -> C, missing: impl Fn(usize, C) -> bool, ordered_right: impl Fn(C, C) -> bool,
 ) -> usize {
     let mut node_idx = 0;
     loop {
@@ -78,12 +75,7 @@ pub(crate) fn native_node<P>(node: TreeNode<u32, P>, cutoff_values: &[f32], cuto
 }
 
 pub(crate) fn split_children<C: Copy, P: Default>(
-    nodes: &mut Vec<TreeNode<C, P>>,
-    node_idx: usize,
-    cut_col: usize,
-    cut_val: C,
-    equality: bool,
-    missing_right: bool,
+    nodes: &mut Vec<TreeNode<C, P>>, node_idx: usize, cut_col: usize, cut_val: C, equality: bool, missing_right: bool,
 ) -> (usize, usize)
 where
     C: Default,
@@ -100,11 +92,7 @@ where
 }
 
 pub(crate) fn grow_tree<P: Default + Copy>(
-    x: TrainingData<'_>,
-    rows: &mut [u32],
-    nodes: &mut Vec<TreeNode<u32, P>>,
-    importance: &mut [f32],
-    missing_ranks: &[u32],
+    x: TrainingData<'_>, rows: &mut [u32], nodes: &mut Vec<TreeNode<u32, P>>, importance: &mut [f32], missing_ranks: &[u32],
     mut visit: impl FnMut(NodeRows<'_>, &mut TreeNode<u32, P>) -> Option<Branch>,
 ) {
     let mut work = vec![(0, 0, rows.len())];

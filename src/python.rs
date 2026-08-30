@@ -20,10 +20,7 @@ fn prediction_block_rows(rows: usize, features: usize, outputs: usize) -> usize 
 }
 
 fn predict_encoded<T>(
-    encoder: &Encoder,
-    batch: &RecordBatch,
-    markers: &[SavedValue],
-    outputs: usize,
+    encoder: &Encoder, batch: &RecordBatch, markers: &[SavedValue], outputs: usize,
     predict: impl Fn(ArrayView2<'_, f32>) -> Result<Vec<T>, ForestError>,
 ) -> Result<Vec<T>, ForestError> {
     let rows = batch.num_rows();
@@ -42,12 +39,7 @@ fn predict_encoded<T>(
 #[pyo3(signature = (n_rows, n_trees, bootstrap_fraction, bootstrap_max, replacement, oob, output_dimensions))]
 #[allow(clippy::too_many_arguments)]
 fn py_fit_plan(
-    n_rows: usize,
-    n_trees: Option<usize>,
-    bootstrap_fraction: Option<f32>,
-    bootstrap_max: Option<usize>,
-    replacement: bool,
-    oob: bool,
+    n_rows: usize, n_trees: Option<usize>, bootstrap_fraction: Option<f32>, bootstrap_max: Option<usize>, replacement: bool, oob: bool,
     output_dimensions: usize,
 ) -> PyResult<(usize, usize, usize)> {
     let plan = plan_fit(n_rows, n_trees, bootstrap_fraction, bootstrap_max, replacement, oob, output_dimensions).map_err(value_error)?;
@@ -57,11 +49,7 @@ fn py_fit_plan(
 #[pyfunction(name = "_sample_indices")]
 #[pyo3(signature = (n_rows, sample_rows, seed=None, stream=0))]
 fn py_sample_indices<'py>(
-    py: Python<'py>,
-    n_rows: usize,
-    sample_rows: usize,
-    seed: Option<u64>,
-    stream: u64,
+    py: Python<'py>, n_rows: usize, sample_rows: usize, seed: Option<u64>, stream: u64,
 ) -> Bound<'py, PyArray1<usize>> { crate::forest::uniform_sample_indices(n_rows, sample_rows.min(n_rows), seed, stream).into_pyarray(py) }
 
 #[pyfunction(name = "_defaults")]
@@ -132,10 +120,7 @@ fn py_save_regression(path: String, encoder: PyRef<'_, PyEncoder>, forest: PyRef
 
 #[pyfunction(name = "_save_classification")]
 fn py_save_classification(
-    path: String,
-    encoder: PyRef<'_, PyEncoder>,
-    forest: PyRef<'_, PyClassifierForest>,
-    metadata: PySavedMetadata,
+    path: String, encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyClassifierForest>, metadata: PySavedMetadata,
     classes: Vec<(u8, String)>,
 ) -> PyResult<()> {
     SavedModel::classification(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata), saved_values(classes))
@@ -146,12 +131,7 @@ fn py_save_classification(
 #[pyfunction(name = "_predict_regression_file")]
 #[pyo3(signature = (encoder, forest, metadata, input, output, batch_size=65_536))]
 fn py_predict_regression_file(
-    encoder: PyRef<'_, PyEncoder>,
-    forest: PyRef<'_, PyForest>,
-    metadata: PySavedMetadata,
-    input: String,
-    output: String,
-    batch_size: usize,
+    encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyForest>, metadata: PySavedMetadata, input: String, output: String, batch_size: usize,
 ) -> PyResult<()> {
     let model = SavedModel::regression(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata));
     crate::predict_file(&model, input, output, batch_size, false).map_err(value_error)
@@ -161,14 +141,8 @@ fn py_predict_regression_file(
 #[pyo3(signature = (encoder, forest, metadata, classes, input, output, batch_size=65_536, proba=false))]
 #[allow(clippy::too_many_arguments)]
 fn py_predict_classification_file(
-    encoder: PyRef<'_, PyEncoder>,
-    forest: PyRef<'_, PyClassifierForest>,
-    metadata: PySavedMetadata,
-    classes: Vec<(u8, String)>,
-    input: String,
-    output: String,
-    batch_size: usize,
-    proba: bool,
+    encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyClassifierForest>, metadata: PySavedMetadata, classes: Vec<(u8, String)>,
+    input: String, output: String, batch_size: usize, proba: bool,
 ) -> PyResult<()> {
     let model = SavedModel::classification(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata), saved_values(classes));
     crate::predict_file(&model, input, output, batch_size, proba).map_err(value_error)
@@ -176,10 +150,7 @@ fn py_predict_classification_file(
 
 #[pyfunction(name = "_compile_regression")]
 fn py_compile_regression(
-    encoder: PyRef<'_, PyEncoder>,
-    forest: PyRef<'_, PyForest>,
-    metadata: PySavedMetadata,
-    output: String,
+    encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyForest>, metadata: PySavedMetadata, output: String,
 ) -> PyResult<()> {
     crate::compile_model(&SavedModel::regression(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata)), output)
         .map_err(value_error)
@@ -187,10 +158,7 @@ fn py_compile_regression(
 
 #[pyfunction(name = "_compile_classification")]
 fn py_compile_classification(
-    encoder: PyRef<'_, PyEncoder>,
-    forest: PyRef<'_, PyClassifierForest>,
-    metadata: PySavedMetadata,
-    classes: Vec<(u8, String)>,
+    encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyClassifierForest>, metadata: PySavedMetadata, classes: Vec<(u8, String)>,
     output: String,
 ) -> PyResult<()> {
     crate::compile_model(
@@ -276,22 +244,10 @@ impl PyEncoder {
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
     fn fit<'py>(
-        py: Python<'py>,
-        batch: PyArrowType<RecordBatch>,
-        markers: Vec<(u8, String)>,
-        allow_new_missing: bool,
-        date_columns: Vec<(usize, String)>,
-        seed: Option<u64>,
-        y: Option<PyReadonlyArray1<'_, f32>>,
-        y_class: Option<(PyReadonlyArray1<'_, u32>, usize)>,
-        target_statistics: bool,
-        min_rows_per_level: usize,
-        min_stat_agreement: f32,
-        stat_components: usize,
-        frequency: bool,
-        natural_sort: bool,
-        order_column: Option<usize>,
-        agreement_sample_rows: usize,
+        py: Python<'py>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>, allow_new_missing: bool,
+        date_columns: Vec<(usize, String)>, seed: Option<u64>, y: Option<PyReadonlyArray1<'_, f32>>,
+        y_class: Option<(PyReadonlyArray1<'_, u32>, usize)>, target_statistics: bool, min_rows_per_level: usize, min_stat_agreement: f32,
+        stat_components: usize, frequency: bool, natural_sort: bool, order_column: Option<usize>, agreement_sample_rows: usize,
         detrend: bool,
     ) -> PyResult<(Self, Bound<'py, PyArray2<u32>>, Option<(usize, f64, f64, Bound<'py, PyArray1<f32>>)>)> {
         let markers = saved_values(markers);
@@ -322,8 +278,7 @@ impl PyEncoder {
 
     #[allow(clippy::type_complexity)]
     fn training_layout<'py>(
-        &self,
-        py: Python<'py>,
+        &self, py: Python<'py>,
     ) -> PyResult<(
         Bound<'py, PyArray1<f32>>,
         Bound<'py, PyArray1<usize>>,
@@ -348,20 +303,14 @@ impl PyEncoder {
     #[staticmethod]
     #[pyo3(signature = (batch, markers, seed=None))]
     fn detect_dates(
-        py: Python<'_>,
-        batch: PyArrowType<RecordBatch>,
-        markers: Vec<(u8, String)>,
-        seed: Option<u64>,
+        py: Python<'_>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>, seed: Option<u64>,
     ) -> PyResult<Vec<(usize, String)>> {
         let markers = saved_values(markers);
         py.detach(|| detect_dates(&batch.0, &markers, seed)).map_err(value_error)
     }
 
     fn transform<'py>(
-        &self,
-        py: Python<'py>,
-        batch: PyArrowType<RecordBatch>,
-        markers: Vec<(u8, String)>,
+        &self, py: Python<'py>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
         let markers = saved_values(markers);
         let transformed = py.detach(|| self.inner.transform_arrow(&batch.0, &markers)).map_err(value_error)?;
@@ -392,10 +341,7 @@ impl PyEncoder {
     }
 
     fn date_values<'py>(
-        &self,
-        py: Python<'py>,
-        batch: PyArrowType<RecordBatch>,
-        markers: Vec<(u8, String)>,
+        &self, py: Python<'py>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
         let markers = saved_values(markers);
         let values = py.detach(|| self.inner.date_values_arrow(&batch.0, &markers)).map_err(value_error)?;
@@ -466,13 +412,8 @@ fn native_layout<'a>(layout: &'a PyLayout<'_>) -> PyResult<NativeLayout<'a>> {
 impl PyForest {
     #[staticmethod]
     fn fit(
-        py: Python<'_>,
-        x: PyReadonlyArray2<'_, u32>,
-        y: PyReadonlyArray1<'_, f32>,
-        layout: PyLayout<'_>,
-        config: PyBatchConfig,
-        tracking_indices: Option<PyReadonlyArray1<'_, usize>>,
-        trend: Option<(usize, f64, f64)>,
+        py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, f32>, layout: PyLayout<'_>, config: PyBatchConfig,
+        tracking_indices: Option<PyReadonlyArray1<'_, usize>>, trend: Option<(usize, f64, f64)>,
     ) -> PyResult<Self> {
         let config = config.into_config()?;
         let x = x.as_array();
@@ -498,11 +439,7 @@ impl PyForest {
 
     #[staticmethod]
     fn fit_batch(
-        py: Python<'_>,
-        x: PyReadonlyArray2<'_, u32>,
-        y: PyReadonlyArray1<'_, f32>,
-        layout: PyLayout<'_>,
-        configs: Vec<PyBatchConfig>,
+        py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, f32>, layout: PyLayout<'_>, configs: Vec<PyBatchConfig>,
         oob_rows: Option<usize>,
     ) -> PyResult<Vec<Py<PyForest>>> {
         let configs = configs.into_iter().map(PyBatchConfig::into_config).collect::<PyResult<Vec<_>>>()?;
@@ -533,11 +470,7 @@ impl PyForest {
     }
 
     fn predict_encoded<'py>(
-        &self,
-        py: Python<'py>,
-        encoder: PyRef<'_, PyEncoder>,
-        batch: PyArrowType<RecordBatch>,
-        markers: Vec<(u8, String)>,
+        &self, py: Python<'py>, encoder: PyRef<'_, PyEncoder>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
         let markers = saved_values(markers);
         let encoder_inner: &Encoder = &encoder.inner;
@@ -604,13 +537,8 @@ struct PyClassifierForest { inner: ClassifierForest }
 impl PyClassifierForest {
     #[staticmethod]
     fn fit(
-        py: Python<'_>,
-        x: PyReadonlyArray2<'_, u32>,
-        y: PyReadonlyArray1<'_, u32>,
-        n_classes: usize,
-        layout: PyLayout<'_>,
-        config: PyBatchConfig,
-        tracking_indices: Option<PyReadonlyArray1<'_, usize>>,
+        py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, u32>, n_classes: usize, layout: PyLayout<'_>,
+        config: PyBatchConfig, tracking_indices: Option<PyReadonlyArray1<'_, usize>>,
     ) -> PyResult<Self> {
         let config = config.into_config()?;
         let x = x.as_array();
@@ -637,13 +565,8 @@ impl PyClassifierForest {
 
     #[staticmethod]
     fn fit_batch(
-        py: Python<'_>,
-        x: PyReadonlyArray2<'_, u32>,
-        y: PyReadonlyArray1<'_, u32>,
-        n_classes: usize,
-        layout: PyLayout<'_>,
-        configs: Vec<PyBatchConfig>,
-        oob_rows: Option<usize>,
+        py: Python<'_>, x: PyReadonlyArray2<'_, u32>, y: PyReadonlyArray1<'_, u32>, n_classes: usize, layout: PyLayout<'_>,
+        configs: Vec<PyBatchConfig>, oob_rows: Option<usize>,
     ) -> PyResult<Vec<Py<PyClassifierForest>>> {
         let configs = configs.into_iter().map(PyBatchConfig::into_config).collect::<PyResult<Vec<_>>>()?;
         let x = x.as_array();
@@ -674,11 +597,7 @@ impl PyClassifierForest {
     }
 
     fn predict_encoded<'py>(
-        &self,
-        py: Python<'py>,
-        encoder: PyRef<'_, PyEncoder>,
-        batch: PyArrowType<RecordBatch>,
-        markers: Vec<(u8, String)>,
+        &self, py: Python<'py>, encoder: PyRef<'_, PyEncoder>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>,
     ) -> PyResult<Bound<'py, PyArray1<u32>>> {
         let markers = saved_values(markers);
         let encoder_inner: &Encoder = &encoder.inner;
@@ -698,11 +617,7 @@ impl PyClassifierForest {
     }
 
     fn predict_proba_encoded<'py>(
-        &self,
-        py: Python<'py>,
-        encoder: PyRef<'_, PyEncoder>,
-        batch: PyArrowType<RecordBatch>,
-        markers: Vec<(u8, String)>,
+        &self, py: Python<'py>, encoder: PyRef<'_, PyEncoder>, batch: PyArrowType<RecordBatch>, markers: Vec<(u8, String)>,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
         let markers = saved_values(markers);
         let encoder_inner: &Encoder = &encoder.inner;

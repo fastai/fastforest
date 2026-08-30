@@ -20,12 +20,7 @@ pub(crate) fn row_block_size(n_rows: usize) -> usize {
 
 #[inline]
 pub(crate) fn add_block_by<T: PredictionTree>(
-    trees: &[T],
-    n_rows: usize,
-    outputs: usize,
-    result: &mut [f32],
-    trees_per_batch: usize,
-    value: impl Fn(usize, usize) -> f32,
+    trees: &[T], n_rows: usize, outputs: usize, result: &mut [f32], trees_per_batch: usize, value: impl Fn(usize, usize) -> f32,
 ) {
     result.fill(0.0);
     for trees in trees.chunks(trees_per_batch) {

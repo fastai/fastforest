@@ -79,15 +79,8 @@ impl ClassSplitScratch {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn find_class_split(
-    x: TrainingData<'_>,
-    y: ArrayView1<'_, u32>,
-    node: NodeRows<'_>,
-    n_classes: usize,
-    config: &Config,
-    cutoff_offsets: &[usize],
-    missing_ranks: &[u32],
-    rng: &mut StdRng,
-    scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, cutoff_offsets: &[usize],
+    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let max_samples = evaluation_rows(node.n_rows, config);
     if x.n_features() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) { return leaf(); }
@@ -97,12 +90,7 @@ pub(crate) fn find_class_split(
 fn leaf() -> ClassSplit { ClassSplit { cut_col: None, cut_val: 0, equality: false, missing_right: false, gain: 0.0 } }
 
 fn evaluation_window(
-    y: ArrayView1<'_, u32>,
-    node: NodeRows<'_>,
-    n_classes: usize,
-    max_samples: usize,
-    rng: &mut StdRng,
-    scratch: &mut ClassSplitScratch,
+    y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, max_samples: usize, rng: &mut StdRng, scratch: &mut ClassSplitScratch,
 ) -> EvaluationWindow {
     let n_rows = node.n_rows.min(max_samples);
     let start = evaluation_start(node, n_rows, rng);
@@ -121,14 +109,8 @@ fn move_class_score(table: &[f64], stride: usize, score: &mut f64, class: usize,
 
 #[allow(clippy::too_many_arguments)]
 fn random_split(
-    x: TrainingData<'_>,
-    y: ArrayView1<'_, u32>,
-    node: NodeRows<'_>,
-    n_classes: usize,
-    config: &Config,
-    missing_ranks: &[u32],
-    rng: &mut StdRng,
-    scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, missing_ranks: &[u32],
+    rng: &mut StdRng, scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let used_n = evaluation_rows(node.n_rows, config);
     let features = sample_features(x.n_features(), config, rng);
@@ -161,12 +143,7 @@ fn random_split(
 }
 
 fn propose_candidates(
-    x: TrainingData<'_>,
-    node: NodeRows<'_>,
-    used_n: usize,
-    features: &[usize],
-    divisor: f32,
-    rng: &mut StdRng,
+    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng,
     scratch: &mut ClassSplitScratch,
 ) {
     scratch.candidates.clear();
@@ -178,15 +155,8 @@ fn propose_candidates(
 
 #[allow(clippy::too_many_arguments)]
 fn histogram_split(
-    x: TrainingData<'_>,
-    y: ArrayView1<'_, u32>,
-    node: NodeRows<'_>,
-    n_classes: usize,
-    config: &Config,
-    cutoff_offsets: &[usize],
-    missing_ranks: &[u32],
-    rng: &mut StdRng,
-    scratch: &mut ClassSplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, u32>, node: NodeRows<'_>, n_classes: usize, config: &Config, cutoff_offsets: &[usize],
+    missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut ClassSplitScratch,
 ) -> ClassSplit {
     let features = sample_features(x.n_features(), config, rng);
     let window = evaluation_window(y, node, n_classes, evaluation_rows(node.n_rows, config), rng, scratch);
@@ -437,16 +407,8 @@ fn histogram_split(
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn consider_candidate(
-    mut candidate: Candidate,
-    left_classes: &[u32],
-    missing_classes: &[u32],
-    window: &EvaluationWindow,
-    score_table: &[f64],
-    score_stride: usize,
-    total_classes: &[u32],
-    class_weights: &[f64],
-    criterion: &mut f32,
-    best: &mut Option<Candidate>,
+    mut candidate: Candidate, left_classes: &[u32], missing_classes: &[u32], window: &EvaluationWindow, score_table: &[f64],
+    score_stride: usize, total_classes: &[u32], class_weights: &[f64], criterion: &mut f32, best: &mut Option<Candidate>,
 ) {
     candidate.missing_right = window.n_rows - candidate.left_count >= candidate.left_count;
     if valid_children(candidate.left_count, window.n_rows) {

@@ -111,12 +111,7 @@ pub struct FitPlan { pub n_trees: usize, pub rows_per_tree: usize, pub pool_rows
 
 #[allow(clippy::too_many_arguments)]
 pub fn plan_fit(
-    n_rows: usize,
-    n_trees: Option<usize>,
-    bootstrap_fraction: Option<f32>,
-    bootstrap_max: Option<usize>,
-    replacement: bool,
-    oob: bool,
+    n_rows: usize, n_trees: Option<usize>, bootstrap_fraction: Option<f32>, bootstrap_max: Option<usize>, replacement: bool, oob: bool,
     output_dimensions: usize,
 ) -> Result<FitPlan, ForestError> {
     if n_rows == 0 { return Err(ForestError::new("X must contain at least one row")); }
@@ -201,12 +196,7 @@ impl TrainingTree {
     }
 
     fn build(
-        x: TrainingData<'_>,
-        y: ArrayView1<'_, f32>,
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
-        seed: u64,
+        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, seed: u64,
         track_in_bag: bool,
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
@@ -266,13 +256,8 @@ impl Forest {
     }
 
     pub fn fit(
-        x: ArrayView2<'_, u32>,
-        projections: &Projections,
-        y: ArrayView1<'_, f32>,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], config: &Config,
     ) -> Result<Self, ForestError> {
         let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         config.validate()?;
@@ -281,14 +266,8 @@ impl Forest {
     }
 
     pub fn fit_on_tracking(
-        x: ArrayView2<'_, u32>,
-        projections: &Projections,
-        y: ArrayView1<'_, f32>,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
-        tracking_indices: &[usize],
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], config: &Config, tracking_indices: &[usize],
     ) -> Result<Self, ForestError> {
         let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         config.validate()?;
@@ -298,14 +277,8 @@ impl Forest {
     }
 
     pub fn fit_batch(
-        x: ArrayView2<'_, u32>,
-        projections: &Projections,
-        y: ArrayView1<'_, f32>,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        configs: &[Config],
-        oob_rows: Option<usize>,
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], configs: &[Config], oob_rows: Option<usize>,
     ) -> Result<Vec<Self>, ForestError> {
         let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         validate_batch(configs, oob_rows)?;
@@ -317,14 +290,8 @@ impl Forest {
     }
 
     fn fit_fixed(
-        x: TrainingData<'_>,
-        y: ArrayView1<'_, f32>,
-        cutoff_values: &[f32],
-        cutoff_offsets: &[usize],
-        missing_ranks: &[u32],
-        config: &Config,
-        oob_row_override: Option<usize>,
-        tracking_rows: Option<&[usize]>,
+        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
     ) -> Result<Self, ForestError> {
         let built: Vec<_> = tree_seeds(config)
             .into_par_iter()
@@ -480,11 +447,7 @@ pub(crate) fn validate_batch(configs: &[Config], oob_rows: Option<usize>) -> Res
 }
 
 pub(crate) fn validate_training_data<'a>(
-    x: ArrayView2<'a, u32>,
-    projections: &'a Projections,
-    y: ArrayView1<'_, f32>,
-    cutoff_values: &[f32],
-    cutoff_offsets: &[usize],
+    x: ArrayView2<'a, u32>, projections: &'a Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
 ) -> Result<TrainingData<'a>, ForestError> {
     let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
     if y.iter().any(|v| !v.is_finite()) { return Err(ForestError::new("targets must all be finite")); }
@@ -492,11 +455,7 @@ pub(crate) fn validate_training_data<'a>(
 }
 
 pub(crate) fn validate_encoded_data<'a>(
-    x: ArrayView2<'a, u32>,
-    projections: &'a Projections,
-    y_len: usize,
-    cutoff_values: &[f32],
-    cutoff_offsets: &[usize],
+    x: ArrayView2<'a, u32>, projections: &'a Projections, y_len: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
 ) -> Result<TrainingData<'a>, ForestError> {
     if x.nrows() == 0 { return Err(ForestError::new("training data must contain at least one row")); }
     if x.nrows() > u32::MAX as usize { return Err(ForestError::new("training data cannot exceed 2^32-1 rows")); }
@@ -538,10 +497,7 @@ pub(crate) fn sample_rows(n_rows: usize, config: &Config, rng: &mut StdRng) -> V
 }
 
 pub(crate) fn sampled_rows_with_mask(
-    n_rows: usize,
-    config: &Config,
-    rng: &mut StdRng,
-    track_in_bag: bool,
+    n_rows: usize, config: &Config, rng: &mut StdRng, track_in_bag: bool,
 ) -> (Vec<u32>, Option<Vec<bool>>) {
     let rows = sample_rows(n_rows, config, rng);
     let in_bag = track_in_bag.then(|| {

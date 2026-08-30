@@ -65,14 +65,8 @@ struct EvaluationWindow {
 }
 
 pub(crate) fn find_split(
-    x: TrainingData<'_>,
-    y: ArrayView1<'_, f32>,
-    node: NodeRows<'_>,
-    config: &Config,
-    cutoff_offsets: &[usize],
-    missing_ranks: &[u32],
-    rng: &mut StdRng,
-    scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
+    rng: &mut StdRng, scratch: &mut SplitScratch,
 ) -> Split {
     let max_samples = evaluation_rows(node.n_rows, config);
     if x.n_features() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) { return leaf(y, node); }
@@ -80,12 +74,7 @@ pub(crate) fn find_split(
 }
 
 fn finish_split(
-    y: ArrayView1<'_, f32>,
-    node: NodeRows<'_>,
-    window: &EvaluationWindow,
-    best: Option<Candidate>,
-    criterion: f32,
-    impurity: f32,
+    y: ArrayView1<'_, f32>, node: NodeRows<'_>, window: &EvaluationWindow, best: Option<Candidate>, criterion: f32, impurity: f32,
 ) -> Split {
     let gain = (criterion - impurity).max(0.0);
     Split {
@@ -121,13 +110,7 @@ pub(crate) fn evaluation_start(node: NodeRows<'_>, n_rows: usize, rng: &mut StdR
 }
 
 pub(crate) fn propose_cutoffs(
-    x: TrainingData<'_>,
-    node: NodeRows<'_>,
-    used_n: usize,
-    features: &[usize],
-    divisor: f32,
-    rng: &mut StdRng,
-    keys: &mut HashSet<u64>,
+    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, keys: &mut HashSet<u64>,
     mut add: impl FnMut(usize, u32),
 ) {
     keys.clear();
@@ -144,11 +127,7 @@ pub(crate) fn propose_cutoffs(
 }
 
 pub(crate) fn dense_layout(
-    x: TrainingData<'_>,
-    features: &[usize],
-    cutoff_offsets: &[usize],
-    dense: &mut Vec<DenseFeature>,
-    lookup: &mut Vec<usize>,
+    x: TrainingData<'_>, features: &[usize], cutoff_offsets: &[usize], dense: &mut Vec<DenseFeature>, lookup: &mut Vec<usize>,
     mut supported: impl FnMut(usize) -> bool,
 ) -> usize {
     dense.clear();
@@ -169,12 +148,7 @@ pub(crate) fn dense_layout(
 }
 
 pub(crate) fn fill_dense_bins(
-    x: TrainingData<'_>,
-    node: NodeRows<'_>,
-    start: usize,
-    n_rows: usize,
-    features: &[DenseFeature],
-    mut add: impl FnMut(usize, usize),
+    x: TrainingData<'_>, node: NodeRows<'_>, start: usize, n_rows: usize, features: &[DenseFeature], mut add: impl FnMut(usize, usize),
 ) {
     let tables = &x.projections.tables;
     if let Some(data) = x.matrix.as_slice() {
@@ -219,12 +193,7 @@ pub(crate) fn supported_equality(value: u32, cardinality: usize, equal: usize, t
 
 #[allow(clippy::too_many_arguments)]
 fn random_split(
-    x: TrainingData<'_>,
-    y: ArrayView1<'_, f32>,
-    node: NodeRows<'_>,
-    config: &Config,
-    missing_ranks: &[u32],
-    rng: &mut StdRng,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, missing_ranks: &[u32], rng: &mut StdRng,
     scratch: &mut SplitScratch,
 ) -> Split {
     let used_n = evaluation_rows(node.n_rows, config);
@@ -252,13 +221,7 @@ fn random_split(
 }
 
 fn propose_candidates(
-    x: TrainingData<'_>,
-    node: NodeRows<'_>,
-    used_n: usize,
-    features: &[usize],
-    divisor: f32,
-    rng: &mut StdRng,
-    scratch: &mut SplitScratch,
+    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, scratch: &mut SplitScratch,
 ) {
     scratch.candidates.clear();
     let (keys, candidates) = (&mut scratch.keys, &mut scratch.candidates);
@@ -268,14 +231,8 @@ fn propose_candidates(
 }
 
 fn histogram_split(
-    x: TrainingData<'_>,
-    y: ArrayView1<'_, f32>,
-    node: NodeRows<'_>,
-    config: &Config,
-    cutoff_offsets: &[usize],
-    missing_ranks: &[u32],
-    rng: &mut StdRng,
-    scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
+    rng: &mut StdRng, scratch: &mut SplitScratch,
 ) -> Split {
     let features = sample_features(x.n_features(), config, rng);
     let window = evaluation_window(y, node, evaluation_rows(node.n_rows, config), rng);
@@ -487,11 +444,7 @@ pub(crate) fn sample_features(n_features: usize, config: &Config, rng: &mut StdR
 
 #[inline(always)]
 fn score_candidate(
-    mut candidate: Candidate,
-    missing_right: bool,
-    window: &EvaluationWindow,
-    config: &Config,
-    criterion: &mut f32,
+    mut candidate: Candidate, missing_right: bool, window: &EvaluationWindow, config: &Config, criterion: &mut f32,
     best: &mut Option<Candidate>,
 ) {
     if !valid_children(candidate.left_count, window.n_rows) { return; }
@@ -512,14 +465,8 @@ fn score_candidate(
 }
 
 fn consider_candidate(
-    mut candidate: Candidate,
-    missing_target: f32,
-    missing_sqr_target: f32,
-    missing_count: usize,
-    window: &EvaluationWindow,
-    config: &Config,
-    criterion: &mut f32,
-    best: &mut Option<Candidate>,
+    mut candidate: Candidate, missing_target: f32, missing_sqr_target: f32, missing_count: usize, window: &EvaluationWindow,
+    config: &Config, criterion: &mut f32, best: &mut Option<Candidate>,
 ) {
     candidate.missing_right = missing_count > 0 || window.n_rows - candidate.left_count >= candidate.left_count;
     let mut choices = [(candidate.left_target, candidate.left_sqr_target, candidate.left_count, candidate.missing_right); 2];
@@ -581,24 +528,11 @@ fn all_same(y: ArrayView1<'_, f32>, node: NodeRows<'_>, max_samples: usize) -> b
 }
 
 pub(crate) fn partition(
-    x: TrainingData<'_>,
-    rows: &mut [u32],
-    start: usize,
-    n_rows: usize,
-    cut_col: usize,
-    cut_val: u32,
-    equality: bool,
-    missing_rank: u32,
+    x: TrainingData<'_>, rows: &mut [u32], start: usize, n_rows: usize, cut_col: usize, cut_val: u32, equality: bool, missing_rank: u32,
     missing_right: bool,
 ) -> usize {
     fn split_rows(
-        rows: &mut [u32],
-        start: usize,
-        n_rows: usize,
-        cut_val: u32,
-        equality: bool,
-        missing_rank: u32,
-        missing_right: bool,
+        rows: &mut [u32], start: usize, n_rows: usize, cut_val: u32, equality: bool, missing_rank: u32, missing_right: bool,
         value_at: impl Fn(u32) -> u32,
     ) -> usize {
         let mut left = start;
@@ -632,13 +566,7 @@ pub(crate) fn partition(
 }
 
 fn weighted_loss(
-    left_target: f32,
-    left_sqr_target: f32,
-    left_count: usize,
-    sum_target: f32,
-    sum_sqr_target: f32,
-    total_count: usize,
-    prior_rows: f32,
+    left_target: f32, left_sqr_target: f32, left_count: usize, sum_target: f32, sum_sqr_target: f32, total_count: usize, prior_rows: f32,
 ) -> f32 {
     let parent_mean = sum_target / total_count as f32;
     let mut result = 0.0;
