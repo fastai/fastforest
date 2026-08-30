@@ -35,13 +35,13 @@ jobs:
       - name: Stage native binaries
         if: runner.os != 'Linux'
         run: |
-          cargo build --release --bins
-          python tools/stage_binaries.py
+          cargo build --profile dist --bins
+          python tools/stage_binaries.py dist
       - uses: PyO3/maturin-action@v1
         with:
-          args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13
+          args: --profile dist --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13
           manylinux: auto
-          before-script-linux: cargo build --release --bins && python3.10 tools/stage_binaries.py
+          before-script-linux: cargo build --profile dist --bins && python3.10 tools/stage_binaries.py dist
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
@@ -57,14 +57,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
-      - run: cargo build --release --bins
-      - run: cargo test --release compiled::tests::standalone_executable_story -- --ignored
+      - run: cargo build --profile dist --bins
+      - run: cargo test --profile dist compiled::tests::standalone_executable_story -- --ignored
       - name: Package Unix CLIs
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p package dist
-          cp target/release/fastforest-fit target/release/fastforest-predict target/release/fastforest-compile target/release/fastforest-convert target/release/viewcsv package/
+          cp target/dist/fastforest-fit target/dist/fastforest-predict target/dist/fastforest-compile target/dist/fastforest-convert target/dist/viewcsv package/
           cp LICENSE README.md package/
           tar -czf "dist/fastforest-cli-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C package .
       - name: Package Windows CLIs
@@ -72,7 +72,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package,dist
-          Copy-Item target/release/fastforest-fit.exe,target/release/fastforest-predict.exe,target/release/fastforest-compile.exe,target/release/fastforest-convert.exe,target/release/viewcsv.exe package/
+          Copy-Item target/dist/fastforest-fit.exe,target/dist/fastforest-predict.exe,target/dist/fastforest-compile.exe,target/dist/fastforest-convert.exe,target/dist/viewcsv.exe package/
           Copy-Item LICENSE,README.md package/
           Compress-Archive -Path package/* -DestinationPath "dist/fastforest-cli-$env:RUNNER_OS-$env:RUNNER_ARCH.zip"
       - uses: actions/upload-artifact@v7
