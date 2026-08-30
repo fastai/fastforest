@@ -118,7 +118,7 @@ pytest -q
 chkstyle python/fastforest tests tools
 ```
 
-Use the `play` profile for development builds and research passes. It inherits release optimisation but disables LTO, enables incremental compilation, and uses 16 codegen units, trading a little runtime performance for much faster iteration. Compare `play` with `--release` on a couple of representative datasets before a release; use `--profile debugging` for an unoptimized, checked build. `play` keeps symbols and debug info (`strip = false`, `debug = true`), so a fit loop in the kernel profiles directly with macOS `sample <kernel-pid> 10`, and frames resolve without any dSYM step; shipped wheels use the release profile, which still strips.
+Use the `play` profile for development builds and research passes. It matches the release optimization settings, enables incremental compilation, and keeps symbols and debug info (`strip = false`, `debug = true`), so a fit loop in the kernel profiles directly with macOS `sample <kernel-pid> 10` and frames resolve without any dSYM step. Use `--profile debugging` for an unoptimized, checked build. Shipped wheels use the release profile, which still strips.
 
 For performance measurements:
 
