@@ -7,8 +7,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::preprocessing::detect_dates;
-use crate::{
+use fastforest::detect_dates;
+use fastforest::{
     ClassifierForest, Config, Encoder, EncoderOptions, Encoding, Forest, ForestError, MaxFeatures, ModelMetadata, Projections, SavedModel,
     SavedValue, StatContext, StatTarget, plan_fit, resolve_replacement,
 };
@@ -50,7 +50,7 @@ fn py_fit_plan(
 #[pyo3(signature = (n_rows, sample_rows, seed=None, stream=0))]
 fn py_sample_indices<'py>(
     py: Python<'py>, n_rows: usize, sample_rows: usize, seed: Option<u64>, stream: u64,
-) -> Bound<'py, PyArray1<usize>> { crate::forest::uniform_sample_indices(n_rows, sample_rows.min(n_rows), seed, stream).into_pyarray(py) }
+) -> Bound<'py, PyArray1<usize>> { fastforest::uniform_sample_indices(n_rows, sample_rows.min(n_rows), seed, stream).into_pyarray(py) }
 
 #[pyfunction(name = "_defaults")]
 fn py_defaults(py: Python<'_>, classification: bool) -> PyResult<Py<PyDict>> {
@@ -134,7 +134,7 @@ fn py_predict_regression_file(
     encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyForest>, metadata: PySavedMetadata, input: String, output: String, batch_size: usize,
 ) -> PyResult<()> {
     let model = SavedModel::regression(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata));
-    crate::predict_file(&model, input, output, batch_size, false).map_err(value_error)
+    fastforest::predict_file(&model, input, output, batch_size, false).map_err(value_error)
 }
 
 #[pyfunction(name = "_predict_classification_file")]
@@ -145,14 +145,14 @@ fn py_predict_classification_file(
     input: String, output: String, batch_size: usize, proba: bool,
 ) -> PyResult<()> {
     let model = SavedModel::classification(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata), saved_values(classes));
-    crate::predict_file(&model, input, output, batch_size, proba).map_err(value_error)
+    fastforest::predict_file(&model, input, output, batch_size, proba).map_err(value_error)
 }
 
 #[pyfunction(name = "_compile_regression")]
 fn py_compile_regression(
     encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyForest>, metadata: PySavedMetadata, output: String,
 ) -> PyResult<()> {
-    crate::compile_model(&SavedModel::regression(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata)), output)
+    fastforest::compile_model(&SavedModel::regression(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata)), output)
         .map_err(value_error)
 }
 
@@ -161,7 +161,7 @@ fn py_compile_classification(
     encoder: PyRef<'_, PyEncoder>, forest: PyRef<'_, PyClassifierForest>, metadata: PySavedMetadata, classes: Vec<(u8, String)>,
     output: String,
 ) -> PyResult<()> {
-    crate::compile_model(
+    fastforest::compile_model(
         &SavedModel::classification(encoder.inner.clone(), forest.inner.clone(), saved_metadata(metadata), saved_values(classes)),
         output,
     )

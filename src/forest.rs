@@ -128,7 +128,7 @@ pub fn plan_fit(
     Ok(FitPlan { n_trees, rows_per_tree, pool_rows })
 }
 
-pub(crate) fn uniform_sample_indices(n_rows: usize, sample_rows: usize, seed: Option<u64>, stream: u64) -> Vec<usize> {
+pub fn uniform_sample_indices(n_rows: usize, sample_rows: usize, seed: Option<u64>, stream: u64) -> Vec<usize> {
     if sample_rows >= n_rows { return (0..n_rows).collect(); }
     let seed = seed.unwrap_or_else(rand::random) ^ stream.wrapping_mul(0x9e37_79b9_7f4a_7c15);
     let mut rng = StdRng::seed_from_u64(seed);
@@ -226,7 +226,7 @@ pub struct Forest {
     trees: Vec<Tree>,
     n_features: usize,
     feature_importances: Vec<f32>,
-    pub(crate) trend: Option<(usize, f64, f64)>,
+    pub trend: Option<(usize, f64, f64)>,
     #[serde(skip)]
     oob_prediction: Option<Vec<f32>>,
     #[serde(skip)]
@@ -420,7 +420,7 @@ impl Forest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForestError { message: String }
 
-impl ForestError { pub(crate) fn new(message: impl Into<String>) -> Self { Self { message: message.into() } } }
+impl ForestError { pub fn new(message: impl Into<String>) -> Self { Self { message: message.into() } } }
 
 impl fmt::Display for ForestError { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.message) } }
 

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["maturin>=1.9.2,<2.0"]
-build-backend = "maturin"
+requires = ["maturin>=1.9.2,<2.0", "fastws-cli>=0.0.20"]
+build-backend = "fastws.build_backend"
 
 [project]
 name = "fastforest"
@@ -18,7 +18,7 @@ dependencies = ["numpy>=2.0", "pyarrow>=18"]
 
 [project.optional-dependencies]
 sklearn = ["pandas", "scikit-learn>=1.7.2"]
-dev = ["fastcore", "fastship>=0.0.11", "matplotlib", "maturin>=1.0,<2.0", "nbdev>=3.3.13", "pandas", "pytest", "scikit-learn>=1.7.2"]
+dev = ["fastws-cli>=0.0.20", "fastcore", "fastship>=0.0.11", "matplotlib", "maturin>=1.0,<2.0", "nbdev>=3.3.13", "pandas", "pytest", "scikit-learn>=1.7.2"]
 
 [project.urls]
 Homepage = "https://github.com/fastai/fastforest"
@@ -26,13 +26,16 @@ Repository = "https://github.com/fastai/fastforest"
 Issues = "https://github.com/fastai/fastforest/issues"
 
 [tool.maturin]
-features = ["extension-module"]
+manifest-path = "py/Cargo.toml"
 python-source = "python"
 module-name = "fastforest._core"
 data = "target/wheel-data"
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = ".git/fastws-cargo-key" }]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "py/Cargo.toml" }]
+
+[tool.fastws]
+native-binaries = true
 
 [tool.nbdev]
 lib_path = "python/fastforest"

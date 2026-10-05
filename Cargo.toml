@@ -1,14 +1,25 @@
-[package]
-name = "fastforest"
+[workspace]
+members = ["py"]
+default-members = [".", "py"]
+
+[workspace.package]
 version = "0.1.4"
 edition = "2024"
+
+[workspace.dependencies]
+arrow-array = ">=59.2.0"
+ndarray = ">=0.17.2"
+
+[package]
+name = "fastforest"
+version.workspace = true
+edition.workspace = true
 rust-version = "1.91"
 license = "Apache-2.0"
 description = "Fast approximate-forest models in Rust with Python bindings"
 
 [lib]
 name = "fastforest"
-crate-type = ["cdylib", "rlib"]
 doctest = false
 test = false
 
@@ -37,12 +48,18 @@ name = "viewcsv"
 path = "src/bin/viewcsv.rs"
 test = false
 
+[profile.test]
+inherits = "release"
+
 [profile.release]
 lto = false
 codegen-units = 16
 debug = true
 
 [profile.release.package.fastforest]
+incremental = true
+
+[profile.release.package.fastforest-py]
 incremental = true
 
 [profile.dist]
@@ -54,6 +71,9 @@ debug = false
 strip = true
 
 [profile.dist.package.fastforest]
+incremental = false
+
+[profile.dist.package.fastforest-py]
 incremental = false
 
 [profile.dev]
@@ -68,24 +88,17 @@ debug-assertions = true
 overflow-checks = true
 
 [dependencies]
-arrow-array = ">=59.2.0"
+arrow-array.workspace = true
 arrow-cast = ">=59.2.0"
 arrow-ipc = ">=59.2.0"
-arrow-pyarrow = { version = ">=59.2.0", optional = true }
 arrow-select = ">=59.2.0"
 arrow-schema = ">=59.2.0"
 bincode = { version = "2.0.1", features = ["serde"] }
 chrono = { version = ">=0.4.45", default-features = false, features = ["std"] }
 clap = { version = ">=4.6.6", features = ["derive"] }
 csv = ">=1.4.0"
-ndarray = ">=0.17.2"
-numpy = { version = ">=0.29.0", optional = true }
-pyo3 = { version = ">=0.29.2", optional = true }
+ndarray.workspace = true
 rand = ">=0.10.2"
 rayon = ">=1.12.0"
 serde = { version = ">=1.0.228", features = ["derive"] }
 tempfile = ">=3.26.0"
-
-[features]
-python = ["dep:arrow-pyarrow", "dep:numpy", "dep:pyo3"]
-extension-module = ["python", "pyo3/extension-module"]

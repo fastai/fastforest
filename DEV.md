@@ -20,7 +20,7 @@ src/csv_view.rs               typed compact CSV inspection and sampling
 src/cli.rs                    shared argument parsing for the native executables
 src/compiled.rs               Cargo-built predictor with embedded model bytes
 src/bin/                      four pure Rust command-line executables
-src/python.rs                 private PyO3 Arrow boundary and NumPy result bindings
+py/src/lib.rs                 private PyO3 Arrow boundary and NumPy result bindings
 python/fastforest/__init__.py thin public API re-export
 python/fastforest/core.py     public estimators and model orchestration
 python/fastforest/auto.py     automatic sample and forest sizing
@@ -42,14 +42,13 @@ tools/sweep_advisor.py        group-held-out meta-model fitting from sweep diagn
 meta/advisor_suite_selection.py inspect sweep coverage and advisor-menu rankings
 python/fastforest/tools.py    batched OOB/validation calibration plus benchmark table generation
 nbs/index.ipynb               README source: prose, benchmark tables, and executable analysis examples
-tools/stage_binaries.py       copy release executables into wheel script data
 tools/results/                raw measurements used by README benchmark tables
 meta/sweeps/                  focused canonical-dataset sweeps (untracked)
 meta/meta_benchmark/          large 24-configuration meta-sweep (untracked)
 meta/meta_advisor/            held-out advisor artifacts (untracked)
 ```
 
-The Rust core has no Python dependency. PyO3 and rust-numpy are optional behind the `python` feature; maturin enables `extension-module`, which enables them. The crate therefore remains directly usable as an `rlib` and builds all five native binaries without Python.
+The published `fastforest` crate has no Python dependency and builds all five native binaries. The unpublished `fastforest-py` crate in `py/` contains PyO3, rust-numpy, and the PyArrow boundary. `cargo develop` builds both and installs the extension and executables into the active venv. Bare `cargo test` shares their ordinary library builds. Wheels use `fastws.build_backend` to stage native binaries before maturin packages them.
 
 ## Design
 
@@ -110,10 +109,8 @@ Tests favor a few public-API narratives over private implementation tests. The m
 ```bash
 cargo fmt
 cargo check
+cargo develop
 cargo test
-cargo build --release --bins
-python tools/stage_binaries.py
-maturin develop
 pytest -q
 chkstyle python/fastforest tests tools
 ```
@@ -123,7 +120,7 @@ The default `release` profile is the development and research build: optimized, 
 For performance measurements:
 
 ```bash
-maturin develop --release
+cargo develop
 python tools/bench.py --rows 60000 --cols 50 --trees 100
 ```
 
@@ -251,4 +248,4 @@ Once the repository has been created and added to the workspace, release flow is
 2. Confirm the release version in `Cargo.toml`.
 3. Run `ship-release`.
 
-GitHub Actions builds Linux, macOS, and Windows wheels containing the Python extension and all five native binaries. An sdist is deliberately not published because Maturin cannot build PyO3 and binary bindings in the same source-build invocation. CI also tests and archives the binaries independently on those operating systems; tagged builds publish the wheels and attach the CLI archives to the GitHub release.
+GitHub Actions builds Linux, macOS, and Windows wheels containing the Python extension and all five native binaries. The shared `fastws.build_backend` stages the binaries for source builds. CI currently publishes wheels, tests and archives the binaries independently on those operating systems, and attaches the CLI archives to tagged GitHub releases.

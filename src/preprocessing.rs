@@ -38,7 +38,6 @@ const DATE_PARTS: [&str; 16] = [
 ];
 const MIN_STAT_CARDINALITY: usize = 6;
 
-#[cfg(feature = "python")]
 fn date_formats() -> Vec<String> {
     const BASES: [&str; 15] = [
         "%Y-%m-%d",
@@ -468,10 +467,7 @@ fn indicator_bit(value: f32) -> Option<bool> { if value == 0. { Some(false) } el
 
 fn binary_sample(column: &RawColumn, sample: &[usize]) -> Option<Vec<bool>> {
     let mut seen = [false; 2];
-    let mut record = |active: bool| {
-        seen[usize::from(active)] = true;
-        active
-    };
+    let mut record = |active: bool| { seen[usize::from(active)] = true; active };
     let sampled = match column {
         RawColumn::Numeric(values) => {
             for value in values { record(indicator_bit((*value)?)?); }
@@ -486,10 +482,7 @@ fn binary_sample(column: &RawColumn, sample: &[usize]) -> Option<Vec<bool>> {
                 categories.iter().map(|value| value.as_ref().and_then(|value| value.parse().ok()).and_then(indicator_bit)).collect();
             let parsed = parsed?;
             let parsed_null = null_value.as_ref().and_then(|value| value.parse().ok()).and_then(indicator_bit);
-            let value = |row: usize| {
-                let code = codes[row];
-                if code < 0 { parsed_null } else { parsed.get(code as usize).copied() }
-            };
+            let value = |row: usize| { let code = codes[row]; if code < 0 { parsed_null } else { parsed.get(code as usize).copied() } };
             for row in 0..codes.len() { record(value(row)?); }
             sample.iter().map(|&row| value(row).unwrap()).collect()
         }
@@ -615,7 +608,6 @@ fn date_layout(names: &[String], date_columns: &[(usize, String)]) -> Result<Vec
     Ok(result)
 }
 
-#[cfg(feature = "python")]
 pub fn detect_dates(batch: &RecordBatch, markers: &[SavedValue], seed: Option<u64>) -> Result<Vec<(usize, String)>, ForestError> {
     if batch.num_columns() != markers.len() { return Err(invalid("missing_values must have one value per column")); }
     let sample = crate::forest::uniform_sample_indices(batch.num_rows(), batch.num_rows().min(200), seed, 0x2d4a_7f18);
@@ -1389,10 +1381,7 @@ fn fit_date_part(base: DateBase, part: u8, name: String) -> FittedColumn {
     let mut cumulative = 0;
     let median = counts
         .iter()
-        .position(|count| {
-            cumulative += count;
-            cumulative > observed / 2
-        })
+        .position(|count| { cumulative += count; cumulative > observed / 2 })
         .map(|index| unique[index]);
     let mut encodings = Vec::new();
     if unique.len() > 1 || base.had_missing {
@@ -1434,10 +1423,7 @@ fn fit_column(raw: RawColumn, name: String, natural: bool) -> Result<FittedColum
             let mut cumulative = 0;
             let median_code = counts
                 .iter()
-                .position(|count| {
-                    cumulative += count;
-                    cumulative > observed / 2
-                })
+                .position(|count| { cumulative += count; cumulative > observed / 2 })
                 .unwrap_or(0) as u32;
             let missing = codes.iter().map(Option::is_none).collect();
             return Ok(finish_column(
@@ -1476,10 +1462,7 @@ fn fit_column(raw: RawColumn, name: String, natural: bool) -> Result<FittedColum
             let mut cumulative = 0;
             let median_code = counts
                 .iter()
-                .position(|count| {
-                    cumulative += count;
-                    cumulative > observed / 2
-                })
+                .position(|count| { cumulative += count; cumulative > observed / 2 })
                 .unwrap() as u32;
             return Ok(finish_column(
                 name,
@@ -1583,10 +1566,7 @@ fn append_codes(codes: &FitCodes, physical: &mut Vec<Vec<u32>>, bases: &mut Hash
     let (base, table) = codes.base_and_table();
     // Bases are shared `Arc`s, so pointer equality identifies one physical column; a defensive copy upstream would silently duplicate it.
     let key = base.as_ptr() as usize;
-    let column = *bases.entry(key).or_insert_with(|| {
-        physical.push(base.to_vec());
-        physical.len() as u32 - 1
-    });
+    let column = *bases.entry(key).or_insert_with(|| { physical.push(base.to_vec()); physical.len() as u32 - 1 });
     match table { Some(table) => projections.push_projected(column, table), None => projections.push_direct(column) }
 }
 

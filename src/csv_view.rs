@@ -56,10 +56,7 @@ fn significant(value: f64, digits: usize) -> String {
     if exponent >= digits as isize || exponent < -3 { return format!("{value:.precision$e}", precision = digits.saturating_sub(1)); }
     let decimals = (digits as isize - 1 - exponent).max(0) as usize;
     let mut result = format!("{value:.decimals$}");
-    if result.contains('.') {
-        while result.ends_with('0') { result.pop(); }
-        if result.ends_with('.') { result.pop(); }
-    }
+    if result.contains('.') { while result.ends_with('0') { result.pop(); } if result.ends_with('.') { result.pop(); } }
     result
 }
 

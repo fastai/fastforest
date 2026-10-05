@@ -18,9 +18,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: cargo build --release --bins
-      - run: python tools/stage_binaries.py
       - run: pip install -e '.[dev]'
+      - run: cargo develop
       - run: pytest -q
 
   build:
@@ -32,16 +31,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        if: runner.os != 'Linux'
+        with:
+          python-version: '3.12'
       - name: Stage native binaries
         if: runner.os != 'Linux'
         run: |
-          cargo build --profile dist --bins
-          python tools/stage_binaries.py dist
+          python -m pip install 'fastws-cli>=0.0.20'
+          cargo stage --profile dist
       - uses: PyO3/maturin-action@v1
         with:
           args: --profile dist --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13
           manylinux: auto
-          before-script-linux: cargo build --profile dist --bins && python3.10 tools/stage_binaries.py dist
+          before-script-linux: export PATH="/opt/python/cp310-cp310/bin:$PATH" && python3.10 -m pip install 'fastws-cli>=0.0.20' && cargo stage --profile dist
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
@@ -56,9 +59,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
-      - run: cargo build --profile dist --bins
-      - run: cargo test --profile dist compiled::tests::standalone_executable_story -- --ignored
+      - run: cargo test -p fastforest
+      - run: cargo build -p fastforest --profile dist --bins
+      - run: cargo test -p fastforest --profile dist compiled::tests::standalone_executable_story -- --ignored
       - name: Package Unix CLIs
         if: runner.os != 'Windows'
         shell: bash
