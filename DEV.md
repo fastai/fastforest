@@ -48,7 +48,7 @@ meta/meta_benchmark/          large 24-configuration meta-sweep (untracked)
 meta/meta_advisor/            held-out advisor artifacts (untracked)
 ```
 
-The published `fastforest` crate has no Python dependency and builds all five native binaries. The unpublished `fastforest-py` crate in `py/` contains PyO3, rust-numpy, and the PyArrow boundary. `cargo develop` builds both and installs the extension and executables into the active venv. Bare `cargo test` shares their ordinary library builds. Wheels use `fastws.build_backend` to stage native binaries before maturin packages them.
+The published `fastforest` crate has no Python dependency and builds all five native binaries. The unpublished `fastforest-py` crate in `py/` contains PyO3, rust-numpy, and the PyArrow boundary. `cargo develop` builds both and installs the extension and executables into the active venv. Bare `cargo test` shares their ordinary library builds. Build a local distribution wheel with `ship-rs-build --profile dist`. Wheels use `fastws.build_backend` to stage native binaries before maturin packages them.
 
 ## Design
 
