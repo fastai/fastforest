@@ -28,12 +28,7 @@ impl FromStr for CsvSample {
 
 #[derive(Clone, Debug, Default)]
 pub struct CsvViewOptions {
-    pub columns: Vec<String>,
-    pub rows: Option<usize>,
-    pub start: usize,
-    pub end: Option<usize>,
-    pub sample: Option<CsvSample>,
-    pub seed: u64,
+    pub columns: Vec<String>, pub rows: Option<usize>, pub start: usize, pub end: Option<usize>, pub sample: Option<CsvSample>, pub seed: u64
 }
 
 #[derive(Clone, Copy)]
@@ -62,17 +57,10 @@ fn significant(value: f64, digits: usize) -> String {
 
 fn formatted(name: &str, value: &str, kind: Kind) -> String {
     match kind {
-        Kind::Integer => value.parse::<i64>().map_or_else(|_| value.to_owned(), |value| value.to_string()),
-        Kind::Float => value.parse::<f64>().map_or_else(
+        Kind::Integer => value.parse::<i64>().map_or_else(|_| value.to_owned(), |value| value.to_string()), Kind::Float => value.parse::<f64>().map_or_else(
             |_| value.to_owned(),
-            |value| {
-                significant(
-                    value,
-                    if ["second", "time", "fit", "predict", "proba"].iter().any(|part| name.to_lowercase().contains(part)) { 3 } else { 4 },
-                )
-            },
-        ),
-        Kind::Text => value.to_owned(),
+            |value| significant(value, if ["second", "time", "fit", "predict", "proba"].iter().any(|part| name.to_lowercase().contains(part)) { 3 } else { 4 })
+        ), Kind::Text => value.to_owned()
     }
 }
 
@@ -81,19 +69,12 @@ fn file_error(context: &str, error: impl std::fmt::Display) -> ForestError { For
 pub fn view_csv(input: impl AsRef<Path>, options: &CsvViewOptions) -> Result<String, ForestError> {
     if options.rows == Some(0) { return Err(ForestError::new("rows must be positive")); }
     if options.rows.is_some() && options.sample.is_some() { return Err(ForestError::new("rows and sample cannot be used together")); }
-    if options.sample.is_some() && (options.start > 0 || options.end.is_some()) {
-        return Err(ForestError::new("start and end cannot be used with sample"));
-    }
+    if options.sample.is_some() && (options.start > 0 || options.end.is_some()) { return Err(ForestError::new("start and end cannot be used with sample")); }
     if options.end.is_some_and(|end| end <= options.start) { return Err(ForestError::new("end must be greater than start")); }
     let mut reader = csv::Reader::from_path(input).map_err(|error| file_error("could not open CSV", error))?;
     let headers = reader.headers().map_err(|error| file_error("could not read CSV headers", error))?.clone();
     let selected = if options.columns.is_empty() { (0..headers.len()).collect::<Vec<_>>() } else {
-        options
-            .columns
-            .iter()
-            .map(|name| {
-                headers.iter().position(|header| header == name).ok_or_else(|| ForestError::new(format!("unknown column {name:?}")))
-            })
+        options.columns.iter().map(|name| headers.iter().position(|header| header == name).ok_or_else(|| ForestError::new(format!("unknown column {name:?}"))))
             .collect::<Result<Vec<_>, _>>()?
     };
     let names = selected.iter().map(|&column| headers[column].to_owned()).collect::<Vec<_>>();
@@ -105,17 +86,9 @@ pub fn view_csv(input: impl AsRef<Path>, options: &CsvViewOptions) -> Result<Str
         let values = || selected.iter().map(|&column| record[column].to_owned()).collect::<Vec<_>>();
         match options.sample {
             Some(CsvSample::Rows(limit)) if rows.len() < limit => rows.push((index, values())),
-            Some(CsvSample::Rows(limit)) => {
-                let replace = rng.random_range(0..=index);
-                if replace < limit { rows[replace] = (index, values()) }
-            }
-            Some(CsvSample::Fraction(fraction)) => {
-                if rng.random::<f64>() < fraction { rows.push((index, values())) }
-            }
-            None if index >= options.start
-                && options.end.is_none_or(|end| index < end)
-                && options.rows.is_none_or(|limit| index - options.start < limit) =>
-            {
+            Some(CsvSample::Rows(limit)) => { let replace = rng.random_range(0..=index); if replace < limit { rows[replace] = (index, values()) } }
+            Some(CsvSample::Fraction(fraction)) => { if rng.random::<f64>() < fraction { rows.push((index, values())) } }
+            None if index >= options.start && options.end.is_none_or(|end| index < end) && options.rows.is_none_or(|limit| index - options.start < limit) => {
                 rows.push((index, values()))
             }
             None => {}
@@ -126,36 +99,25 @@ pub fn view_csv(input: impl AsRef<Path>, options: &CsvViewOptions) -> Result<Str
     rows.sort_unstable_by_key(|(index, _)| *index);
     let rows = rows.into_iter().map(|(_, row)| row).collect::<Vec<_>>();
     let kinds = kinds(&rows, names.len());
-    let constants = (0..names.len())
-        .filter(|&column| rows.first().is_some_and(|first| rows.iter().all(|row| row[column] == first[column])))
-        .collect::<Vec<_>>();
+    let constants =
+        (0..names.len()).filter(|&column| rows.first().is_some_and(|first| rows.iter().all(|row| row[column] == first[column]))).collect::<Vec<_>>();
     let varying = (0..names.len()).filter(|column| !constants.contains(column)).collect::<Vec<_>>();
     let mut output = String::new();
     match options.sample {
         Some(CsvSample::Rows(_)) => writeln!(output, "{} randomly sampled rows from {total}", rows.len()).unwrap(),
-        Some(CsvSample::Fraction(fraction)) => {
-            writeln!(output, "{} rows sampled at {}% from {total}", rows.len(), significant(fraction * 100.0, 4)).unwrap()
-        }
-        None if options.start > 0 || options.end.is_some() => {
-            writeln!(output, "rows {}..{} from {total}", options.start, options.start + rows.len()).unwrap()
-        }
-        None if options.rows.is_some() => writeln!(output, "first {} rows from {total}", rows.len()).unwrap(),
-        None => {}
+        Some(CsvSample::Fraction(fraction)) => writeln!(output, "{} rows sampled at {}% from {total}", rows.len(), significant(fraction * 100.0, 4)).unwrap(),
+        None if options.start > 0 || options.end.is_some() => writeln!(output, "rows {}..{} from {total}", options.start, options.start + rows.len()).unwrap(),
+        None if options.rows.is_some() => writeln!(output, "first {} rows from {total}", rows.len()).unwrap(), None => {}
     }
-    if varying.is_empty() { output.push_str("No varying columns\n"); }
-    else {
+    if varying.is_empty() { output.push_str("No varying columns\n"); } else {
         let mut writer = csv::Writer::from_writer(Vec::new());
         writer.write_record(varying.iter().map(|&column| &names[column])).unwrap();
-        for row in &rows {
-            writer.write_record(varying.iter().map(|&column| formatted(&names[column], &row[column], kinds[column]))).unwrap();
-        }
+        for row in &rows { writer.write_record(varying.iter().map(|&column| formatted(&names[column], &row[column], kinds[column]))).unwrap(); }
         output.push_str(&String::from_utf8(writer.into_inner().unwrap()).unwrap());
     }
     if !constants.is_empty() {
         output.push_str("Constants:\n");
-        for &column in &constants {
-            writeln!(output, "{}={}", names[column], formatted(&names[column], &rows[0][column], kinds[column])).unwrap();
-        }
+        for &column in &constants { writeln!(output, "{}={}", names[column], formatted(&names[column], &rows[0][column], kinds[column])).unwrap(); }
     }
     Ok(output)
 }

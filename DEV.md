@@ -107,7 +107,7 @@ Categorical subset splits belong at a separate boundary: they require encoder me
 Tests favor a few public-API narratives over private implementation tests. The main Rust integration test covers fitting, compact-tree invariants, prediction quality, OOB, determinism, per-tree predictions, split importance, exact explanation reconstruction, and standalone/batched equivalence. A file integration narrative covers mixed CSV regression/classification, `.ffm`, bounded batches, numeric CSV conversion, and Arrow fit/prediction. The regression and multiclass Python narratives round-trip mixed, date, grouped, and typed-label models and exercise native file prediction. Compile-time assertions keep every training and inference node representation at 16 bytes. A dedicated ignored test builds and invokes a complete standalone release executable; CI runs it on each release platform without slowing ordinary iterations.
 
 ```bash
-cargo fmt
+cargo fastfmt
 cargo check
 cargo develop
 cargo test

@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, RecordBatch, StringArray,
-    UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, RecordBatch, StringArray, UInt8Array,
+    UInt16Array, UInt32Array, UInt64Array,
 };
 use arrow_cast::display::array_value_to_string;
 use arrow_ipc::reader::FileReader;
@@ -18,8 +18,8 @@ use rand::{RngExt, SeedableRng};
 
 use crate::forest::uniform_sample_indices;
 use crate::{
-    ClassifierForest, Config, Encoder, EncoderOptions, Forest, ForestError, MaxFeatures, ModelMetadata, SavedModel, SavedValue,
-    StatContext, StatTarget, plan_fit, resolve_replacement,
+    ClassifierForest, Config, Encoder, EncoderOptions, Forest, ForestError, MaxFeatures, ModelMetadata, SavedModel, SavedValue, StatContext, StatTarget,
+    plan_fit, resolve_replacement,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,27 +27,11 @@ pub enum Task { Regression, Classification }
 
 #[derive(Clone, Debug)]
 pub struct FileFitOptions {
-    pub task: Task,
-    pub target: String,
-    pub n_trees: Option<usize>,
-    pub min_node_size: usize,
-    pub bootstrap_fraction: Option<f32>,
-    pub bootstrap_max: Option<usize>,
-    pub replacement: Option<bool>,
-    pub max_node_samples: usize,
-    pub split_prior_rows: f32,
-    pub class_weight_power: f32,
-    pub cutoff_divisor: f32,
-    pub seed: Option<u64>,
-    pub oob: bool,
-    pub random_splitter: bool,
-    pub max_features: MaxFeatures,
-    pub allow_new_missing: bool,
-    pub missing_values: Vec<(String, SavedValue)>,
-    pub date_columns: Vec<(String, String)>,
-    pub stat_options: EncoderOptions,
-    pub order: Option<String>,
-    pub detrend: bool,
+    pub task: Task, pub target: String, pub n_trees: Option<usize>, pub min_node_size: usize, pub bootstrap_fraction: Option<f32>,
+    pub bootstrap_max: Option<usize>, pub replacement: Option<bool>, pub max_node_samples: usize, pub split_prior_rows: f32, pub class_weight_power: f32,
+    pub cutoff_divisor: f32, pub seed: Option<u64>, pub oob: bool, pub random_splitter: bool, pub max_features: MaxFeatures, pub allow_new_missing: bool,
+    pub missing_values: Vec<(String, SavedValue)>, pub date_columns: Vec<(String, String)>, pub stat_options: EncoderOptions, pub order: Option<String>,
+    pub detrend: bool
 }
 
 impl Default for FileFitOptions { fn default() -> Self { Self::for_task(Task::Regression) } }
@@ -55,29 +39,11 @@ impl Default for FileFitOptions { fn default() -> Self { Self::for_task(Task::Re
 impl FileFitOptions {
     pub fn for_task(task: Task) -> Self {
         let config = if task == Task::Classification { Config::classification() } else { Config::default() };
-        Self {
-            task,
-            target: String::new(),
-            n_trees: None,
-            min_node_size: config.min_node_size,
-            bootstrap_fraction: config.bootstrap_fraction,
-            bootstrap_max: config.bootstrap_max,
-            replacement: None,
-            max_node_samples: config.max_node_samples,
-            split_prior_rows: config.split_prior_rows,
-            class_weight_power: config.class_weight_power,
-            cutoff_divisor: config.cutoff_divisor,
-            seed: config.seed,
-            oob: config.oob,
-            random_splitter: config.random_splitter,
-            max_features: config.max_features,
-            allow_new_missing: false,
-            missing_values: Vec::new(),
-            date_columns: Vec::new(),
-            stat_options: EncoderOptions::default(),
-            order: None,
-            detrend: false,
-        }
+        Self { task, target: String::new(), n_trees: None, min_node_size: config.min_node_size, bootstrap_fraction: config.bootstrap_fraction,
+            bootstrap_max: config.bootstrap_max, replacement: None, max_node_samples: config.max_node_samples, split_prior_rows: config.split_prior_rows,
+            class_weight_power: config.class_weight_power, cutoff_divisor: config.cutoff_divisor, seed: config.seed, oob: config.oob,
+            random_splitter: config.random_splitter, max_features: config.max_features, allow_new_missing: false, missing_values: Vec::new(),
+            date_columns: Vec::new(), stat_options: EncoderOptions::default(), order: None, detrend: false }
     }
 
     fn resolved_replacement(&self, rows: usize) -> bool { resolve_replacement(rows, self.replacement, self.task == Task::Classification) }
@@ -87,8 +53,7 @@ fn file_error(context: &str, error: impl std::fmt::Display) -> ForestError { For
 
 fn headers(path: &Path) -> Result<Vec<String>, ForestError> {
     let mut reader = csv::Reader::from_path(path).map_err(|error| file_error("could not open CSV", error))?;
-    let names: Vec<_> =
-        reader.headers().map_err(|error| file_error("could not read CSV header", error))?.iter().map(str::to_owned).collect();
+    let names: Vec<_> = reader.headers().map_err(|error| file_error("could not read CSV header", error))?.iter().map(str::to_owned).collect();
     if names.is_empty() || names.iter().collect::<BTreeSet<_>>().len() != names.len() {
         return Err(ForestError::new("CSV column names must be present and unique"));
     }
@@ -96,15 +61,13 @@ fn headers(path: &Path) -> Result<Vec<String>, ForestError> {
 }
 
 fn predictor_layout(
-    names: &[String], target: usize, options: &FileFitOptions,
-) -> Result<(Vec<usize>, Vec<String>, ModelMetadata, Vec<(usize, String)>), ForestError> {
+    names: &[String], target: usize, options: &FileFitOptions) -> Result<(Vec<usize>, Vec<String>, ModelMetadata, Vec<(usize, String)>), ForestError> {
     let sources: Vec<_> = (0..names.len()).filter(|&index| index != target).collect();
     let predictor_names: Vec<_> = sources.iter().map(|&index| names[index].clone()).collect();
     let positions: HashMap<_, _> = predictor_names.iter().enumerate().map(|(index, name)| (name.as_str(), index)).collect();
     let mut markers = vec![SavedValue { kind: 5, value: String::new() }; predictor_names.len()];
     for (name, marker) in &options.missing_values {
-        let index =
-            positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("unknown missing-value column {name:?}")))?;
+        let index = positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("unknown missing-value column {name:?}")))?;
         marker.validate()?;
         markers[index] = marker.clone();
     }
@@ -125,8 +88,7 @@ fn target_sample_and_rows(path: &Path, target: usize, seed: Option<u64>) -> Resu
     for record in reader.records() {
         let record = record.map_err(|error| file_error("could not read CSV", error))?;
         let value = record.get(target).ok_or_else(|| ForestError::new("CSV row has the wrong number of columns"))?;
-        if rows < 1_000 { sample.push(value.to_owned()); }
-        else {
+        if rows < 1_000 { sample.push(value.to_owned()); } else {
             let replace = rng.random_range(0..=rows);
             if replace < 1_000 { sample[replace] = value.to_owned(); }
         }
@@ -136,9 +98,7 @@ fn target_sample_and_rows(path: &Path, target: usize, seed: Option<u64>) -> Resu
     Ok((rows, sample))
 }
 
-fn selected_csv_rows(
-    path: &Path, selected: &[usize], sources: &[usize], target: usize, names: &[String],
-) -> Result<(RecordBatch, Vec<String>), ForestError> {
+fn selected_csv_rows(path: &Path, selected: &[usize], sources: &[usize], target: usize, names: &[String]) -> Result<(RecordBatch, Vec<String>), ForestError> {
     let mut selected = selected.to_vec();
     selected.sort_unstable();
     let mut next = 0;
@@ -159,86 +119,42 @@ fn selected_csv_rows(
     if next != selected.len() { return Err(ForestError::new("CSV ended before all sampled rows were found")); }
     let fields: Vec<_> = names.iter().map(|name| Field::new(name, DataType::Utf8, false)).collect();
     let arrays: Vec<ArrayRef> = columns.into_iter().map(|values| Arc::new(StringArray::from(values)) as ArrayRef).collect();
-    let batch = RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
-        .map_err(|error| file_error("could not build sampled Arrow table", error))?;
+    let batch = RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).map_err(|error| file_error("could not build sampled Arrow table", error))?;
     Ok((batch, targets))
 }
 
 fn fit_config(options: &FileFitOptions, replacement: bool, n_trees: usize, sample_rows: usize) -> Config {
-    Config {
-        n_trees,
-        min_node_size: options.min_node_size,
-        bootstrap_fraction: options.bootstrap_fraction,
-        bootstrap_max: options.bootstrap_max,
-        sample_rows: Some(sample_rows),
-        replacement,
-        max_node_samples: options.max_node_samples,
-        split_prior_rows: options.split_prior_rows,
-        class_weight_power: options.class_weight_power,
-        cutoff_divisor: options.cutoff_divisor,
-        seed: options.seed,
-        oob: options.oob,
-        random_splitter: options.random_splitter,
-        max_features: options.max_features,
-    }
+    Config { n_trees, min_node_size: options.min_node_size, bootstrap_fraction: options.bootstrap_fraction, bootstrap_max: options.bootstrap_max,
+        sample_rows: Some(sample_rows), replacement, max_node_samples: options.max_node_samples, split_prior_rows: options.split_prior_rows,
+        class_weight_power: options.class_weight_power, cutoff_divisor: options.cutoff_divisor, seed: options.seed, oob: options.oob,
+        random_splitter: options.random_splitter, max_features: options.max_features }
 }
 
 fn fit_sampled(
-    predictors: &RecordBatch, targets: &[Option<SavedValue>], total_rows: usize, options: &FileFitOptions, metadata: ModelMetadata,
-    dates: Vec<(usize, String)>,
+    predictors: &RecordBatch, targets: &[Option<SavedValue>], total_rows: usize, options: &FileFitOptions, metadata: ModelMetadata, dates: Vec<(usize, String)>
 ) -> Result<SavedModel, ForestError> {
     let replacement = options.resolved_replacement(total_rows);
-    let order_column = options
-        .order
-        .as_deref()
-        .map(|name| {
-            let schema = predictors.schema();
-            schema
-                .fields()
-                .iter()
-                .position(|field| field.name() == name)
-                .ok_or_else(|| ForestError::new(format!("unknown order column {name:?}")))
-        })
-        .transpose()?;
+    let order_column = options.order.as_deref().map(|name| {
+        let schema = predictors.schema();
+        schema.fields().iter().position(|field| field.name() == name).ok_or_else(|| ForestError::new(format!("unknown order column {name:?}")))
+    }).transpose()?;
     match options.task {
         Task::Regression => {
-            let y: Result<Vec<_>, _> = targets
-                .iter()
-                .map(|value| {
-                    let value = value.as_ref().ok_or_else(|| ForestError::new("regression targets cannot be missing"))?;
-                    value
-                        .value
-                        .parse::<f32>()
-                        .ok()
-                        .filter(|value| value.is_finite())
-                        .ok_or_else(|| ForestError::new(format!("invalid regression target {:?}", value.value)))
-                })
-                .collect();
+            let y: Result<Vec<_>, _> = targets.iter().map(|value| {
+                let value = value.as_ref().ok_or_else(|| ForestError::new("regression targets cannot be missing"))?;
+                value.value.parse::<f32>().ok().filter(|value| value.is_finite())
+                    .ok_or_else(|| ForestError::new(format!("invalid regression target {:?}", value.value)))
+            }).collect();
             let y = y?;
-            let plan =
-                plan_fit(total_rows, options.n_trees, options.bootstrap_fraction, options.bootstrap_max, replacement, options.oob, 1)?;
+            let plan = plan_fit(total_rows, options.n_trees, options.bootstrap_fraction, options.bootstrap_max, replacement, options.oob, 1)?;
             let (encoder, x, trend) = Encoder::fit_arrow(
-                predictors,
-                &metadata.markers,
-                options.allow_new_missing,
-                dates,
-                options.seed,
-                &options.stat_options,
-                StatContext {
-                    target: Some(StatTarget::Regression(&y)),
-                    order_column,
-                    agreement_sample_rows: plan.rows_per_tree.min(predictors.num_rows()),
-                    detrend: options.detrend,
-                },
-            )?;
-            let y = match &trend {
-                Some(trend) => Array1::from_iter(y.iter().zip(&trend.values).map(|(&y, &fitted)| y - fitted)),
-                None => Array1::from_vec(y),
-            };
+                predictors, &metadata.markers, options.allow_new_missing, dates, options.seed, &options.stat_options, StatContext {
+                    target: Some(StatTarget::Regression(&y)), order_column, agreement_sample_rows: plan.rows_per_tree.min(predictors.num_rows()),
+                    detrend: options.detrend })?;
+            let y = match &trend { Some(trend) => Array1::from_iter(y.iter().zip(&trend.values).map(|(&y, &fitted)| y - fitted)), None => Array1::from_vec(y) };
             let config = fit_config(options, replacement, plan.n_trees, plan.rows_per_tree.min(x.nrows()));
             let (cutoff_values, cutoff_offsets, missing_ranks, _, _, _, _) = encoder.training_layout();
-            let mut forest =
-                Forest::fit(x.view(), encoder.projections(), y.view(), &cutoff_values, &cutoff_offsets, &missing_ranks, &config)?;
+            let mut forest = Forest::fit(x.view(), encoder.projections(), y.view(), &cutoff_values, &cutoff_offsets, &missing_ranks, &config)?;
             forest.trend = trend.map(|trend| (trend.feature, trend.intercept, trend.slope));
             Ok(SavedModel::regression(encoder, forest, metadata))
         }
@@ -250,41 +166,14 @@ fn fit_sampled(
             let y = Array1::from_iter(targets.iter().flatten().map(|value| lookup[value]));
             let target = Some(StatTarget::Classes { codes: y.as_slice().unwrap(), k: classes.len() });
             let dimensions = classes.len().saturating_sub(1).max(1);
-            let plan = plan_fit(
-                total_rows,
-                options.n_trees,
-                options.bootstrap_fraction,
-                options.bootstrap_max,
-                replacement,
-                options.oob,
-                dimensions,
-            )?;
+            let plan = plan_fit(total_rows, options.n_trees, options.bootstrap_fraction, options.bootstrap_max, replacement, options.oob, dimensions)?;
             let (encoder, x, _) = Encoder::fit_arrow(
-                predictors,
-                &metadata.markers,
-                options.allow_new_missing,
-                dates,
-                options.seed,
-                &options.stat_options,
-                StatContext {
-                    target,
-                    order_column,
-                    agreement_sample_rows: plan.rows_per_tree.min(predictors.num_rows()),
-                    detrend: options.detrend,
-                },
-            )?;
+                predictors, &metadata.markers, options.allow_new_missing, dates, options.seed, &options.stat_options,
+                StatContext { target, order_column, agreement_sample_rows: plan.rows_per_tree.min(predictors.num_rows()), detrend: options.detrend })?;
             let config = fit_config(options, replacement, plan.n_trees, plan.rows_per_tree.min(x.nrows()));
             let (cutoff_values, cutoff_offsets, missing_ranks, _, _, _, _) = encoder.training_layout();
-            let forest = ClassifierForest::fit(
-                x.view(),
-                encoder.projections(),
-                y.view(),
-                classes.len(),
-                &cutoff_values,
-                &cutoff_offsets,
-                &missing_ranks,
-                &config,
-            )?;
+            let forest =
+                ClassifierForest::fit(x.view(), encoder.projections(), y.view(), classes.len(), &cutoff_values, &cutoff_offsets, &missing_ranks, &config)?;
             Ok(SavedModel::classification(encoder, forest, metadata, classes))
         }
     }
@@ -293,48 +182,32 @@ fn fit_sampled(
 pub fn fit_csv(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<SavedModel, ForestError> {
     let path = path.as_ref();
     let names = headers(path)?;
-    let target = names
-        .iter()
-        .position(|name| name == &options.target)
-        .ok_or_else(|| ForestError::new(format!("target column {:?} was not found", options.target)))?;
+    let target =
+        names.iter().position(|name| name == &options.target).ok_or_else(|| ForestError::new(format!("target column {:?} was not found", options.target)))?;
     let (n_rows, target_sample) = target_sample_and_rows(path, target, options.seed)?;
-    let estimated_outputs =
-        if options.task == Task::Classification { target_sample.iter().collect::<BTreeSet<_>>().len().saturating_sub(1).max(1) } else { 1 };
+    let estimated_outputs = if options.task == Task::Classification { target_sample.iter().collect::<BTreeSet<_>>().len().saturating_sub(1).max(1) } else { 1 };
     let estimated = plan_fit(
-        n_rows,
-        options.n_trees,
-        options.bootstrap_fraction,
-        options.bootstrap_max,
-        options.resolved_replacement(n_rows),
-        options.oob,
-        estimated_outputs,
-    )?;
+        n_rows, options.n_trees, options.bootstrap_fraction, options.bootstrap_max, options.resolved_replacement(n_rows), options.oob, estimated_outputs)?;
     let selected = uniform_sample_indices(n_rows, estimated.pool_rows, options.seed, 2);
     let (sources, predictor_names, metadata, dates) = predictor_layout(&names, target, options)?;
     let (batch, targets) = selected_csv_rows(path, &selected, &sources, target, &predictor_names)?;
-    let targets: Vec<_> =
-        targets.into_iter().map(|value| if value.is_empty() { None } else { Some(SavedValue { kind: 5, value }) }).collect();
+    let targets: Vec<_> = targets.into_iter().map(|value| if value.is_empty() { None } else { Some(SavedValue { kind: 5, value }) }).collect();
     fit_sampled(&batch, &targets, n_rows, options, metadata, dates)
 }
 
 fn prediction_columns(
-    path: &Path, names: &[String], batch_size: usize, mut predict: impl FnMut(RecordBatch) -> Result<(), ForestError>,
-) -> Result<(), ForestError> {
+    path: &Path, names: &[String], batch_size: usize, mut predict: impl FnMut(RecordBatch) -> Result<(), ForestError>) -> Result<(), ForestError> {
     if batch_size == 0 { return Err(ForestError::new("batch_size must be greater than zero")); }
     let mut reader = csv::Reader::from_path(path).map_err(|error| file_error("could not open CSV", error))?;
-    let source_names: Vec<_> =
-        reader.headers().map_err(|error| file_error("could not read CSV header", error))?.iter().map(str::to_owned).collect();
+    let source_names: Vec<_> = reader.headers().map_err(|error| file_error("could not read CSV header", error))?.iter().map(str::to_owned).collect();
     let positions: HashMap<_, _> = source_names.iter().enumerate().map(|(index, name)| (name.as_str(), index)).collect();
-    let sources: Result<Vec<_>, _> = names
-        .iter()
-        .map(|name| positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("prediction column {name:?} is missing"))))
-        .collect();
+    let sources: Result<Vec<_>, _> = names.iter()
+        .map(|name| positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("prediction column {name:?} is missing")))).collect();
     let sources = sources?;
     let batch = |columns: Vec<Vec<String>>| {
         let fields: Vec<_> = names.iter().map(|name| Field::new(name, DataType::Utf8, false)).collect();
         let arrays: Vec<ArrayRef> = columns.into_iter().map(|values| Arc::new(StringArray::from(values)) as ArrayRef).collect();
-        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
-            .map_err(|error| file_error("could not build prediction Arrow table", error))
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).map_err(|error| file_error("could not build prediction Arrow table", error))
     };
     let mut columns: Vec<Vec<String>> = names.iter().map(|_| Vec::with_capacity(batch_size)).collect();
     for record in reader.records() {
@@ -353,17 +226,10 @@ fn prediction_columns(
 }
 
 fn class_text(value: &SavedValue) -> String {
-    match value.kind {
-        0 => String::new(),
-        1 => "nan".to_owned(),
-        2 => if value.value == "1" { "true" } else { "false" }.to_owned(),
-        _ => value.value.clone(),
-    }
+    match value.kind { 0 => String::new(), 1 => "nan".to_owned(), 2 => if value.value == "1" { "true" } else { "false" }.to_owned(), _ => value.value.clone() }
 }
 
-pub fn predict_csv(
-    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
-) -> Result<(), ForestError> {
+pub fn predict_csv(model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool) -> Result<(), ForestError> {
     let input = input.as_ref();
     let output = output.as_ref();
     let encoder = model.encoder();
@@ -374,16 +240,12 @@ pub fn predict_csv(
             writer.write_record(["prediction"]).map_err(|error| file_error("could not write CSV", error))?;
             prediction_columns(input, encoder.input_names(), batch_size, |batch| {
                 let x = encoder.transform_arrow(&batch, markers)?;
-                for value in forest.predict(x.view())? {
-                    writer.serialize([value]).map_err(|error| file_error("could not write CSV", error))?;
-                }
+                for value in forest.predict(x.view())? { writer.serialize([value]).map_err(|error| file_error("could not write CSV", error))?; }
                 Ok(())
             })?;
         }
         SavedModel::Classification { forest, classes, .. } if proba => {
-            writer
-                .write_record(classes.iter().map(|class| format!("proba_{}", class_text(class))))
-                .map_err(|error| file_error("could not write CSV", error))?;
+            writer.write_record(classes.iter().map(|class| format!("proba_{}", class_text(class)))).map_err(|error| file_error("could not write CSV", error))?;
             prediction_columns(input, encoder.input_names(), batch_size, |batch| {
                 let x = encoder.transform_arrow(&batch, markers)?;
                 for row in forest.predict_proba(x.view())?.chunks_exact(classes.len()) {
@@ -397,9 +259,7 @@ pub fn predict_csv(
             prediction_columns(input, encoder.input_names(), batch_size, |batch| {
                 let x = encoder.transform_arrow(&batch, markers)?;
                 for class in forest.predict(x.view())? {
-                    writer
-                        .write_record([class_text(&classes[class as usize])])
-                        .map_err(|error| file_error("could not write CSV", error))?;
+                    writer.write_record([class_text(&classes[class as usize])]).map_err(|error| file_error("could not write CSV", error))?;
                 }
                 Ok(())
             })?;
@@ -409,8 +269,7 @@ pub fn predict_csv(
 }
 
 fn is_arrow(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
+    path.extension().and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("arrow") || extension.eq_ignore_ascii_case("feather"))
 }
 
@@ -451,20 +310,16 @@ fn arrow_saved_value(array: &dyn Array, row: usize) -> Result<Option<SavedValue>
         | DataType::Timestamp(_, _)
         | DataType::Time32(_)
         | DataType::Time64(_) => (5, array_value_to_string(array, row).map_err(|error| file_error("could not read Arrow target", error))?),
-        data_type => {
-            return Err(ForestError::new(format!("unsupported Arrow target type {data_type}")));
-        }
+        data_type => { return Err(ForestError::new(format!("unsupported Arrow target type {data_type}"))); }
     };
     Ok(Some(SavedValue { kind, value }))
 }
 
 fn concat_batches(batches: &[RecordBatch], schema: Arc<Schema>) -> Result<RecordBatch, ForestError> {
-    let columns: Result<Vec<_>, _> = (0..schema.fields().len())
-        .map(|column| {
-            let arrays: Vec<&dyn Array> = batches.iter().map(|batch| batch.column(column).as_ref()).collect();
-            concat(&arrays).map_err(|error| file_error("could not join sampled Arrow batches", error))
-        })
-        .collect();
+    let columns: Result<Vec<_>, _> = (0..schema.fields().len()).map(|column| {
+        let arrays: Vec<&dyn Array> = batches.iter().map(|batch| batch.column(column).as_ref()).collect();
+        concat(&arrays).map_err(|error| file_error("could not join sampled Arrow batches", error))
+    }).collect();
     RecordBatch::try_new(schema, columns?).map_err(|error| file_error("could not build sampled Arrow table", error))
 }
 
@@ -476,10 +331,8 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
     if names.is_empty() || names.iter().collect::<BTreeSet<_>>().len() != names.len() {
         return Err(ForestError::new("Arrow column names must be present and unique"));
     }
-    let target = names
-        .iter()
-        .position(|name| name == &options.target)
-        .ok_or_else(|| ForestError::new(format!("target column {:?} was not found", options.target)))?;
+    let target =
+        names.iter().position(|name| name == &options.target).ok_or_else(|| ForestError::new(format!("target column {:?} was not found", options.target)))?;
     let mut rows = 0;
     let mut target_sample = Vec::with_capacity(1_000);
     let mut rng = StdRng::seed_from_u64(options.seed.unwrap_or_else(rand::random) ^ 0x517c_c1b7_2722_0a95);
@@ -488,8 +341,7 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
         let array = batch.column(target);
         for row in 0..batch.num_rows() {
             let value = arrow_saved_value(array.as_ref(), row)?;
-            if rows < 1_000 { target_sample.push(value); }
-            else {
+            if rows < 1_000 { target_sample.push(value); } else {
                 let replace = rng.random_range(0..=rows);
                 if replace < 1_000 { target_sample[replace] = value; }
             }
@@ -497,18 +349,10 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
         }
     }
     if rows == 0 { return Err(ForestError::new("training Arrow file must contain at least one row")); }
-    let estimated_outputs = if options.task == Task::Classification {
-        target_sample.iter().flatten().collect::<BTreeSet<_>>().len().saturating_sub(1).max(1)
-    } else { 1 };
-    let estimated = plan_fit(
-        rows,
-        options.n_trees,
-        options.bootstrap_fraction,
-        options.bootstrap_max,
-        options.resolved_replacement(rows),
-        options.oob,
-        estimated_outputs,
-    )?;
+    let estimated_outputs =
+        if options.task == Task::Classification { target_sample.iter().flatten().collect::<BTreeSet<_>>().len().saturating_sub(1).max(1) } else { 1 };
+    let estimated =
+        plan_fit(rows, options.n_trees, options.bootstrap_fraction, options.bootstrap_max, options.resolved_replacement(rows), options.oob, estimated_outputs)?;
     let mut selected = uniform_sample_indices(rows, estimated.pool_rows, options.seed, 2);
     selected.sort_unstable();
     let (sources, _, metadata, dates) = predictor_layout(&names, target, options)?;
@@ -523,21 +367,15 @@ pub fn fit_arrow(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Sav
         while next < selected.len() && selected[next] < end { next += 1 }
         if next > start {
             let indices = UInt32Array::from(selected[start..next].iter().map(|row| (row - global_row) as u32).collect::<Vec<_>>());
-            let columns: Result<Vec<_>, _> = batch
-                .columns()
-                .iter()
-                .map(|array| take(array.as_ref(), &indices, None).map_err(|error| file_error("could not select sampled Arrow rows", error)))
-                .collect();
-            batches.push(
-                RecordBatch::try_new(batch.schema(), columns?).map_err(|error| file_error("could not build sampled Arrow batch", error))?,
-            );
+            let columns: Result<Vec<_>, _> = batch.columns().iter()
+                .map(|array| take(array.as_ref(), &indices, None).map_err(|error| file_error("could not select sampled Arrow rows", error))).collect();
+            batches.push(RecordBatch::try_new(batch.schema(), columns?).map_err(|error| file_error("could not build sampled Arrow batch", error))?);
         }
         global_row = end;
     }
     if next != selected.len() { return Err(ForestError::new("Arrow input ended before all sampled rows were found")); }
     let selected_batch = concat_batches(&batches, schema)?;
-    let targets: Result<Vec<_>, _> =
-        (0..selected_batch.num_rows()).map(|row| arrow_saved_value(selected_batch.column(target).as_ref(), row)).collect();
+    let targets: Result<Vec<_>, _> = (0..selected_batch.num_rows()).map(|row| arrow_saved_value(selected_batch.column(target).as_ref(), row)).collect();
     let targets = targets?;
     let predictors = selected_batch.project(&sources).map_err(|error| file_error("could not select predictor columns", error))?;
     fit_sampled(&predictors, &targets, rows, options, metadata, dates)
@@ -548,9 +386,7 @@ fn arrow_output_writer(path: &Path, schema: Arc<Schema>) -> Result<FileWriter<Fi
     FileWriter::try_new(file, &schema).map_err(|error| file_error("could not create Arrow writer", error))
 }
 
-pub fn predict_arrow(
-    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
-) -> Result<(), ForestError> {
+pub fn predict_arrow(model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool) -> Result<(), ForestError> {
     if batch_size == 0 { return Err(ForestError::new("batch_size must be greater than zero")); }
     let input = input.as_ref();
     let output = output.as_ref();
@@ -558,17 +394,14 @@ pub fn predict_arrow(
     let mut reader = arrow_reader(input)?;
     let schema = reader.schema();
     let positions: HashMap<_, _> = schema.fields().iter().enumerate().map(|(index, field)| (field.name().as_str(), index)).collect();
-    let sources: Result<Vec<_>, _> = encoder
-        .input_names()
-        .iter()
-        .map(|name| positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("prediction column {name:?} is missing"))))
-        .collect();
+    let sources: Result<Vec<_>, _> = encoder.input_names().iter()
+        .map(|name| positions.get(name.as_str()).copied().ok_or_else(|| ForestError::new(format!("prediction column {name:?} is missing")))).collect();
     let sources = sources?;
     let output_schema = match model {
         SavedModel::Regression { .. } => Arc::new(Schema::new(vec![Field::new("prediction", DataType::Float32, false)])),
-        SavedModel::Classification { classes, .. } if proba => Arc::new(Schema::new(
-            classes.iter().map(|class| Field::new(format!("proba_{}", class_text(class)), DataType::Float32, false)).collect::<Vec<_>>(),
-        )),
+        SavedModel::Classification { classes, .. } if proba => {
+            Arc::new(Schema::new(classes.iter().map(|class| Field::new(format!("proba_{}", class_text(class)), DataType::Float32, false)).collect::<Vec<_>>()))
+        }
         SavedModel::Classification { .. } => Arc::new(Schema::new(vec![Field::new("prediction", DataType::Utf8, false)])),
     };
     let mut writer = arrow_output_writer(output, output_schema.clone())?;
@@ -579,25 +412,18 @@ pub fn predict_arrow(
             let predictors = batch.project(&sources).map_err(|error| file_error("could not select prediction columns", error))?;
             let x = encoder.transform_arrow(&predictors, &model.metadata().markers)?;
             let arrays: Vec<ArrayRef> = match model {
-                SavedModel::Regression { forest, .. } => {
-                    vec![Arc::new(Float32Array::from(forest.predict(x.view())?))]
-                }
+                SavedModel::Regression { forest, .. } => { vec![Arc::new(Float32Array::from(forest.predict(x.view())?))] }
                 SavedModel::Classification { forest, classes, .. } if proba => {
                     let probabilities = forest.predict_proba(x.view())?;
-                    (0..classes.len())
-                        .map(|class| {
-                            Arc::new(Float32Array::from(
-                                probabilities.chunks_exact(classes.len()).map(|row| row[class]).collect::<Vec<_>>(),
-                            )) as ArrayRef
-                        })
-                        .collect()
+                    (0..classes.len()).map(|class| {
+                        Arc::new(Float32Array::from(probabilities.chunks_exact(classes.len()).map(|row| row[class]).collect::<Vec<_>>())) as ArrayRef
+                    }).collect()
                 }
                 SavedModel::Classification { forest, classes, .. } => vec![Arc::new(StringArray::from(
                     forest.predict(x.view())?.into_iter().map(|class| class_text(&classes[class as usize])).collect::<Vec<_>>(),
                 ))],
             };
-            let output_batch = RecordBatch::try_new(output_schema.clone(), arrays)
-                .map_err(|error| file_error("could not construct Arrow output", error))?;
+            let output_batch = RecordBatch::try_new(output_schema.clone(), arrays).map_err(|error| file_error("could not construct Arrow output", error))?;
             writer.write(&output_batch).map_err(|error| file_error("could not write Arrow output", error))?;
         }
     }
@@ -609,15 +435,11 @@ pub fn fit_file(path: impl AsRef<Path>, options: &FileFitOptions) -> Result<Save
     if is_arrow(path) { fit_arrow(path, options) } else { fit_csv(path, options) }
 }
 
-pub fn predict_file(
-    model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool,
-) -> Result<(), ForestError> {
+pub fn predict_file(model: &SavedModel, input: impl AsRef<Path>, output: impl AsRef<Path>, batch_size: usize, proba: bool) -> Result<(), ForestError> {
     let input = input.as_ref();
     let output = output.as_ref();
     if is_arrow(input) || is_arrow(output) {
-        if !is_arrow(input) || !is_arrow(output) {
-            return Err(ForestError::new("Arrow prediction currently requires both input and output to be Arrow"));
-        }
+        if !is_arrow(input) || !is_arrow(output) { return Err(ForestError::new("Arrow prediction currently requires both input and output to be Arrow")); }
         predict_arrow(model, input, output, batch_size, proba)
     } else { predict_csv(model, input, output, batch_size, proba) }
 }
@@ -636,35 +458,28 @@ pub fn convert_csv_to_arrow(input: impl AsRef<Path>, output: impl AsRef<Path>, b
         let record = record.map_err(|error| file_error("could not read CSV", error))?;
         for (column, value) in record.iter().enumerate() {
             if value.is_empty() || value.parse::<i64>().is_ok() { continue; }
-            if value.parse::<f64>().is_ok_and(f64::is_finite) { kinds[column] = ConvertedKind::Float; } else { return Err(ForestError::new(format!("column {:?} has nonnumeric value {value:?} at row {row}", names[column]))); }
+            if value.parse::<f64>().is_ok_and(f64::is_finite) { kinds[column] = ConvertedKind::Float; }
+            else { return Err(ForestError::new(format!("column {:?} has nonnumeric value {value:?} at row {row}", names[column]))); }
         }
     }
     let schema = Arc::new(Schema::new(
-        names
-            .iter()
-            .zip(&kinds)
-            .map(|(name, kind)| {
-                Field::new(name, if matches!(kind, ConvertedKind::Integer) { DataType::Int64 } else { DataType::Float64 }, true)
-            })
-            .collect::<Vec<_>>(),
-    ));
+        names.iter().zip(&kinds)
+            .map(|(name, kind)| Field::new(name, if matches!(kind, ConvertedKind::Integer) { DataType::Int64 } else { DataType::Float64 }, true))
+            .collect::<Vec<_>>()));
     let mut writer = arrow_output_writer(output, schema.clone())?;
     let mut reader = csv::Reader::from_path(input).map_err(|error| file_error("could not open CSV", error))?;
     let mut rows: Vec<Vec<Option<String>>> = names.iter().map(|_| Vec::with_capacity(batch_size)).collect();
     let write_rows = |rows: &mut Vec<Vec<Option<String>>>, writer: &mut FileWriter<File>| -> Result<(), ForestError> {
         if rows[0].is_empty() { return Ok(()); }
-        let arrays: Result<Vec<ArrayRef>, ForestError> = rows
-            .iter()
-            .zip(&kinds)
-            .map(|(values, kind)| match kind {
-                ConvertedKind::Integer => Ok(Arc::new(Int64Array::from(
-                    values.iter().map(|value| value.as_ref().map(|value| value.parse::<i64>().unwrap())).collect::<Vec<_>>(),
-                )) as ArrayRef),
+        let arrays: Result<Vec<ArrayRef>, ForestError> =
+            rows.iter().zip(&kinds).map(|(values, kind)| match kind {
+                ConvertedKind::Integer => {
+                    Ok(Arc::new(Int64Array::from(values.iter().map(|value| value.as_ref().map(|value| value.parse::<i64>().unwrap())).collect::<Vec<_>>()))
+                        as ArrayRef)
+                }
                 ConvertedKind::Float => Ok(Arc::new(Float64Array::from(
-                    values.iter().map(|value| value.as_ref().map(|value| value.parse::<f64>().unwrap())).collect::<Vec<_>>(),
-                )) as ArrayRef),
-            })
-            .collect();
+                    values.iter().map(|value| value.as_ref().map(|value| value.parse::<f64>().unwrap())).collect::<Vec<_>>())) as ArrayRef),
+            }).collect();
         let batch = RecordBatch::try_new(schema.clone(), arrays?).map_err(|error| file_error("could not construct Arrow batch", error))?;
         writer.write(&batch).map_err(|error| file_error("could not write Arrow output", error))?;
         rows.iter_mut().for_each(Vec::clear);

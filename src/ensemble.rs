@@ -8,9 +8,7 @@ pub(crate) fn tree_seeds(config: &Config) -> Vec<u64> {
     (0..config.n_trees).map(|_| rng.random()).collect()
 }
 
-pub(crate) fn add_importance(total: &mut [f32], importance: &[f32]) {
-    total.iter_mut().zip(importance).for_each(|(total, value)| *total += value);
-}
+pub(crate) fn add_importance(total: &mut [f32], importance: &[f32]) { total.iter_mut().zip(importance).for_each(|(total, value)| *total += value); }
 
 pub(crate) fn normalize_importance(importance: &mut [f32]) {
     let sum = importance.iter().sum::<f32>();
@@ -33,8 +31,7 @@ pub(crate) type AssembledForest<T> = (Vec<T>, Vec<f32>, Option<Vec<f32>>, Option
 
 pub(crate) fn assemble_forest<T, N>(
     built: Vec<BuiltTree<T>>, n_features: usize, outputs: usize, oob_indices: Option<Vec<usize>>, track_oob: bool,
-    mut add_oob: impl FnMut(&T, usize, &mut [f32]), mut into_native: impl FnMut(T) -> N,
-) -> AssembledForest<N> {
+    mut add_oob: impl FnMut(&T, usize, &mut [f32]), mut into_native: impl FnMut(T) -> N) -> AssembledForest<N> {
     let mut trees = Vec::with_capacity(built.len());
     let mut values = oob_indices.as_ref().map(|indices| vec![0.0; indices.len() * outputs]);
     let mut counts = oob_indices.as_ref().map(|indices| vec![0; indices.len()]);
@@ -57,25 +54,18 @@ pub(crate) fn assemble_forest<T, N>(
 }
 
 pub(crate) fn combined_oob(
-    left: Option<(&[f32], &[u32])>, right: Option<(&[f32], &[u32])>, outputs: usize,
-) -> Result<(Option<Vec<f32>>, Option<Vec<u32>>), ForestError> {
+    left: Option<(&[f32], &[u32])>, right: Option<(&[f32], &[u32])>, outputs: usize) -> Result<(Option<Vec<f32>>, Option<Vec<u32>>), ForestError> {
     match (left, right) {
         (Some((left, left_counts)), Some((right, right_counts))) => {
             let counts: Vec<_> = left_counts.iter().zip(right_counts).map(|(a, b)| a + b).collect();
-            let values = left
-                .chunks_exact(outputs)
-                .zip(left_counts)
-                .zip(right.chunks_exact(outputs).zip(right_counts))
-                .zip(&counts)
+            let values = left.chunks_exact(outputs).zip(left_counts).zip(right.chunks_exact(outputs).zip(right_counts)).zip(&counts)
                 .flat_map(|(((left, &lc), (right, &rc)), &count)| {
                     (0..outputs).map(move |output| {
                         if count == 0 { f32::NAN } else {
-                            (if lc == 0 { 0.0 } else { left[output] * lc as f32 } + if rc == 0 { 0.0 } else { right[output] * rc as f32 })
-                                / count as f32
+                            (if lc == 0 { 0.0 } else { left[output] * lc as f32 } + if rc == 0 { 0.0 } else { right[output] * rc as f32 }) / count as f32
                         }
                     })
-                })
-                .collect();
+                }).collect();
             Ok((Some(values), Some(counts)))
         }
         (None, None) => Ok((None, None)),

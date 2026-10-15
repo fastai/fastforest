@@ -3,12 +3,7 @@ use ndarray::ArrayView2;
 use crate::ForestError;
 
 #[derive(Clone, Debug, Default)]
-pub struct Projections {
-    pub phys: Vec<u32>,
-    pub base: Vec<u32>,
-    pub tables: Vec<u32>,
-    pub offsets: Vec<usize>,
-}
+pub struct Projections { pub phys: Vec<u32>, pub base: Vec<u32>, pub tables: Vec<u32>, pub offsets: Vec<usize> }
 
 impl Projections {
     pub fn direct(n_features: usize) -> Self {

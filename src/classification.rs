@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::class_split::{ClassSplitScratch, find_class_split};
 use crate::ensemble::{assemble_forest, combined_importance, combined_oob, tree_seeds};
 use crate::forest::{
-    oob_rows, sampled_rows_with_mask, validate_batch, validate_encoded_data, validate_missing_ranks, validate_prediction_data,
-    validate_tracking,
+    oob_rows, sampled_rows_with_mask, validate_batch, validate_encoded_data, validate_missing_ranks, validate_prediction_data, validate_tracking,
 };
 use crate::prediction::{PredictionTree, add_block_by, predict_outputs, row_block_size, trees_per_batch};
 use crate::projection::{Projections, TrainingData};
@@ -36,9 +35,7 @@ impl ClassTree {
 }
 
 impl PredictionTree for ClassTree {
-    fn prediction_bytes(&self) -> usize {
-        std::mem::size_of_val(self.nodes.as_slice()) + std::mem::size_of_val(self.probabilities.as_slice())
-    }
+    fn prediction_bytes(&self) -> usize { std::mem::size_of_val(self.nodes.as_slice()) + std::mem::size_of_val(self.probabilities.as_slice()) }
     fn add_prediction_by(&self, value: impl Fn(usize) -> f32, output: &mut [f32]) { self.add_probabilities_by(value, output) }
 }
 
@@ -46,17 +43,12 @@ struct TrainingClassTree { nodes: Vec<TrainingClassNode>, probabilities: Vec<f32
 
 impl TrainingClassTree {
     fn leaf_by(&self, value: impl Fn(usize) -> u32, missing_ranks: &[u32]) -> usize {
-        self.nodes
-            [leaf_index(&self.nodes, value, |feature, observed| observed == missing_ranks[feature], |observed, cutoff| observed >= cutoff)]
-        .value as usize
+        self.nodes[leaf_index(&self.nodes, value, |feature, observed| observed == missing_ranks[feature], |observed, cutoff| observed >= cutoff)].value as usize
     }
 
     fn add_probabilities_by(&self, value: impl Fn(usize) -> u32, missing_ranks: &[u32], output: &mut [f32]) {
         let leaf = self.leaf_by(value, missing_ranks);
-        output
-            .iter_mut()
-            .zip(&self.probabilities[leaf * self.n_classes..(leaf + 1) * self.n_classes])
-            .for_each(|(total, value)| *total += value);
+        output.iter_mut().zip(&self.probabilities[leaf * self.n_classes..(leaf + 1) * self.n_classes]).for_each(|(total, value)| *total += value);
     }
 
     fn into_native(self, cutoff_values: &[f32], cutoff_offsets: &[usize]) -> ClassTree {
@@ -65,9 +57,8 @@ impl TrainingClassTree {
     }
 
     fn build(
-        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
-        seed: u64, track_in_bag: bool,
-    ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
+        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, seed: u64,
+        track_in_bag: bool) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let (mut rows, in_bag) = sampled_rows_with_mask(x.n_rows(), config, &mut rng, track_in_bag);
         let mut tree_classes = vec![0_u32; n_classes];
@@ -94,16 +85,8 @@ impl TrainingClassTree {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClassifierForest {
-    trees: Vec<ClassTree>,
-    n_features: usize,
-    n_classes: usize,
-    feature_importances: Vec<f32>,
-    #[serde(skip)]
-    oob_decision: Option<Vec<f32>>,
-    #[serde(skip)]
-    oob_counts: Option<Vec<u32>>,
-    #[serde(skip)]
-    oob_indices: Option<Vec<usize>>,
+    trees: Vec<ClassTree>, n_features: usize, n_classes: usize, feature_importances: Vec<f32>, #[serde(skip)] oob_decision: Option<Vec<f32>>, #[serde(skip)]
+    oob_counts: Option<Vec<u32>>, #[serde(skip)] oob_indices: Option<Vec<usize>>
 }
 
 impl ClassifierForest {
@@ -117,14 +100,12 @@ impl ClassifierForest {
                 return Err(ForestError::new("saved classifier tree dimensions are invalid"));
             }
             let leaves = tree.probabilities.len() / self.n_classes;
-            if tree.probabilities.iter().any(|value| !value.is_finite()) {
-                return Err(ForestError::new("saved classifier contains a non-finite value"));
-            }
+            if tree.probabilities.iter().any(|value| !value.is_finite()) { return Err(ForestError::new("saved classifier contains a non-finite value")); }
             for node in &tree.nodes {
-                if !node.cut_val.is_finite()
-                    || node.is_leaf() && node.value as usize >= leaves
-                    || !node.is_leaf() && (node.feature() >= encoded_features || node.child as usize + 1 >= tree.nodes.len())
-                { return Err(ForestError::new("saved classifier contains an invalid node index")); }
+                if !node.cut_val.is_finite() || node.is_leaf() && node.value as usize >= leaves
+                    || !node.is_leaf() && (node.feature() >= encoded_features || node.child as usize + 1 >= tree.nodes.len()) {
+                        return Err(ForestError::new("saved classifier contains an invalid node index"));
+                    }
             }
         }
         Ok(())
@@ -137,14 +118,11 @@ impl ClassifierForest {
     }
 
     pub fn fit(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
-        cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
-    ) -> Result<Self, ForestError> {
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], config: &Config) -> Result<Self, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         if n_classes < 2 { return Err(ForestError::new("classification requires at least two classes")); }
-        if y.iter().any(|&class| class as usize >= n_classes) {
-            return Err(ForestError::new("targets contain a class outside 0..n_classes"));
-        }
+        if y.iter().any(|&class| class as usize >= n_classes) { return Err(ForestError::new("targets contain a class outside 0..n_classes")); }
         config.validate()?;
         validate_missing_ranks(data.n_features(), missing_ranks)?;
         let output_dimensions = n_classes.saturating_sub(1).max(1);
@@ -155,9 +133,8 @@ impl ClassifierForest {
 
     #[allow(clippy::too_many_arguments)]
     pub fn fit_on_tracking(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
-        cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, tracking_indices: &[usize],
-    ) -> Result<Self, ForestError> {
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], config: &Config, tracking_indices: &[usize]) -> Result<Self, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         if n_classes < 2 || y.iter().any(|&class| class as usize >= n_classes) {
             return Err(ForestError::new("classification targets must use at least two classes in 0..n_classes"));
@@ -172,9 +149,8 @@ impl ClassifierForest {
 
     #[allow(clippy::too_many_arguments)]
     pub fn fit_batch(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32],
-        cutoff_offsets: &[usize], missing_ranks: &[u32], configs: &[Config], oob_rows: Option<usize>,
-    ) -> Result<Vec<Self>, ForestError> {
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
+        missing_ranks: &[u32], configs: &[Config], oob_rows: Option<usize>) -> Result<Vec<Self>, ForestError> {
         let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
         validate_batch(configs, oob_rows)?;
         if n_classes < 2 || y.iter().any(|&class| class as usize >= n_classes) {
@@ -182,38 +158,24 @@ impl ClassifierForest {
         }
         validate_missing_ranks(data.n_features(), missing_ranks)?;
         let output_dimensions = n_classes.saturating_sub(1).max(1);
-        let configs: Vec<_> = configs
-            .iter()
-            .map(|config| {
-                let mut config = config.clone();
-                config.bootstrap_max = config.bootstrap_max.map(|max| max.saturating_mul(output_dimensions));
-                config
-            })
-            .collect();
-        configs
-            .par_iter()
-            .map(|config| Self::fit_fixed(data, y, n_classes, cutoff_values, cutoff_offsets, missing_ranks, config, oob_rows, None))
-            .collect()
+        let configs: Vec<_> = configs.iter().map(|config| {
+            let mut config = config.clone();
+            config.bootstrap_max = config.bootstrap_max.map(|max| max.saturating_mul(output_dimensions));
+            config
+        }).collect();
+        configs.par_iter().map(|config| Self::fit_fixed(data, y, n_classes, cutoff_values, cutoff_offsets, missing_ranks, config, oob_rows, None)).collect()
     }
 
     fn fit_fixed(
-        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        missing_ranks: &[u32], config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
-    ) -> Result<Self, ForestError> {
-        let built: Vec<_> = tree_seeds(config)
-            .into_par_iter()
-            .map(|seed| TrainingClassTree::build(x, y, n_classes, cutoff_offsets, missing_ranks, config, seed, config.oob))
-            .collect();
+        x: TrainingData<'_>, y: ArrayView1<'_, u32>, n_classes: usize, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
+        oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>) -> Result<Self, ForestError> {
+        let built: Vec<_> = tree_seeds(config).into_par_iter()
+            .map(|seed| TrainingClassTree::build(x, y, n_classes, cutoff_offsets, missing_ranks, config, seed, config.oob)).collect();
         let oob_indices = tracking_rows.map(<[usize]>::to_vec).or_else(|| oob_rows(x.n_rows(), config, oob_row_override));
         let (trees, feature_importances, oob_decision, oob_counts, oob_indices) = assemble_forest(
-            built,
-            x.n_features(),
-            n_classes,
-            oob_indices,
-            config.oob,
+            built, x.n_features(), n_classes, oob_indices, config.oob,
             |tree, row, output| tree.add_probabilities_by(|col| x.value(row, col), missing_ranks, output),
-            |tree| tree.into_native(cutoff_values, cutoff_offsets),
-        );
+            |tree| tree.into_native(cutoff_values, cutoff_offsets));
         Ok(Self { trees, n_features: x.n_features(), n_classes, feature_importances, oob_decision, oob_counts, oob_indices })
     }
 
@@ -229,15 +191,8 @@ impl ClassifierForest {
         let left = self.oob_decision.as_deref().zip(self.oob_counts.as_deref());
         let right = other.oob_decision.as_deref().zip(other.oob_counts.as_deref());
         let (oob_decision, oob_counts) = combined_oob(left, right, self.n_classes)?;
-        Ok(Self {
-            trees,
-            n_features: self.n_features,
-            n_classes: self.n_classes,
-            feature_importances,
-            oob_decision,
-            oob_counts,
-            oob_indices: self.oob_indices.clone(),
-        })
+        Ok(Self { trees, n_features: self.n_features, n_classes: self.n_classes, feature_importances, oob_decision, oob_counts,
+            oob_indices: self.oob_indices.clone() })
     }
 
     pub fn predict_proba(&self, x: ArrayView2<'_, f32>) -> Result<Vec<f32>, ForestError> {
@@ -252,36 +207,23 @@ impl ClassifierForest {
         let block_rows = row_block_size(x.nrows());
         let trees_per_batch = self.trees_per_batch();
         if let Some(data) = x.as_slice() {
-            predictions.par_chunks_mut(block_rows).enumerate().for_each_init(
-                || vec![0.0; block_rows * self.n_classes],
-                |probabilities, (block, predictions)| {
-                    let row_start = block * block_rows;
-                    let output = &mut probabilities[..predictions.len() * self.n_classes];
-                    add_block_by(&self.trees, predictions.len(), self.n_classes, output, trees_per_batch, |row, col| {
-                        data[(row_start + row) * self.n_features + col]
-                    });
-                    predictions
-                        .iter_mut()
-                        .zip(output.chunks_exact(self.n_classes))
-                        .for_each(|(prediction, probabilities)| *prediction = Self::class_index(probabilities));
-                },
-            );
-        }
-        else {
-            predictions.par_chunks_mut(block_rows).enumerate().for_each_init(
-                || vec![0.0; block_rows * self.n_classes],
-                |probabilities, (block, predictions)| {
-                    let row_start = block * block_rows;
-                    let output = &mut probabilities[..predictions.len() * self.n_classes];
-                    add_block_by(&self.trees, predictions.len(), self.n_classes, output, trees_per_batch, |row, col| {
-                        x[[row_start + row, col]]
-                    });
-                    predictions
-                        .iter_mut()
-                        .zip(output.chunks_exact(self.n_classes))
-                        .for_each(|(prediction, probabilities)| *prediction = Self::class_index(probabilities));
-                },
-            );
+            predictions.par_chunks_mut(block_rows).enumerate().for_each_init(|| vec![0.0; block_rows * self.n_classes], |probabilities, (block, predictions)| {
+                let row_start = block * block_rows;
+                let output = &mut probabilities[..predictions.len() * self.n_classes];
+                add_block_by(&self.trees, predictions.len(), self.n_classes, output, trees_per_batch, |row, col| {
+                    data[(row_start + row) * self.n_features + col]
+                });
+                predictions.iter_mut().zip(output.chunks_exact(self.n_classes))
+                    .for_each(|(prediction, probabilities)| *prediction = Self::class_index(probabilities));
+            });
+        } else {
+            predictions.par_chunks_mut(block_rows).enumerate().for_each_init(|| vec![0.0; block_rows * self.n_classes], |probabilities, (block, predictions)| {
+                let row_start = block * block_rows;
+                let output = &mut probabilities[..predictions.len() * self.n_classes];
+                add_block_by(&self.trees, predictions.len(), self.n_classes, output, trees_per_batch, |row, col| x[[row_start + row, col]]);
+                predictions.iter_mut().zip(output.chunks_exact(self.n_classes))
+                    .for_each(|(prediction, probabilities)| *prediction = Self::class_index(probabilities));
+            });
         }
         Ok(predictions)
     }

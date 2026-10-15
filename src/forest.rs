@@ -16,57 +16,30 @@ pub enum MaxFeatures { Sqrt, Fraction(f32) }
 
 impl MaxFeatures {
     pub(crate) fn resolve(self, total: usize) -> usize {
-        let selected = match self {
-            Self::Sqrt => (total as f64).sqrt() as usize,
-            Self::Fraction(fraction) => (total as f32 * fraction) as usize,
-        };
+        let selected = match self { Self::Sqrt => (total as f64).sqrt() as usize, Self::Fraction(fraction) => (total as f32 * fraction) as usize };
         selected.clamp(1, total)
     }
 
     fn validate(self) -> Result<(), ForestError> {
-        if let Self::Fraction(fraction) = self
-            && !(fraction.is_finite() && 0.0 < fraction && fraction <= 1.0)
-        { return Err(ForestError::new("max_features fraction must be finite and in (0, 1]")); }
+        if let Self::Fraction(fraction) = self && !(fraction.is_finite() && 0.0 < fraction && fraction <= 1.0) {
+            return Err(ForestError::new("max_features fraction must be finite and in (0, 1]"));
+        }
         Ok(())
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub n_trees: usize,
-    pub min_node_size: usize,
-    pub bootstrap_fraction: Option<f32>,
-    pub bootstrap_max: Option<usize>,
-    pub sample_rows: Option<usize>,
-    pub replacement: bool,
-    pub max_node_samples: usize,
-    pub split_prior_rows: f32,
-    pub class_weight_power: f32,
-    pub cutoff_divisor: f32,
-    pub seed: Option<u64>,
-    pub oob: bool,
-    pub random_splitter: bool,
-    pub max_features: MaxFeatures,
+    pub n_trees: usize, pub min_node_size: usize, pub bootstrap_fraction: Option<f32>, pub bootstrap_max: Option<usize>, pub sample_rows: Option<usize>,
+    pub replacement: bool, pub max_node_samples: usize, pub split_prior_rows: f32, pub class_weight_power: f32, pub cutoff_divisor: f32, pub seed: Option<u64>,
+    pub oob: bool, pub random_splitter: bool, pub max_features: MaxFeatures
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            n_trees: 50,
-            min_node_size: 8,
-            bootstrap_fraction: None,
-            bootstrap_max: Some(160_000),
-            sample_rows: None,
-            replacement: false,
-            max_node_samples: 320,
-            split_prior_rows: 3.0,
-            class_weight_power: 0.75,
-            cutoff_divisor: 10.0,
-            seed: None,
-            oob: false,
-            random_splitter: false,
-            max_features: MaxFeatures::Fraction(0.9),
-        }
+        Self { n_trees: 50, min_node_size: 8, bootstrap_fraction: None, bootstrap_max: Some(160_000), sample_rows: None, replacement: false,
+            max_node_samples: 320, split_prior_rows: 3.0, class_weight_power: 0.75, cutoff_divisor: 10.0, seed: None, oob: false, random_splitter: false,
+            max_features: MaxFeatures::Fraction(0.9) }
     }
 }
 
@@ -82,9 +55,7 @@ impl Config {
         if !bootstrap_fraction.is_finite() || bootstrap_fraction <= 0.0 {
             return Err(ForestError::new("bootstrap_fraction must be finite and greater than zero"));
         }
-        if !self.replacement && bootstrap_fraction > 1.0 {
-            return Err(ForestError::new("bootstrap_fraction cannot exceed 1 without replacement"));
-        }
+        if !self.replacement && bootstrap_fraction > 1.0 { return Err(ForestError::new("bootstrap_fraction cannot exceed 1 without replacement")); }
         if self.bootstrap_max == Some(0) { return Err(ForestError::new("bootstrap_max must be greater than zero")); }
         if self.sample_rows == Some(0) { return Err(ForestError::new("sample_rows must be greater than zero")); }
         if self.max_node_samples < 2 { return Err(ForestError::new("max_node_samples must be at least 2")); }
@@ -111,8 +82,7 @@ pub struct FitPlan { pub n_trees: usize, pub rows_per_tree: usize, pub pool_rows
 
 #[allow(clippy::too_many_arguments)]
 pub fn plan_fit(
-    n_rows: usize, n_trees: Option<usize>, bootstrap_fraction: Option<f32>, bootstrap_max: Option<usize>, replacement: bool, oob: bool,
-    output_dimensions: usize,
+    n_rows: usize, n_trees: Option<usize>, bootstrap_fraction: Option<f32>, bootstrap_max: Option<usize>, replacement: bool, oob: bool, output_dimensions: usize
 ) -> Result<FitPlan, ForestError> {
     if n_rows == 0 { return Err(ForestError::new("X must contain at least one row")); }
     if n_trees == Some(0) { return Err(ForestError::new("n_trees must be greater than zero")); }
@@ -167,7 +137,9 @@ impl Tree {
             let node = &self.nodes[node_idx];
             if node.is_leaf() { return node.value; }
             let value = value(node.feature());
-            let go_right = usize::from(if value.is_nan() { node.missing_right() } else if node.equality() { value != node.cut_val } else { value > node.cut_val });
+            let go_right = usize::from(if value.is_nan() { node.missing_right() }
+            else if node.equality() { value != node.cut_val }
+            else { value > node.cut_val });
             let child = &self.nodes[node.child as usize + go_right];
             contributions[node.feature()] += child.value - node.value;
             node_idx = node.child as usize + go_right;
@@ -185,9 +157,7 @@ struct TrainingTree { nodes: Vec<TrainingNode> }
 
 impl TrainingTree {
     fn predict_by(&self, value: impl Fn(usize) -> u32, missing_ranks: &[u32]) -> f32 {
-        self.nodes
-            [leaf_index(&self.nodes, value, |feature, observed| observed == missing_ranks[feature], |observed, cutoff| observed >= cutoff)]
-        .value
+        self.nodes[leaf_index(&self.nodes, value, |feature, observed| observed == missing_ranks[feature], |observed, cutoff| observed >= cutoff)].value
     }
 
     fn into_native(self, cutoff_values: &[f32], cutoff_offsets: &[usize]) -> Tree {
@@ -196,8 +166,7 @@ impl TrainingTree {
     }
 
     fn build(
-        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, seed: u64,
-        track_in_bag: bool,
+        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config, seed: u64, track_in_bag: bool
     ) -> (Self, Option<Vec<bool>>, Vec<f32>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let (mut rows, in_bag) = sampled_rows_with_mask(x.n_rows(), config, &mut rng, track_in_bag);
@@ -208,12 +177,7 @@ impl TrainingTree {
         grow_tree(x, &mut rows, &mut nodes, &mut importance, missing_ranks, |node, tree_node| {
             let split = find_split(x, y, node, config, cutoff_offsets, missing_ranks, &mut rng, &mut split_scratch);
             tree_node.value = split.value;
-            split.cut_col.map(|cut_col| Branch {
-                cut_col,
-                cut_val: split.cut_val,
-                equality: split.equality,
-                missing_right: split.missing_right,
-                gain: split.gain,
+            split.cut_col.map(|cut_col| Branch { cut_col, cut_val: split.cut_val, equality: split.equality, missing_right: split.missing_right, gain: split.gain
             })
         });
 
@@ -223,16 +187,8 @@ impl TrainingTree {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Forest {
-    trees: Vec<Tree>,
-    n_features: usize,
-    feature_importances: Vec<f32>,
-    pub trend: Option<(usize, f64, f64)>,
-    #[serde(skip)]
-    oob_prediction: Option<Vec<f32>>,
-    #[serde(skip)]
-    oob_counts: Option<Vec<u32>>,
-    #[serde(skip)]
-    oob_indices: Option<Vec<usize>>,
+    trees: Vec<Tree>, n_features: usize, feature_importances: Vec<f32>, pub trend: Option<(usize, f64, f64)>, #[serde(skip)] oob_prediction: Option<Vec<f32>>,
+    #[serde(skip)] oob_counts: Option<Vec<u32>>, #[serde(skip)] oob_indices: Option<Vec<usize>>
 }
 
 impl Forest {
@@ -244,9 +200,7 @@ impl Forest {
         for tree in &self.trees {
             if tree.nodes.is_empty() { return Err(ForestError::new("saved forest contains an empty tree")); }
             for node in &tree.nodes {
-                if !node.cut_val.is_finite() || !node.value.is_finite() {
-                    return Err(ForestError::new("saved forest contains a non-finite value"));
-                }
+                if !node.cut_val.is_finite() || !node.value.is_finite() { return Err(ForestError::new("saved forest contains a non-finite value")); }
                 if !node.is_leaf() && (node.feature() >= encoded_features || node.child as usize + 1 >= tree.nodes.len()) {
                     return Err(ForestError::new("saved forest contains an invalid node index"));
                 }
@@ -256,9 +210,8 @@ impl Forest {
     }
 
     pub fn fit(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        missing_ranks: &[u32], config: &Config,
-    ) -> Result<Self, ForestError> {
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        config: &Config) -> Result<Self, ForestError> {
         let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         config.validate()?;
         validate_missing_ranks(data.n_features(), missing_ranks)?;
@@ -266,9 +219,8 @@ impl Forest {
     }
 
     pub fn fit_on_tracking(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        missing_ranks: &[u32], config: &Config, tracking_indices: &[usize],
-    ) -> Result<Self, ForestError> {
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        config: &Config, tracking_indices: &[usize]) -> Result<Self, ForestError> {
         let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         config.validate()?;
         validate_missing_ranks(data.n_features(), missing_ranks)?;
@@ -277,37 +229,25 @@ impl Forest {
     }
 
     pub fn fit_batch(
-        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
-        missing_ranks: &[u32], configs: &[Config], oob_rows: Option<usize>,
-    ) -> Result<Vec<Self>, ForestError> {
+        x: ArrayView2<'_, u32>, projections: &Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
+        configs: &[Config], oob_rows: Option<usize>) -> Result<Vec<Self>, ForestError> {
         let data = validate_training_data(x, projections, y, cutoff_values, cutoff_offsets)?;
         validate_batch(configs, oob_rows)?;
         validate_missing_ranks(data.n_features(), missing_ranks)?;
-        configs
-            .par_iter()
-            .map(|config| Self::fit_fixed(data, y, cutoff_values, cutoff_offsets, missing_ranks, config, oob_rows, None))
-            .collect()
+        configs.par_iter().map(|config| Self::fit_fixed(data, y, cutoff_values, cutoff_offsets, missing_ranks, config, oob_rows, None)).collect()
     }
 
     fn fit_fixed(
-        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32],
-        config: &Config, oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>,
-    ) -> Result<Self, ForestError> {
-        let built: Vec<_> = tree_seeds(config)
-            .into_par_iter()
-            .map(|seed| TrainingTree::build(x, y, cutoff_offsets, missing_ranks, config, seed, config.oob))
-            .collect();
+        x: TrainingData<'_>, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize], missing_ranks: &[u32], config: &Config,
+        oob_row_override: Option<usize>, tracking_rows: Option<&[usize]>) -> Result<Self, ForestError> {
+        let built: Vec<_> =
+            tree_seeds(config).into_par_iter().map(|seed| TrainingTree::build(x, y, cutoff_offsets, missing_ranks, config, seed, config.oob)).collect();
 
         let oob_indices = tracking_rows.map(<[usize]>::to_vec).or_else(|| oob_rows(x.n_rows(), config, oob_row_override));
         let (trees, feature_importances, oob_prediction, oob_counts, oob_indices) = assemble_forest(
-            built,
-            x.n_features(),
-            1,
-            oob_indices,
-            config.oob,
-            |tree, row, output| { output[0] += tree.predict_by(|col| x.value(row, col), missing_ranks); },
-            |tree| tree.into_native(cutoff_values, cutoff_offsets),
-        );
+            built, x.n_features(), 1, oob_indices, config.oob, |tree, row, output| {
+                output[0] += tree.predict_by(|col| x.value(row, col), missing_ranks);
+            }, |tree| tree.into_native(cutoff_values, cutoff_offsets));
 
         Ok(Self { trees, n_features: x.n_features(), feature_importances, trend: None, oob_prediction, oob_counts, oob_indices })
     }
@@ -324,14 +264,7 @@ impl Forest {
         let left = self.oob_prediction.as_deref().zip(self.oob_counts.as_deref());
         let right = other.oob_prediction.as_deref().zip(other.oob_counts.as_deref());
         let (oob_prediction, oob_counts) = combined_oob(left, right, 1)?;
-        Ok(Self {
-            trees,
-            trend: self.trend,
-            n_features: self.n_features,
-            feature_importances,
-            oob_prediction,
-            oob_counts,
-            oob_indices: self.oob_indices.clone(),
+        Ok(Self { trees, trend: self.trend, n_features: self.n_features, feature_importances, oob_prediction, oob_counts, oob_indices: self.oob_indices.clone()
         })
     }
 
@@ -354,10 +287,11 @@ impl Forest {
         let mut predictions = vec![0.0; x.nrows() * self.trees.len()];
         if let Some(data) = x.as_slice() {
             predictions.par_chunks_mut(self.trees.len()).zip(data.par_chunks_exact(self.n_features)).for_each(|(predictions, row)| {
-                predictions.iter_mut().zip(&self.trees).for_each(|(prediction, tree)| { *prediction = tree.predict_by(|col| row[col]); });
+                predictions.iter_mut().zip(&self.trees).for_each(|(prediction, tree)| {
+                    *prediction = tree.predict_by(|col| row[col]);
+                });
             });
-        }
-        else {
+        } else {
             predictions.par_chunks_mut(self.trees.len()).enumerate().for_each(|(row_idx, predictions)| {
                 predictions.iter_mut().zip(&self.trees).for_each(|(prediction, tree)| {
                     *prediction = tree.predict_by(|col| x[[row_idx, col]]);
@@ -374,13 +308,11 @@ impl Forest {
         if self.n_features == 0 { return Ok((vec![bias; x.nrows()], bias, Vec::new())); }
         let mut predictions = vec![0.0; x.nrows()];
         let mut contributions = vec![0.0; x.nrows() * self.n_features];
-        predictions.par_iter_mut().zip(contributions.par_chunks_mut(self.n_features)).enumerate().for_each(
-            |(row_idx, (prediction, contributions))| {
-                for tree in &self.trees { *prediction += tree.explain_by(|col| x[[row_idx, col]], contributions); }
-                *prediction /= n_trees;
-                contributions.iter_mut().for_each(|value| *value /= n_trees);
-            },
-        );
+        predictions.par_iter_mut().zip(contributions.par_chunks_mut(self.n_features)).enumerate().for_each(|(row_idx, (prediction, contributions))| {
+            for tree in &self.trees { *prediction += tree.explain_by(|col| x[[row_idx, col]], contributions); }
+            *prediction /= n_trees;
+            contributions.iter_mut().for_each(|value| *value /= n_trees);
+        });
         Ok((predictions, bias, contributions))
     }
 
@@ -427,9 +359,7 @@ impl fmt::Display for ForestError { fn fmt(&self, f: &mut fmt::Formatter<'_>) ->
 impl std::error::Error for ForestError {}
 
 pub(crate) fn validate_missing_ranks(n_features: usize, missing_ranks: &[u32]) -> Result<(), ForestError> {
-    if missing_ranks.len() != n_features {
-        return Err(ForestError::new(format!("expected {n_features} missing ranks, got {}", missing_ranks.len())));
-    }
+    if missing_ranks.len() != n_features { return Err(ForestError::new(format!("expected {n_features} missing ranks, got {}", missing_ranks.len()))); }
     Ok(())
 }
 
@@ -447,7 +377,7 @@ pub(crate) fn validate_batch(configs: &[Config], oob_rows: Option<usize>) -> Res
 }
 
 pub(crate) fn validate_training_data<'a>(
-    x: ArrayView2<'a, u32>, projections: &'a Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize],
+    x: ArrayView2<'a, u32>, projections: &'a Projections, y: ArrayView1<'_, f32>, cutoff_values: &[f32], cutoff_offsets: &[usize]
 ) -> Result<TrainingData<'a>, ForestError> {
     let data = validate_encoded_data(x, projections, y.len(), cutoff_values, cutoff_offsets)?;
     if y.iter().any(|v| !v.is_finite()) { return Err(ForestError::new("targets must all be finite")); }
@@ -455,25 +385,21 @@ pub(crate) fn validate_training_data<'a>(
 }
 
 pub(crate) fn validate_encoded_data<'a>(
-    x: ArrayView2<'a, u32>, projections: &'a Projections, y_len: usize, cutoff_values: &[f32], cutoff_offsets: &[usize],
+    x: ArrayView2<'a, u32>, projections: &'a Projections, y_len: usize, cutoff_values: &[f32], cutoff_offsets: &[usize]
 ) -> Result<TrainingData<'a>, ForestError> {
     if x.nrows() == 0 { return Err(ForestError::new("training data must contain at least one row")); }
     if x.nrows() > u32::MAX as usize { return Err(ForestError::new("training data cannot exceed 2^32-1 rows")); }
     if x.nrows() != y_len { return Err(ForestError::new(format!("X has {} rows but y has {} values", x.nrows(), y_len))); }
     projections.validate(x.ncols())?;
     let data = TrainingData { matrix: x, projections };
-    if cutoff_offsets.len() != data.n_features() + 1
-        || cutoff_offsets.first() != Some(&0)
-        || cutoff_offsets.last() != Some(&cutoff_values.len())
-        || cutoff_offsets.windows(2).any(|pair| pair[0] >= pair[1])
-    { return Err(ForestError::new("invalid native cutoff offsets")); }
+    if cutoff_offsets.len() != data.n_features() + 1 || cutoff_offsets.first() != Some(&0) || cutoff_offsets.last() != Some(&cutoff_values.len())
+        || cutoff_offsets.windows(2).any(|pair| pair[0] >= pair[1]) { return Err(ForestError::new("invalid native cutoff offsets")); }
     if cutoff_values.iter().any(|value| !value.is_finite()) { return Err(ForestError::new("native cutoff values must all be finite")); }
     for col in 0..data.n_features() {
         let cardinality = cutoff_offsets[col + 1] - cutoff_offsets[col];
         let (column, table) = data.source(col);
         let valid = if table.is_empty() { x.column(column).iter().all(|&value| (value as usize) < cardinality) } else {
-            table.iter().all(|&value| (value as usize) < cardinality)
-                && x.column(column).iter().all(|&value| (value as usize) < table.len())
+            table.iter().all(|&value| (value as usize) < cardinality) && x.column(column).iter().all(|&value| (value as usize) < table.len())
         };
         if !valid { return Err(ForestError::new(format!("encoded feature {col} contains a value outside its cutoff mapping"))); }
     }
@@ -493,12 +419,12 @@ pub(crate) fn sample_rows(n_rows: usize, config: &Config, rng: &mut StdRng) -> V
         size
     });
     sample_size = sample_size.min(n_rows);
-    if config.replacement { (0..sample_size).map(|_| u32::try_from(rng.random_range(0..n_rows)).unwrap()).collect() } else { rand::seq::index::sample(rng, n_rows, sample_size).into_vec().into_iter().map(|row| u32::try_from(row).unwrap()).collect() }
+    if config.replacement { (0..sample_size).map(|_| u32::try_from(rng.random_range(0..n_rows)).unwrap()).collect() } else {
+        rand::seq::index::sample(rng, n_rows, sample_size).into_vec().into_iter().map(|row| u32::try_from(row).unwrap()).collect()
+    }
 }
 
-pub(crate) fn sampled_rows_with_mask(
-    n_rows: usize, config: &Config, rng: &mut StdRng, track_in_bag: bool,
-) -> (Vec<u32>, Option<Vec<bool>>) {
+pub(crate) fn sampled_rows_with_mask(n_rows: usize, config: &Config, rng: &mut StdRng, track_in_bag: bool) -> (Vec<u32>, Option<Vec<bool>>) {
     let rows = sample_rows(n_rows, config, rng);
     let in_bag = track_in_bag.then(|| {
         let mut mask = vec![false; n_rows];

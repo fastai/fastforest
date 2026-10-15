@@ -8,83 +8,46 @@ use std::collections::HashSet;
 use crate::Config;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Split {
-    pub cut_col: Option<usize>,
-    pub cut_val: u32,
-    pub equality: bool,
-    pub missing_right: bool,
-    pub value: f32,
-    pub gain: f32,
-}
+pub(crate) struct Split { pub cut_col: Option<usize>, pub cut_val: u32, pub equality: bool, pub missing_right: bool, pub value: f32, pub gain: f32 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct NodeRows<'a> { pub rows: &'a [u32], pub start: usize, pub n_rows: usize }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Candidate {
-    left_target: f32,
-    left_sqr_target: f32,
-    left_count: usize,
-    cut_col: usize,
-    cut_val: u32,
-    equality: bool,
-    missing_target: f32,
-    missing_sqr_target: f32,
-    missing_count: usize,
-    missing_right: bool,
+    left_target: f32, left_sqr_target: f32, left_count: usize, cut_col: usize, cut_val: u32, equality: bool, missing_target: f32, missing_sqr_target: f32,
+    missing_count: usize, missing_right: bool
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct DenseFeature {
-    pub(crate) cardinality: usize,
-    pub(crate) offset: usize,
-    pub(crate) column: usize,
-    pub(crate) table: usize,
-}
+pub(crate) struct DenseFeature { pub(crate) cardinality: usize, pub(crate) offset: usize, pub(crate) column: usize, pub(crate) table: usize }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RankedRow { pub(crate) value: u32, pub(crate) row: usize }
 
 #[derive(Default)]
 pub(crate) struct SplitScratch {
-    candidates: Vec<Candidate>,
-    keys: HashSet<u64>,
-    ranked_rows: Vec<RankedRow>,
-    bin_counts: Vec<usize>,
-    bin_targets: Vec<f32>,
-    bin_squares: Vec<f32>,
-    dense_features: Vec<DenseFeature>,
-    dense_lookup: Vec<usize>,
+    candidates: Vec<Candidate>, keys: HashSet<u64>, ranked_rows: Vec<RankedRow>, bin_counts: Vec<usize>, bin_targets: Vec<f32>, bin_squares: Vec<f32>,
+    dense_features: Vec<DenseFeature>, dense_lookup: Vec<usize>
 }
 
-struct EvaluationWindow {
-    start: usize,
-    n_rows: usize,
-    sum_target: f32,
-    sum_sqr_target: f32,
-}
+struct EvaluationWindow { start: usize, n_rows: usize, sum_target: f32, sum_sqr_target: f32 }
 
 pub(crate) fn find_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
-    rng: &mut StdRng, scratch: &mut SplitScratch,
-) -> Split {
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32], rng: &mut StdRng,
+    scratch: &mut SplitScratch) -> Split {
     let max_samples = evaluation_rows(node.n_rows, config);
     if x.n_features() == 0 || node.n_rows < config.min_node_size || all_same(y, node, max_samples) { return leaf(y, node); }
-    if config.random_splitter { random_split(x, y, node, config, missing_ranks, rng, scratch) } else { histogram_split(x, y, node, config, cutoff_offsets, missing_ranks, rng, scratch) }
+    if config.random_splitter { random_split(x, y, node, config, missing_ranks, rng, scratch) }
+    else { histogram_split(x, y, node, config, cutoff_offsets, missing_ranks, rng, scratch) }
 }
 
-fn finish_split(
-    y: ArrayView1<'_, f32>, node: NodeRows<'_>, window: &EvaluationWindow, best: Option<Candidate>, criterion: f32, impurity: f32,
-) -> Split {
+fn finish_split(y: ArrayView1<'_, f32>, node: NodeRows<'_>, window: &EvaluationWindow, best: Option<Candidate>, criterion: f32, impurity: f32) -> Split {
     let gain = (criterion - impurity).max(0.0);
-    Split {
-        cut_col: best.map(|candidate| candidate.cut_col),
-        cut_val: best.map_or(0, |candidate| candidate.cut_val),
-        equality: best.is_some_and(|candidate| candidate.equality),
-        missing_right: best.is_some_and(|candidate| candidate.missing_right),
+    Split { cut_col: best.map(|candidate| candidate.cut_col), cut_val: best.map_or(0, |candidate| candidate.cut_val),
+        equality: best.is_some_and(|candidate| candidate.equality), missing_right: best.is_some_and(|candidate| candidate.missing_right),
         value: if best.is_none() && window.n_rows < node.n_rows { node_mean(y, node) } else { window.sum_target / window.n_rows as f32 },
-        gain: if best.is_some() { gain } else { 0.0 },
-    }
+        gain: if best.is_some() { gain } else { 0.0 } }
 }
 
 fn leaf(y: ArrayView1<'_, f32>, node: NodeRows<'_>) -> Split {
@@ -111,12 +74,10 @@ pub(crate) fn evaluation_start(node: NodeRows<'_>, n_rows: usize, rng: &mut StdR
 
 pub(crate) fn propose_cutoffs(
     x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, keys: &mut HashSet<u64>,
-    mut add: impl FnMut(usize, u32),
-) {
+    mut add: impl FnMut(usize, u32)) {
     keys.clear();
     if features.is_empty() { return; }
-    let attempts =
-        ((used_n as f32 * (features.len() as f32).sqrt() / divisor) as usize).max(4).min(node.n_rows.saturating_mul(features.len()));
+    let attempts = ((used_n as f32 * (features.len() as f32).sqrt() / divisor) as usize).max(4).min(node.n_rows.saturating_mul(features.len()));
     for _ in 0..attempts {
         let cut_col = features[rng.random_range(0..features.len())];
         let position = rng.random_range(node.start..node.start + node.n_rows);
@@ -128,8 +89,7 @@ pub(crate) fn propose_cutoffs(
 
 pub(crate) fn dense_layout(
     x: TrainingData<'_>, features: &[usize], cutoff_offsets: &[usize], dense: &mut Vec<DenseFeature>, lookup: &mut Vec<usize>,
-    mut supported: impl FnMut(usize) -> bool,
-) -> usize {
+    mut supported: impl FnMut(usize) -> bool) -> usize {
     dense.clear();
     lookup.clear();
     lookup.reserve(features.len());
@@ -148,8 +108,7 @@ pub(crate) fn dense_layout(
 }
 
 pub(crate) fn fill_dense_bins(
-    x: TrainingData<'_>, node: NodeRows<'_>, start: usize, n_rows: usize, features: &[DenseFeature], mut add: impl FnMut(usize, usize),
-) {
+    x: TrainingData<'_>, node: NodeRows<'_>, start: usize, n_rows: usize, features: &[DenseFeature], mut add: impl FnMut(usize, usize)) {
     let tables = &x.projections.tables;
     if let Some(data) = x.matrix.as_slice() {
         let cols = x.matrix.ncols();
@@ -193,8 +152,7 @@ pub(crate) fn supported_equality(value: u32, cardinality: usize, equal: usize, t
 
 #[allow(clippy::too_many_arguments)]
 fn random_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, missing_ranks: &[u32], rng: &mut StdRng,
-    scratch: &mut SplitScratch,
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, missing_ranks: &[u32], rng: &mut StdRng, scratch: &mut SplitScratch
 ) -> Split {
     let used_n = evaluation_rows(node.n_rows, config);
     let features = sample_features(x.n_features(), config, rng);
@@ -220,28 +178,22 @@ fn random_split(
     finish_split(y, node, &window, best, criterion, impurity)
 }
 
-fn propose_candidates(
-    x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, scratch: &mut SplitScratch,
-) {
+fn propose_candidates(x: TrainingData<'_>, node: NodeRows<'_>, used_n: usize, features: &[usize], divisor: f32, rng: &mut StdRng, scratch: &mut SplitScratch) {
     scratch.candidates.clear();
     let (keys, candidates) = (&mut scratch.keys, &mut scratch.candidates);
-    propose_cutoffs(x, node, used_n, features, divisor, rng, keys, |cut_col, cut_val| {
-        candidates.push(Candidate { cut_col, cut_val, ..Candidate::default() })
-    });
+    propose_cutoffs(x, node, used_n, features, divisor, rng, keys, |cut_col, cut_val| candidates.push(Candidate { cut_col, cut_val, ..Candidate::default() }));
 }
 
 fn histogram_split(
-    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32],
-    rng: &mut StdRng, scratch: &mut SplitScratch,
-) -> Split {
+    x: TrainingData<'_>, y: ArrayView1<'_, f32>, node: NodeRows<'_>, config: &Config, cutoff_offsets: &[usize], missing_ranks: &[u32], rng: &mut StdRng,
+    scratch: &mut SplitScratch) -> Split {
     let features = sample_features(x.n_features(), config, rng);
     let window = evaluation_window(y, node, evaluation_rows(node.n_rows, config), rng);
     let impurity = weighted_loss(0.0, 0.0, 0, window.sum_target, window.sum_sqr_target, window.n_rows, config.split_prior_rows);
     let mut criterion = impurity;
     let mut best = None;
-    let total_bins = dense_layout(x, &features, cutoff_offsets, &mut scratch.dense_features, &mut scratch.dense_lookup, |cardinality| {
-        cardinality <= window.n_rows
-    });
+    let total_bins =
+        dense_layout(x, &features, cutoff_offsets, &mut scratch.dense_features, &mut scratch.dense_lookup, |cardinality| cardinality <= window.n_rows);
     scratch.bin_counts.clear();
     scratch.bin_targets.clear();
     scratch.bin_squares.clear();
@@ -274,21 +226,8 @@ fn histogram_split(
                         let left_target = scratch.bin_targets[offset + cut_val];
                         let left_sqr_target = scratch.bin_squares[offset + cut_val];
                         score_candidate(
-                            Candidate {
-                                left_target,
-                                left_sqr_target,
-                                left_count,
-                                cut_col,
-                                cut_val: cut_val as u32,
-                                equality: true,
-                                ..Candidate::default()
-                            },
-                            missing_count > 0 || window.n_rows - left_count >= left_count,
-                            &window,
-                            config,
-                            &mut criterion,
-                            &mut best,
-                        );
+                            Candidate { left_target, left_sqr_target, left_count, cut_col, cut_val: cut_val as u32, equality: true, ..Candidate::default() },
+                            missing_count > 0 || window.n_rows - left_count >= left_count, &window, config, &mut criterion, &mut best);
                     }
                 }
                 left_count += scratch.bin_counts[offset + cut_val - 1];
@@ -296,21 +235,8 @@ fn histogram_split(
                 left_sqr_target += scratch.bin_squares[offset + cut_val - 1];
                 if scratch.bin_counts[offset + cut_val] == 0 { continue; }
                 score_candidate(
-                    Candidate {
-                        left_target,
-                        left_sqr_target,
-                        left_count,
-                        cut_col,
-                        cut_val: cut_val as u32,
-                        equality: false,
-                        ..Candidate::default()
-                    },
-                    missing_count > 0 || window.n_rows - left_count >= left_count,
-                    &window,
-                    config,
-                    &mut criterion,
-                    &mut best,
-                );
+                    Candidate { left_target, left_sqr_target, left_count, cut_col, cut_val: cut_val as u32, equality: false, ..Candidate::default() },
+                    missing_count > 0 || window.n_rows - left_count >= left_count, &window, config, &mut criterion, &mut best);
             }
             if missing_count > 0 {
                 let (mut left_target, mut left_sqr_target, mut left_count) = (missing_target, missing_sqr_target, missing_count);
@@ -320,28 +246,16 @@ fn histogram_split(
                     left_sqr_target += scratch.bin_squares[offset + cut_val - 1];
                     if scratch.bin_counts[offset + cut_val] == 0 { continue; }
                     score_candidate(
-                        Candidate {
-                            left_target,
-                            left_sqr_target,
-                            left_count,
-                            cut_col,
-                            cut_val: cut_val as u32,
-                            equality: false,
-                            ..Candidate::default()
-                        },
-                        false,
-                        &window,
-                        config,
-                        &mut criterion,
-                        &mut best,
-                    );
+                        Candidate { left_target, left_sqr_target, left_count, cut_col, cut_val: cut_val as u32, equality: false, ..Candidate::default() },
+                        false, &window, config, &mut criterion, &mut best);
                 }
             }
             continue;
         }
         ranked_rows(x, node, window.start, window.n_rows, cut_col, &mut scratch.ranked_rows);
         let missing_rank = missing_ranks[cut_col];
-        let observed_end = if missing_rank == u32::MAX { scratch.ranked_rows.len() } else { scratch.ranked_rows.partition_point(|row| row.value != missing_rank) };
+        let observed_end =
+            if missing_rank == u32::MAX { scratch.ranked_rows.len() } else { scratch.ranked_rows.partition_point(|row| row.value != missing_rank) };
         let (mut missing_target, mut missing_sqr_target, mut missing_count) = (0.0, 0.0, 0);
         for row in &scratch.ranked_rows[observed_end..] {
             let target = y[row.row];
@@ -364,43 +278,16 @@ fn histogram_split(
                 left_count += 1;
                 position += 1;
             }
-            let observed_cardinality =
-                if missing_rank == u32::MAX { cutoff_offsets[cut_col + 1] - cutoff_offsets[cut_col] } else { missing_rank as usize };
+            let observed_cardinality = if missing_rank == u32::MAX { cutoff_offsets[cut_col + 1] - cutoff_offsets[cut_col] } else { missing_rank as usize };
             if supported_equality(value, observed_cardinality, equal_count, window.n_rows) {
                 score_candidate(
-                    Candidate {
-                        left_target: equal_target,
-                        left_sqr_target: equal_sqr_target,
-                        left_count: equal_count,
-                        cut_col,
-                        cut_val: value,
-                        equality: true,
-                        ..Candidate::default()
-                    },
-                    missing_count > 0 || window.n_rows - equal_count >= equal_count,
-                    &window,
-                    config,
-                    &mut criterion,
-                    &mut best,
-                );
+                    Candidate { left_target: equal_target, left_sqr_target: equal_sqr_target, left_count: equal_count, cut_col, cut_val: value, equality: true,
+                        ..Candidate::default() }, missing_count > 0 || window.n_rows - equal_count >= equal_count, &window, config, &mut criterion, &mut best);
             }
             if position == observed_end { continue; }
             score_candidate(
-                Candidate {
-                    left_target,
-                    left_sqr_target,
-                    left_count,
-                    cut_col,
-                    cut_val: scratch.ranked_rows[position].value,
-                    equality: false,
-                    ..Candidate::default()
-                },
-                missing_count > 0 || window.n_rows - left_count >= left_count,
-                &window,
-                config,
-                &mut criterion,
-                &mut best,
-            );
+                Candidate { left_target, left_sqr_target, left_count, cut_col, cut_val: scratch.ranked_rows[position].value, equality: false,
+                    ..Candidate::default() }, missing_count > 0 || window.n_rows - left_count >= left_count, &window, config, &mut criterion, &mut best);
         }
         if missing_count > 0 {
             let (mut left_target, mut left_sqr_target, mut left_count) = (missing_target, missing_sqr_target, missing_count);
@@ -416,21 +303,8 @@ fn histogram_split(
                 }
                 if position == observed_end { continue; }
                 score_candidate(
-                    Candidate {
-                        left_target,
-                        left_sqr_target,
-                        left_count,
-                        cut_col,
-                        cut_val: scratch.ranked_rows[position].value,
-                        equality: false,
-                        ..Candidate::default()
-                    },
-                    false,
-                    &window,
-                    config,
-                    &mut criterion,
-                    &mut best,
-                );
+                    Candidate { left_target, left_sqr_target, left_count, cut_col, cut_val: scratch.ranked_rows[position].value, equality: false,
+                        ..Candidate::default() }, false, &window, config, &mut criterion, &mut best);
             }
         }
     }
@@ -444,18 +318,10 @@ pub(crate) fn sample_features(n_features: usize, config: &Config, rng: &mut StdR
 
 #[inline(always)]
 fn score_candidate(
-    mut candidate: Candidate, missing_right: bool, window: &EvaluationWindow, config: &Config, criterion: &mut f32,
-    best: &mut Option<Candidate>,
-) {
+    mut candidate: Candidate, missing_right: bool, window: &EvaluationWindow, config: &Config, criterion: &mut f32, best: &mut Option<Candidate>) {
     if !valid_children(candidate.left_count, window.n_rows) { return; }
     let loss = weighted_loss(
-        candidate.left_target,
-        candidate.left_sqr_target,
-        candidate.left_count,
-        window.sum_target,
-        window.sum_sqr_target,
-        window.n_rows,
-        config.split_prior_rows,
+        candidate.left_target, candidate.left_sqr_target, candidate.left_count, window.sum_target, window.sum_sqr_target, window.n_rows, config.split_prior_rows
     );
     if loss > *criterion {
         *criterion = loss;
@@ -465,31 +331,17 @@ fn score_candidate(
 }
 
 fn consider_candidate(
-    mut candidate: Candidate, missing_target: f32, missing_sqr_target: f32, missing_count: usize, window: &EvaluationWindow,
-    config: &Config, criterion: &mut f32, best: &mut Option<Candidate>,
-) {
+    mut candidate: Candidate, missing_target: f32, missing_sqr_target: f32, missing_count: usize, window: &EvaluationWindow, config: &Config,
+    criterion: &mut f32, best: &mut Option<Candidate>) {
     candidate.missing_right = missing_count > 0 || window.n_rows - candidate.left_count >= candidate.left_count;
     let mut choices = [(candidate.left_target, candidate.left_sqr_target, candidate.left_count, candidate.missing_right); 2];
     let n_choices = if missing_count > 0 && !candidate.equality {
-        choices[1] = (
-            candidate.left_target + missing_target,
-            candidate.left_sqr_target + missing_sqr_target,
-            candidate.left_count + missing_count,
-            false,
-        );
+        choices[1] = (candidate.left_target + missing_target, candidate.left_sqr_target + missing_sqr_target, candidate.left_count + missing_count, false);
         2
     } else { 1 };
     for (left_target, left_sqr_target, left_count, missing_right) in choices.into_iter().take(n_choices) {
         if !valid_children(left_count, window.n_rows) { continue; }
-        let loss = weighted_loss(
-            left_target,
-            left_sqr_target,
-            left_count,
-            window.sum_target,
-            window.sum_sqr_target,
-            window.n_rows,
-            config.split_prior_rows,
-        );
+        let loss = weighted_loss(left_target, left_sqr_target, left_count, window.sum_target, window.sum_sqr_target, window.n_rows, config.split_prior_rows);
         if loss > *criterion {
             *criterion = loss;
             candidate.missing_right = missing_right;
@@ -504,15 +356,7 @@ fn select_best(candidates: impl Iterator<Item = Candidate>, window: &EvaluationW
     let mut best = None;
     for candidate in candidates {
         consider_candidate(
-            candidate,
-            candidate.missing_target,
-            candidate.missing_sqr_target,
-            candidate.missing_count,
-            window,
-            config,
-            &mut criterion,
-            &mut best,
-        );
+            candidate, candidate.missing_target, candidate.missing_sqr_target, candidate.missing_count, window, config, &mut criterion, &mut best);
     }
     (best, criterion, impurity)
 }
@@ -528,12 +372,10 @@ fn all_same(y: ArrayView1<'_, f32>, node: NodeRows<'_>, max_samples: usize) -> b
 }
 
 pub(crate) fn partition(
-    x: TrainingData<'_>, rows: &mut [u32], start: usize, n_rows: usize, cut_col: usize, cut_val: u32, equality: bool, missing_rank: u32,
-    missing_right: bool,
+    x: TrainingData<'_>, rows: &mut [u32], start: usize, n_rows: usize, cut_col: usize, cut_val: u32, equality: bool, missing_rank: u32, missing_right: bool
 ) -> usize {
     fn split_rows(
-        rows: &mut [u32], start: usize, n_rows: usize, cut_val: u32, equality: bool, missing_rank: u32, missing_right: bool,
-        value_at: impl Fn(u32) -> u32,
+        rows: &mut [u32], start: usize, n_rows: usize, cut_val: u32, equality: bool, missing_rank: u32, missing_right: bool, value_at: impl Fn(u32) -> u32
     ) -> usize {
         let mut left = start;
         let mut right = start + n_rows;
@@ -552,32 +394,24 @@ pub(crate) fn partition(
         if table.is_empty() {
             split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| data[row as usize * cols + column])
         } else {
-            split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| {
-                table[data[row as usize * cols + column] as usize]
-            })
+            split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| table[data[row as usize * cols + column] as usize])
         }
     } else if table.is_empty() {
         split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| x.matrix[[row as usize, column]])
     } else {
-        split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| {
-            table[x.matrix[[row as usize, column]] as usize]
-        })
+        split_rows(rows, start, n_rows, cut_val, equality, missing_rank, missing_right, |row| table[x.matrix[[row as usize, column]] as usize])
     }
 }
 
-fn weighted_loss(
-    left_target: f32, left_sqr_target: f32, left_count: usize, sum_target: f32, sum_sqr_target: f32, total_count: usize, prior_rows: f32,
-) -> f32 {
+fn weighted_loss(left_target: f32, left_sqr_target: f32, left_count: usize, sum_target: f32, sum_sqr_target: f32, total_count: usize, prior_rows: f32) -> f32 {
     let parent_mean = sum_target / total_count as f32;
     let mut result = 0.0;
     if left_count > 0 {
-        result +=
-            regularized_loss(left_target, left_sqr_target, left_count, parent_mean, prior_rows) * left_count as f32 / total_count as f32;
+        result += regularized_loss(left_target, left_sqr_target, left_count, parent_mean, prior_rows) * left_count as f32 / total_count as f32;
     }
     let right_count = total_count - left_count;
     if right_count > 0 {
-        result += regularized_loss(sum_target - left_target, sum_sqr_target - left_sqr_target, right_count, parent_mean, prior_rows)
-            * right_count as f32
+        result += regularized_loss(sum_target - left_target, sum_sqr_target - left_sqr_target, right_count, parent_mean, prior_rows) * right_count as f32
             / total_count as f32;
     }
     result
