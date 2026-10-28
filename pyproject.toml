@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.9.2,<2.0", "fastws-cli>=0.0.20"]
+requires = ["maturin>=1.13,<2.0", "fastws-cli>=0.0.29"]
 build-backend = "fastws.build_backend"
 
 [project]
@@ -18,7 +18,7 @@ dependencies = ["numpy>=2.0", "pyarrow>=18"]
 
 [project.optional-dependencies]
 sklearn = ["pandas", "scikit-learn>=1.7.2"]
-dev = ["fastws-cli>=0.0.20", "fastcore", "fastship>=0.1.8", "matplotlib", "maturin>=1.0,<2.0", "nbdev>=3.3.13", "pandas", "pytest", "scikit-learn>=1.7.2"]
+dev = ["fastws-cli>=0.0.29", "fastcore", "fastship>=0.1.8", "matplotlib", "maturin>=1.13,<2.0", "nbdev>=3.3.13", "pandas", "pytest", "scikit-learn>=1.7.2"]
 
 [project.urls]
 Homepage = "https://github.com/fastai/fastforest"
