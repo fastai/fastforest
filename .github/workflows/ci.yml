@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: AnswerDotAI/.github/actions/sccache@main
+        with:
+          r2-url: ${{ secrets.SCCACHE_R2 }}
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -30,6 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: AnswerDotAI/.github/actions/sccache@main
+        if: runner.os != 'Linux'
+        with:
+          r2-url: ${{ secrets.SCCACHE_R2 }}
       - uses: actions/setup-python@v7
         if: runner.os != 'Linux'
         with:
@@ -57,6 +64,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: AnswerDotAI/.github/actions/sccache@main
+        with:
+          r2-url: ${{ secrets.SCCACHE_R2 }}
       - run: cargo test -p fastforest
       - run: cargo build -p fastforest --profile dist --bins
       - run: cargo test -p fastforest --profile dist compiled::tests::standalone_executable_story -- --ignored
