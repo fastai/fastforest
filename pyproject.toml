@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.13,<2.0", "fastws-cli>=0.0.29"]
+requires = ["maturin>=1.13,<2.0", "fastws-cli>=0.0.42"]
 build-backend = "fastws.build_backend"
 
 [project]
@@ -18,7 +18,8 @@ dependencies = ["numpy>=2.0", "pyarrow>=18"]
 
 [project.optional-dependencies]
 sklearn = ["pandas", "scikit-learn>=1.7.2"]
-dev = ["fastws-cli>=0.0.29", "fastcore", "fastship>=0.1.8", "matplotlib", "maturin>=1.13,<2.0", "nbdev>=3.3.13", "pandas", "pytest", "scikit-learn>=1.7.2"]
+test = ["fastws-cli>=0.0.42", "fastcore", "pandas", "pytest", "scikit-learn>=1.7.2"]
+dev = ["fastship>=0.1.8", "matplotlib", "maturin>=1.13,<2.0", "nbdev>=3.3.13", "fastforest[test]"]
 
 [project.urls]
 Homepage = "https://github.com/fastai/fastforest"
@@ -36,6 +37,7 @@ cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "py
 
 [tool.fastws]
 native-binaries = true
+dev-profile = "release"
 
 [tool.nbdev]
 lib_path = "python/fastforest"

@@ -115,7 +115,7 @@ pytest -q
 chkstyle python/fastforest tests tools
 ```
 
-The default `release` profile is the development and research build: optimized, incremental, and retaining symbols and debug info, so a fit loop in the kernel profiles directly with macOS `sample <kernel-pid> 10` and frames resolve without any dSYM step. Use `--profile debugging` for an unoptimized, checked build. CI ships the `dist` profile, which enables full LTO with one codegen unit, disables incremental compilation, and strips the result.
+The `release` profile is the default development and research build (`[tool.fastws] dev-profile = "release"`). It compiles optimized and incremental with `debug = false` to keep local binaries small and `cargo develop` fast. Set `CARGO_PROFILE_RELEASE_DEBUG=true` (or `line-tables-only`) when profiling needs debug symbols, and use `--profile debugging` for an unoptimized, checked build. CI ships the `dist` profile, which enables thin LTO with 16 codegen units, disables incremental compilation, and strips the result.
 
 For performance measurements:
 

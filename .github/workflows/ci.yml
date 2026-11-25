@@ -18,10 +18,11 @@ jobs:
       - uses: AnswerDotAI/.github/actions/sccache@main
         with:
           r2-url: ${{ secrets.SCCACHE_R2 }}
+      - uses: AnswerDotAI/.github/actions/setup-uv@main
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e '.[dev]'
+      - run: uv pip install --system --config-settings-package fastforest:metadata-only=1 -e '.[test]'
       - run: cargo develop
       - run: pytest -q
 
@@ -34,23 +35,24 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: AnswerDotAI/.github/actions/sccache@main
-        if: runner.os != 'Linux'
         with:
           r2-url: ${{ secrets.SCCACHE_R2 }}
+      - uses: AnswerDotAI/.github/actions/setup-uv@main
       - uses: actions/setup-python@v7
-        if: runner.os != 'Linux'
         with:
           python-version: '3.12'
-      - name: Stage native binaries
-        if: runner.os != 'Linux'
-        run: |
-          python -m pip install 'fastws-cli>=0.0.29'
-          cargo stage --profile dist
-      - uses: PyO3/maturin-action@v1
+      - uses: AnswerDotAI/.github/actions/maturin-build@main
         with:
-          args: --profile dist --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13
-          manylinux: auto
-          before-script-linux: export PATH="/opt/python/cp310-cp310/bin:$PATH" && python3.10 -m pip install 'fastws-cli>=0.0.29' && cargo stage --profile dist
+          command: setup
+          zig: ${{ runner.os == 'Linux' }}
+      - name: Stage native binaries
+        run: |
+          uv pip install --system 'fastws-cli>=0.0.42'
+          cargo stage --profile dist ${{ runner.os == 'Linux' && '--zig --manylinux 2_31' || '' }}
+      - uses: AnswerDotAI/.github/actions/maturin-build@main
+        with:
+          args: --profile dist --out dist ${{ runner.os == 'Linux' && '--zig' || '' }}
+          manylinux: '2_31'
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
@@ -67,7 +69,7 @@ jobs:
       - uses: AnswerDotAI/.github/actions/sccache@main
         with:
           r2-url: ${{ secrets.SCCACHE_R2 }}
-      - run: cargo test -p fastforest
+      - run: cargo test --release -p fastforest
       - run: cargo build -p fastforest --profile dist --bins
       - run: cargo test -p fastforest --profile dist compiled::tests::standalone_executable_story -- --ignored
       - name: Package Unix CLIs
