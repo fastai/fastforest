@@ -40,6 +40,7 @@ native-binaries = true
 dev-profile = "release"
 
 [tool.nbdev]
+to_meta = ["export"]
 lib_path = "python/fastforest"
 put_version_in_init = false
 
